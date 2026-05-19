@@ -9,9 +9,9 @@ import {
   removeProduct,
   getOrders,
   createOrder,
-  updateOrderStatusRemotely,
-  uploadProductImage
+  updateOrderStatusRemotely
 } from './services/supabaseService';
+import { uploadToCloudinary } from './services/cloudinaryService';
 
 interface AuthContextType {
   user: User | null;
@@ -215,7 +215,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const uploadImage = async (file: File) => {
-    return await uploadProductImage(file);
+    return await uploadToCloudinary(file);
   };
 
   const addPreOrder = async (orderData: Omit<PreOrder, 'id' | 'createdAt' | 'status'>) => {

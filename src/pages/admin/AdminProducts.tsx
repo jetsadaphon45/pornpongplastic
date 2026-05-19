@@ -1,17 +1,6 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../AuthContext';
-import { 
-  Plus, 
-  Search, 
-  Filter, 
-  Edit2, 
-  Trash2, 
-  MoreVertical,
-  Image as ImageIcon,
-  CheckCircle2,
-  XCircle,
-  Clock as ClockIcon
-} from 'lucide-react';
+import { Plus, Search, Filter, Edit2, Trash2, MoreVertical, Image as ImageIcon, CheckCircle2, XCircle, Clock as ClockIcon, Upload } from 'lucide-react';
 import { Product } from '../../types';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../../lib/utils';
@@ -143,7 +132,9 @@ export default function AdminProducts() {
                     </span>
                   </td>
                   <td className="px-6 py-4 font-black text-blue-600">
-                    ฿{p.price.toLocaleString()}
+                    {p.price && p.price > 0 
+                      ? `฿${p.price.toLocaleString()}` 
+                      : 'สอบถามราคา'}
                   </td>
                   <td className="px-6 py-4">
                      <span className={cn(
@@ -219,6 +210,20 @@ export default function AdminProducts() {
                     />
                   </div>
                   <div className="space-y-1">
+                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">ราคา (บาท)</label>
+                    <input 
+                      type="number"
+                      step="0.01"
+                      placeholder="0.00 (เว้นว่างหรือ 0 = สอบถามราคา)"
+                      value={formData.price || ''}
+                      onChange={e => setFormData({...formData, price: e.target.value === '' ? 0 : parseFloat(e.target.value)})}
+                      className="w-full bg-gray-50 border border-gray-100 rounded-xl py-3 px-4 focus:outline-none focus:ring-2 focus:ring-blue-500/20 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" 
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="space-y-1">
                     <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">หมวดหมู่</label>
                     <select 
                       value={formData.category}
@@ -230,16 +235,6 @@ export default function AdminProducts() {
                       <option value="rowboat">เรือพาย</option>
                       <option value="accessory">อุปกรณ์เสริม</option>
                     </select>
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">ราคาโดยประมาณ</label>
-                    <input 
-                      type="number"
-                      required
-                      value={formData.price}
-                      onChange={e => setFormData({...formData, price: Number(e.target.value)})}
-                      className="w-full bg-gray-50 border border-gray-100 rounded-xl py-3 px-4 focus:outline-none focus:ring-2 focus:ring-blue-500/20" 
-                    />
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">สถานะ</label>
@@ -259,26 +254,48 @@ export default function AdminProducts() {
                    <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">รูปสินค้า (URL หรือ อัปโหลด)</label>
                    <div className="flex space-x-4">
                      <input 
-                        required
-                        value={formData.image}
+                        value={formData.image || ''}
                         onChange={e => setFormData({...formData, image: e.target.value})}
-                        placeholder="https://images.unsplash.com/..."
+                        placeholder="https://cloudinary.com/..."
                         className="flex-grow bg-gray-50 border border-gray-100 rounded-xl py-3 px-4 focus:outline-none focus:ring-2 focus:ring-blue-500/20" 
                       />
-                      <label className={cn(
-                        "shrink-0 px-4 rounded-xl flex items-center justify-center cursor-pointer transition-all font-bold text-xs",
-                        isUploading ? "bg-gray-100 text-gray-400 cursor-not-allowed" : "bg-blue-50 text-blue-600 hover:bg-blue-100"
-                      )}>
+                      <label 
+                        className={cn(
+                          "shrink-0 px-6 rounded-xl flex items-center justify-center cursor-pointer transition-all font-bold text-xs border-2 border-dashed",
+                          isUploading ? "bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed" : "bg-blue-50 text-blue-600 border-blue-200 hover:bg-blue-100"
+                        )}
+                        onDragOver={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                        }}
+                        onDrop={async (e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          if (isUploading) return;
+                          const file = e.dataTransfer.files?.[0];
+                          if (file) {
+                            setIsUploading(true);
+                            try {
+                              const url = await uploadImage(file);
+                              setFormData({ ...formData, image: url });
+                            } catch (err: any) {
+                              alert(err.message || 'ไม่สามารถอัปโหลดรูปภาพได้');
+                            } finally {
+                              setIsUploading(false);
+                            }
+                          }
+                        }}
+                      >
                          {isUploading ? (
-                           <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-400 mr-2" />
+                           <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600 mr-2" />
                          ) : (
-                           <Plus className="h-4 w-4 mr-2" />
+                           <Upload className="h-4 w-4 mr-2" />
                          )}
-                         {isUploading ? 'กำลังอัปโหลด...' : 'อัปโหลด'}
+                         {isUploading ? 'กำลังอัปโหลด...' : 'เลือกรูป/ลากวาง'}
                          <input 
                             type="file" 
                             className="hidden" 
-                            accept="image/*"
+                            accept="image/jpeg,image/png,image/webp"
                             disabled={isUploading}
                             onChange={async (e) => {
                               const file = e.target.files?.[0];
@@ -287,8 +304,8 @@ export default function AdminProducts() {
                                 try {
                                   const url = await uploadImage(file);
                                   setFormData({ ...formData, image: url });
-                                } catch (err) {
-                                  alert('ไม่สามารถอัปโหลดรูปภาพได้');
+                                } catch (err: any) {
+                                  alert(err.message || 'ไม่สามารถอัปโหลดรูปภาพได้');
                                 } finally {
                                   setIsUploading(false);
                                 }
@@ -297,6 +314,18 @@ export default function AdminProducts() {
                          />
                       </label>
                    </div>
+                   {formData.image && (
+                     <div className="mt-2 relative w-20 h-20 rounded-lg overflow-hidden border border-gray-100 bg-gray-50">
+                        <img src={formData.image} alt="Preview" className="w-full h-full object-cover" />
+                        <button 
+                          type="button"
+                          onClick={() => setFormData({ ...formData, image: '' })}
+                          className="absolute top-1 right-1 bg-red-500 text-white p-1 rounded-full hover:bg-red-600 transition-all font-bold"
+                        >
+                          ×
+                        </button>
+                     </div>
+                   )}
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6">

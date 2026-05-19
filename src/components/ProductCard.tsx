@@ -42,7 +42,9 @@ const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
             <div className="flex flex-col">
               <span className="text-[10px] text-gray-400 font-bold uppercase tracking-tight">ราคาโดยประมาณ</span>
               <span className="text-2xl font-black text-blue-600">
-                ฿{product.price.toLocaleString()}
+                {product.price && product.price > 0 
+                  ? `฿${product.price.toLocaleString()}` 
+                  : 'สอบถามราคา'}
               </span>
             </div>
             <span className="text-[10px] text-gray-400 font-medium">ไม่รวมค่าจัดส่ง</span>

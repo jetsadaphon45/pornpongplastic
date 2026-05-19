@@ -164,21 +164,5 @@ export const updateOrderStatusRemotely = async (orderId: string, status: string)
   if (error) throw error;
 };
 
-// Image Upload
-export const uploadProductImage = async (file: File): Promise<string> => {
-  const fileExt = file.name.split('.').pop();
-  const fileName = `${Math.random().toString(36).substring(2)}.${fileExt}`;
-  const filePath = `products/${fileName}`;
-
-  const { error: uploadError } = await supabase.storage
-    .from('product-images')
-    .upload(filePath, file);
-
-  if (uploadError) throw uploadError;
-
-  const { data: { publicUrl } } = supabase.storage
-    .from('product-images')
-    .getPublicUrl(filePath);
-
-  return publicUrl;
-};
+// Image Upload (Moved to Cloudinary)
+// uploadProductImage functionality is now handled by cloudinaryService.ts
