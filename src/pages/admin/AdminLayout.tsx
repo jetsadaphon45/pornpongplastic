@@ -31,7 +31,7 @@ export default function AdminLayout() {
   if (!user || user.role !== 'admin') return null;
 
   const menuItems = [
-    { name: 'แดชบอร์ด', icon: LayoutDashboard, path: '/admin' },
+    { name: 'แดชบอร์ด', icon: LayoutDashboard, path: '/admin/dashboard' },
     { name: 'จัดการสินค้า', icon: Package, path: '/admin/products' },
     { name: 'จัดการพรีออเดอร์', icon: ShoppingBag, path: '/admin/orders' },
     { name: 'ผู้ใช้งาน', icon: Users, path: '/admin/customers' },

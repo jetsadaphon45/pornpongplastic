@@ -41,19 +41,38 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // Sync Auth State
   useEffect(() => {
-    // Check current session
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    const checkAuth = async () => {
+      // Check for hardcoded local admin first
+      const localAdmin = localStorage.getItem('localAdmin');
+      if (localAdmin === 'true') {
+        setUser({
+          id: 'admin-demo',
+          name: 'Admin',
+          email: 'admin@pornpongplastic.com',
+          role: 'admin',
+          phone: '',
+          lineId: '',
+          address: ''
+        });
+        setLoading(false);
+        return;
+      }
+
+      // Fallback to Supabase (Temporarily bypassed by user request but kept for structure)
+      const { data: { session } } = await supabase.auth.getSession();
       if (session) {
-        fetchUserProfile(session.user.id, session.user.email);
+        await fetchUserProfile(session.user.id, session.user.email);
       } else {
         setLoading(false);
       }
-    });
+    };
+
+    checkAuth();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (session) {
         fetchUserProfile(session.user.id, session.user.email);
-      } else {
+      } else if (localStorage.getItem('localAdmin') !== 'true') {
         setUser(null);
         setLoading(false);
       }
@@ -105,6 +124,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [user, loading]);
 
   const login = async (email: string, password: string) => {
+    // 1. Check Hardcoded Admin Credentials
+    if (email === 'admin@pornpongplastic.com' && password === 'admin123') {
+      const adminUser: User = {
+        id: 'admin-demo',
+        name: 'Admin',
+        email: 'admin@pornpongplastic.com',
+        role: 'admin',
+        phone: '',
+        lineId: '',
+        address: ''
+      };
+      localStorage.setItem('localAdmin', 'true');
+      setUser(adminUser);
+      return true;
+    }
+
+    // 2. Normal Supabase Auth (kept but can be ignored for now)
     try {
       const { data, error } = await supabase.auth.signInWithPassword({
         email,
@@ -149,6 +185,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const logout = async () => {
+    localStorage.removeItem('localAdmin');
     await supabase.auth.signOut();
     setUser(null);
   };

@@ -25,9 +25,7 @@ export default function AdminLogin() {
 
     const success = await login(email, password);
     if (success) {
-      // The useEffect will handle redirecting once user state is updated
-      // but we can also manually navigate if we want
-      navigate('/admin');
+      navigate('/admin/dashboard');
     } else {
       setError('อีเมลหรือรหัสผ่านไม่ถูกต้อง หรือคุณไม่มีสิทธิ์เข้าถึงพอร์ทัลนี้');
     }
@@ -82,7 +80,7 @@ export default function AdminLogin() {
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     className="w-full bg-gray-50 border border-gray-100 rounded-2xl py-4 pl-12 pr-4 focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all font-medium"
-                    placeholder="admin@test.com"
+                    placeholder="admin@pornpongplastic.com"
                   />
                 </div>
               </div>
@@ -99,7 +97,7 @@ export default function AdminLogin() {
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     className="w-full bg-gray-50 border border-gray-100 rounded-2xl py-4 pl-12 pr-4 focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all font-medium"
-                    placeholder="••••••••"
+                    placeholder="admin123"
                   />
                 </div>
               </div>
