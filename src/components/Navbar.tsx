@@ -56,14 +56,6 @@ export default function Navbar() {
 
               {user ? (
                 <div className="flex items-center space-x-2">
-                  {user.role === 'admin' && (
-                    <Link 
-                      to="/admin" 
-                      className="text-xs font-black text-blue-600 bg-blue-50 px-3 py-2 rounded-lg hover:bg-blue-100 transition-all uppercase tracking-wider"
-                    >
-                      Admin
-                    </Link>
-                  )}
                   <Link 
                     to="/profile" 
                     className={cn(
@@ -133,26 +125,14 @@ export default function Navbar() {
               ))}
               <div className="pt-4 mt-4 border-t border-gray-50 flex flex-col space-y-2 px-3">
                 {user ? (
-                  <>
-                    {user.role === 'admin' && (
-                      <Link 
-                        to="/admin" 
-                        onClick={() => setIsOpen(false)}
-                        className="flex items-center space-x-3 py-3 font-bold text-orange-600 border-b border-gray-50"
-                      >
-                         <Lock className="h-5 w-5" />
-                         <span>จัดการระบบ (Admin)</span>
-                      </Link>
-                    )}
-                    <Link 
-                      to="/profile" 
-                      onClick={() => setIsOpen(false)}
-                      className="flex items-center space-x-3 py-3 font-bold text-blue-600"
-                    >
-                      <User className="h-5 w-5" />
-                      <span>โปรไฟล์: {user.name}</span>
-                    </Link>
-                  </>
+                  <Link 
+                    to="/profile" 
+                    onClick={() => setIsOpen(false)}
+                    className="flex items-center space-x-3 py-3 font-bold text-blue-600"
+                  >
+                    <User className="h-5 w-5" />
+                    <span>โปรไฟล์: {user.name}</span>
+                  </Link>
                 ) : (
                   <>
                     <Link 

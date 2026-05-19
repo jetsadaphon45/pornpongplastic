@@ -15,14 +15,8 @@ interface AuthContextType {
   register: (userData: User) => Promise<boolean>;
   logout: () => Promise<void>;
   updateProfile: (userData: Partial<User>) => Promise<void>;
-  // Product Management
-  addProduct: (product: Product) => Promise<void>;
-  updateProduct: (product: Product) => Promise<void>;
-  deleteProduct: (productId: string) => Promise<void>;
-  uploadImage: (file: File) => Promise<string>;
-  // Order Management
+  // Order Management for Customers
   addPreOrder: (preOrder: Omit<PreOrder, 'id' | 'createdAt' | 'status'>) => Promise<void>;
-  updateOrderStatus: (orderId: string, status: PreOrder['status']) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -33,40 +27,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [preOrders, setPreOrders] = useState<PreOrder[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Sync Auth State
+  // Sync Auth State (Customers Only)
   useEffect(() => {
-    const checkAuth = async () => {
-      // Check for hardcoded local admin first
-      const localAdmin = localStorage.getItem('localAdmin');
-      if (localAdmin === 'true') {
-        setUser({
-          id: 'admin-demo',
-          name: 'Admin',
-          email: 'admin@pornpongplastic.com',
-          role: 'admin',
-          phone: '',
-          lineId: '',
-          address: ''
-        });
-        setLoading(false);
-        return;
-      }
-
-      // Fallback to Supabase (Temporarily bypassed by user request but kept for structure)
-      const { data: { session } } = await supabase.auth.getSession();
+    supabase.auth.getSession().then(({ data: { session } }) => {
       if (session) {
-        await fetchUserProfile(session.user.id, session.user.email);
+        fetchUserProfile(session.user.id, session.user.email);
       } else {
         setLoading(false);
       }
-    };
-
-    checkAuth();
+    });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (session) {
         fetchUserProfile(session.user.id, session.user.email);
-      } else if (localStorage.getItem('localAdmin') !== 'true') {
+      } else {
         setUser(null);
         setLoading(false);
       }
@@ -78,8 +52,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const fetchUserProfile = async (uid: string, email?: string) => {
     try {
       const profile = await getUserProfile(uid);
-      if (profile) {
+      if (profile && profile.role === 'user') {
         setUser(profile);
+      } else if (profile && profile.role === 'admin') {
+        // Customers context should not handle admin role users if we want strict separation
+        // but for now we just treat them as logged out in this context if they aren't 'user'
+        // or just let them be. The user said: "Navbar ลูกค้าต้องไม่เปลี่ยน"
+        setUser(null); 
       } else {
         const newUser: User = {
           id: uid,
@@ -100,10 +79,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  // Sync Data
+  // Sync Data (Read Only for Customers, except adding orders)
   useEffect(() => {
     const fetchData = async () => {
-      // Load products from localStorage
       const savedProducts = localStorage.getItem('pornpong_products');
       if (savedProducts) {
         setProducts(JSON.parse(savedProducts));
@@ -111,13 +89,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setProducts([]);
       }
 
-      // Load orders from localStorage
       const savedOrders = localStorage.getItem('pornpong_orders');
       if (savedOrders) {
         let orders = JSON.parse(savedOrders);
-        // Filter by user if not admin
-        if (user && user.role !== 'admin') {
+        if (user) {
           orders = orders.filter((o: PreOrder) => o.userId === user.id);
+        } else {
+          // If guest, maybe show guest orders from session? For now just empty or guest tagged
+          orders = orders.filter((o: PreOrder) => o.userId === 'GUEST');
         }
         setPreOrders(orders);
       }
@@ -129,23 +108,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [user, loading]);
 
   const login = async (email: string, password: string) => {
-    // 1. Check Hardcoded Admin Credentials
-    if (email === 'admin@pornpongplastic.com' && password === 'admin123') {
-      const adminUser: User = {
-        id: 'admin-demo',
-        name: 'Admin',
-        email: 'admin@pornpongplastic.com',
-        role: 'admin',
-        phone: '',
-        lineId: '',
-        address: ''
-      };
-      localStorage.setItem('localAdmin', 'true');
-      setUser(adminUser);
-      return true;
-    }
-
-    // 2. Normal Supabase Auth (kept but can be ignored for now)
     try {
       const { data, error } = await supabase.auth.signInWithPassword({
         email,
@@ -190,7 +152,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const logout = async () => {
-    localStorage.removeItem('localAdmin');
     await supabase.auth.signOut();
     setUser(null);
   };
@@ -200,48 +161,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const updatedUser = { ...user, ...userData };
     await saveUserProfile(updatedUser);
     setUser(updatedUser);
-  };
-
-  const addProduct = async (product: Product) => {
-    try {
-      const id = crypto.randomUUID();
-      const newProduct = { ...product, id };
-      const updatedProducts = [newProduct, ...products];
-      localStorage.setItem('pornpong_products', JSON.stringify(updatedProducts));
-      setProducts(updatedProducts);
-      alert('เพิ่มสินค้าสำเร็จ');
-    } catch (err: any) {
-      alert(`ไม่สามารถเพิ่มสินค้าได้: ${err.message}`);
-      throw err;
-    }
-  };
-
-  const updateProduct = async (product: Product) => {
-    try {
-      const updatedProducts = products.map(p => p.id === product.id ? product : p);
-      localStorage.setItem('pornpong_products', JSON.stringify(updatedProducts));
-      setProducts(updatedProducts);
-      alert('แก้ไขสินค้าสำเร็จ');
-    } catch (err: any) {
-      alert(`ไม่สามารถแก้ไขสินค้าได้: ${err.message}`);
-      throw err;
-    }
-  };
-
-  const deleteProduct = async (productId: string) => {
-    try {
-      const updatedProducts = products.filter(p => p.id !== productId);
-      localStorage.setItem('pornpong_products', JSON.stringify(updatedProducts));
-      setProducts(updatedProducts);
-      alert('ลบสินค้าสำเร็จ');
-    } catch (err: any) {
-      alert(`ไม่สามารถลบสินค้าได้: ${err.message}`);
-      throw err;
-    }
-  };
-
-  const uploadImage = async (file: File) => {
-    return await uploadToCloudinary(file);
   };
 
   const addPreOrder = async (orderData: Omit<PreOrder, 'id' | 'createdAt' | 'status'>) => {
@@ -260,10 +179,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       
       localStorage.setItem('pornpong_orders', JSON.stringify(updatedAllOrders));
       
-      // Update local state (filtered for current view)
-      if (user && (user.role === 'admin' || user.id === orderData.userId)) {
-        setPreOrders(prev => [newOrder, ...prev]);
-      } else if (!user || orderData.userId === 'GUEST') {
+      if (!user || user.id === orderData.userId) {
         setPreOrders(prev => [newOrder, ...prev]);
       }
       
@@ -274,25 +190,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const updateOrderStatus = async (orderId: string, status: PreOrder['status']) => {
-    try {
-      const savedOrders = localStorage.getItem('pornpong_orders');
-      if (savedOrders) {
-        const allOrders = JSON.parse(savedOrders);
-        const updatedAllOrders = allOrders.map((o: PreOrder) => o.id === orderId ? { ...o, status } : o);
-        localStorage.setItem('pornpong_orders', JSON.stringify(updatedAllOrders));
-        setPreOrders(prev => prev.map(o => o.id === orderId ? { ...o, status } : o));
-      }
-    } catch (err: any) {
-      alert(`ไม่สามารถอัปเดตสถานะได้: ${err.message}`);
-      throw err;
-    }
-  };
-
   return (
     <AuthContext.Provider value={{ 
-      user, products, preOrders, login, register, logout, updateProfile,
-      addProduct, updateProduct, deleteProduct, uploadImage, addPreOrder, updateOrderStatus
+      user, products, preOrders, login, register, logout, updateProfile, addPreOrder
     }}>
       {!loading ? children : (
         <div className="min-h-screen flex items-center justify-center bg-gray-50">

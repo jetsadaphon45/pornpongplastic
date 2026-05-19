@@ -1,5 +1,5 @@
 import React from 'react';
-import { useAuth } from '../../AuthContext';
+import { useAdminAuth } from '../../AdminAuthContext';
 import { 
   Users, 
   Search, 
@@ -14,7 +14,7 @@ import {
 import { Link } from 'react-router-dom';
 
 export default function AdminCustomers() {
-  const { preOrders } = useAuth();
+  const { preOrders } = useAdminAuth();
   const [searchTerm, setSearchTerm] = React.useState('');
 
   // Extract unique users from pre-orders (since I don't have a users list in mock yet)

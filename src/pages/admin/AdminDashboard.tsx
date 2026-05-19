@@ -1,5 +1,5 @@
 import React from 'react';
-import { useAuth } from '../../AuthContext';
+import { useAdminAuth } from '../../AdminAuthContext';
 import { 
   Package, 
   ShoppingBag, 
@@ -12,7 +12,7 @@ import {
 import { motion } from 'motion/react';
 
 export default function AdminDashboard() {
-  const { products, preOrders } = useAuth();
+  const { products, preOrders } = useAdminAuth();
   
   // Mock customer count (would normally be from users collection)
   const customerCount = 124; 

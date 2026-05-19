@@ -1,6 +1,6 @@
 import React, { useEffect } from 'react';
 import { Link, useNavigate, useLocation, Outlet } from 'react-router-dom';
-import { useAuth } from '../../AuthContext';
+import { useAdminAuth } from '../../AdminAuthContext';
 import { 
   LayoutDashboard, 
   ShoppingBag, 
@@ -17,18 +17,26 @@ import { cn } from '../../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 
 export default function AdminLayout() {
-  const { user, logout } = useAuth();
+  const { adminUser, adminLogout, isAdminLoading } = useAdminAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [isSidebarOpen, setIsSidebarOpen] = React.useState(true);
 
   useEffect(() => {
-    if (!user || user.role !== 'admin') {
+    if (!isAdminLoading && !adminUser) {
       navigate('/admin/login');
     }
-  }, [user, navigate]);
+  }, [adminUser, isAdminLoading, navigate]);
 
-  if (!user || user.role !== 'admin') return null;
+  if (isAdminLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+      </div>
+    );
+  }
+
+  if (!adminUser) return null;
 
   const menuItems = [
     { name: 'แดชบอร์ด', icon: LayoutDashboard, path: '/admin/dashboard' },
@@ -81,7 +89,7 @@ export default function AdminLayout() {
             {isSidebarOpen && <span>ไปยังหน้าร้าน</span>}
           </Link>
           <button
-            onClick={() => { logout(); navigate('/login'); }}
+            onClick={() => { adminLogout(); navigate('/admin/login'); }}
             className="flex items-center space-x-3 px-4 py-3 w-full text-red-400 hover:text-red-500 hover:bg-red-50 rounded-xl font-bold transition-all mt-2"
           >
             <LogOut className="h-5 w-5 shrink-0" />
@@ -108,11 +116,11 @@ export default function AdminLayout() {
           
           <div className="flex items-center space-x-4">
              <div className="text-right hidden sm:block">
-                <p className="text-sm font-bold text-gray-900">{user.name}</p>
-                <p className="text-[10px] text-gray-400 uppercase font-black tracking-widest">{user.role}</p>
+                <p className="text-sm font-bold text-gray-900">{adminUser.name}</p>
+                <p className="text-[10px] text-gray-400 uppercase font-black tracking-widest">{adminUser.role}</p>
              </div>
              <div className="w-10 h-10 bg-blue-50 rounded-full flex items-center justify-center text-blue-600 font-bold">
-                {user.name.charAt(0)}
+                {adminUser.name.charAt(0)}
              </div>
           </div>
         </header>

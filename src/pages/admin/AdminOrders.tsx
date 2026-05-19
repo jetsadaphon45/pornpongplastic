@@ -1,5 +1,5 @@
 import React from 'react';
-import { useAuth } from '../../AuthContext';
+import { useAdminAuth } from '../../AdminAuthContext';
 import { 
   ShoppingBag, 
   Search, 
@@ -17,7 +17,7 @@ import { PreOrder } from '../../types';
 import { cn } from '../../lib/utils';
 
 export default function AdminOrders() {
-  const { preOrders, updateOrderStatus } = useAuth();
+  const { preOrders, updateOrderStatus } = useAdminAuth();
   const [searchTerm, setSearchTerm] = React.useState('');
 
   const filteredOrders = preOrders.filter(o => 

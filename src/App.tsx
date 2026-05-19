@@ -22,6 +22,7 @@ import AdminCustomers from './pages/admin/AdminCustomers';
 import AdminLogin from './pages/admin/AdminLogin';
 import { CartProvider } from './CartContext';
 import { AuthProvider } from './AuthContext';
+import { AdminAuthProvider } from './AdminAuthContext';
 
 function AppContent() {
   const location = useLocation();
@@ -62,9 +63,11 @@ export default function App() {
   return (
     <Router>
       <AuthProvider>
-        <CartProvider>
-          <AppContent />
-        </CartProvider>
+        <AdminAuthProvider>
+          <CartProvider>
+            <AppContent />
+          </CartProvider>
+        </AdminAuthProvider>
       </AuthProvider>
     </Router>
   );

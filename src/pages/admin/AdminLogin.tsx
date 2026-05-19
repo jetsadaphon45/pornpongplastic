@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useAuth } from '../../AuthContext';
+import { useAdminAuth } from '../../AdminAuthContext';
 import { Anchor, Lock, Mail, ArrowRight, AlertCircle, ShieldAlert } from 'lucide-react';
 import { motion } from 'motion/react';
 
@@ -9,21 +9,21 @@ export default function AdminLogin() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const { login, user } = useAuth();
+  const { adminLogin, adminUser } = useAdminAuth();
   const navigate = useNavigate();
 
   useEffect(() => {
-    if (user && user.role === 'admin') {
-      navigate('/admin');
+    if (adminUser) {
+      navigate('/admin/dashboard');
     }
-  }, [user, navigate]);
+  }, [adminUser, navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setIsLoading(true);
 
-    const success = await login(email, password);
+    const success = await adminLogin(email, password);
     if (success) {
       navigate('/admin/dashboard');
     } else {

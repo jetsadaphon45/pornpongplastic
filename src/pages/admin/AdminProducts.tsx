@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
-import { useAuth } from '../../AuthContext';
+import { useAdminAuth } from '../../AdminAuthContext';
 import { Plus, Search, Filter, Edit2, Trash2, MoreVertical, Image as ImageIcon, CheckCircle2, XCircle, Clock as ClockIcon, Upload } from 'lucide-react';
 import { Product } from '../../types';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../../lib/utils';
 
 export default function AdminProducts() {
-  const { products, addProduct, updateProduct, deleteProduct, uploadImage } = useAuth();
+  const { products, addProduct, updateProduct, deleteProduct, uploadImage } = useAdminAuth();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
