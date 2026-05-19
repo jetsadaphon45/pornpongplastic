@@ -3,13 +3,7 @@ import { User, Product, PreOrder } from './types';
 import { supabase } from './lib/supabase';
 import { 
   getUserProfile, 
-  saveUserProfile, 
-  getProducts, 
-  upsertProduct, 
-  removeProduct,
-  getOrders,
-  createOrder,
-  updateOrderStatusRemotely
+  saveUserProfile
 } from './services/supabaseService';
 import { uploadToCloudinary } from './services/cloudinaryService';
 
@@ -109,12 +103,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // Sync Data
   useEffect(() => {
     const fetchData = async () => {
-      const dbProducts = await getProducts();
-      setProducts(dbProducts);
+      // Load products from localStorage
+      const savedProducts = localStorage.getItem('pornpong_products');
+      if (savedProducts) {
+        setProducts(JSON.parse(savedProducts));
+      } else {
+        setProducts([]);
+      }
 
-      if (user) {
-        const dbOrders = await getOrders(user.role === 'admin' ? undefined : user.id);
-        setPreOrders(dbOrders);
+      // Load orders from localStorage
+      const savedOrders = localStorage.getItem('pornpong_orders');
+      if (savedOrders) {
+        let orders = JSON.parse(savedOrders);
+        // Filter by user if not admin
+        if (user && user.role !== 'admin') {
+          orders = orders.filter((o: PreOrder) => o.userId === user.id);
+        }
+        setPreOrders(orders);
       }
     };
 
@@ -198,20 +203,41 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const addProduct = async (product: Product) => {
-    const id = await upsertProduct(product);
-    if (id) {
-      setProducts(prev => [{ ...product, id }, ...prev]);
+    try {
+      const id = crypto.randomUUID();
+      const newProduct = { ...product, id };
+      const updatedProducts = [newProduct, ...products];
+      localStorage.setItem('pornpong_products', JSON.stringify(updatedProducts));
+      setProducts(updatedProducts);
+      alert('เพิ่มสินค้าสำเร็จ');
+    } catch (err: any) {
+      alert(`ไม่สามารถเพิ่มสินค้าได้: ${err.message}`);
+      throw err;
     }
   };
 
   const updateProduct = async (product: Product) => {
-    await upsertProduct(product);
-    setProducts(prev => prev.map(p => p.id === product.id ? product : p));
+    try {
+      const updatedProducts = products.map(p => p.id === product.id ? product : p);
+      localStorage.setItem('pornpong_products', JSON.stringify(updatedProducts));
+      setProducts(updatedProducts);
+      alert('แก้ไขสินค้าสำเร็จ');
+    } catch (err: any) {
+      alert(`ไม่สามารถแก้ไขสินค้าได้: ${err.message}`);
+      throw err;
+    }
   };
 
   const deleteProduct = async (productId: string) => {
-    await removeProduct(productId);
-    setProducts(prev => prev.filter(p => p.id !== productId));
+    try {
+      const updatedProducts = products.filter(p => p.id !== productId);
+      localStorage.setItem('pornpong_products', JSON.stringify(updatedProducts));
+      setProducts(updatedProducts);
+      alert('ลบสินค้าสำเร็จ');
+    } catch (err: any) {
+      alert(`ไม่สามารถลบสินค้าได้: ${err.message}`);
+      throw err;
+    }
   };
 
   const uploadImage = async (file: File) => {
@@ -219,21 +245,48 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const addPreOrder = async (orderData: Omit<PreOrder, 'id' | 'createdAt' | 'status'>) => {
-    const id = await createOrder(orderData);
-    if (id) {
+    try {
+      const id = crypto.randomUUID();
       const newOrder: PreOrder = {
         ...orderData,
         id,
-        status: 'pending',
+        status: 'pending' as const,
         createdAt: new Date().toISOString()
       };
-      setPreOrders(prev => [newOrder, ...prev]);
+      
+      const savedOrders = localStorage.getItem('pornpong_orders');
+      const allOrders = savedOrders ? JSON.parse(savedOrders) : [];
+      const updatedAllOrders = [newOrder, ...allOrders];
+      
+      localStorage.setItem('pornpong_orders', JSON.stringify(updatedAllOrders));
+      
+      // Update local state (filtered for current view)
+      if (user && (user.role === 'admin' || user.id === orderData.userId)) {
+        setPreOrders(prev => [newOrder, ...prev]);
+      } else if (!user || orderData.userId === 'GUEST') {
+        setPreOrders(prev => [newOrder, ...prev]);
+      }
+      
+      alert('บันทึกการสั่งจองสำเร็จ พนักงานจะติดต่อกลับโดยเร็วที่สุด');
+    } catch (err: any) {
+      alert(`ไม่สามารถบันทึกการจองได้: ${err.message}`);
+      throw err;
     }
   };
 
   const updateOrderStatus = async (orderId: string, status: PreOrder['status']) => {
-    await updateOrderStatusRemotely(orderId, status);
-    setPreOrders(prev => prev.map(o => o.id === orderId ? { ...o, status } : o));
+    try {
+      const savedOrders = localStorage.getItem('pornpong_orders');
+      if (savedOrders) {
+        const allOrders = JSON.parse(savedOrders);
+        const updatedAllOrders = allOrders.map((o: PreOrder) => o.id === orderId ? { ...o, status } : o);
+        localStorage.setItem('pornpong_orders', JSON.stringify(updatedAllOrders));
+        setPreOrders(prev => prev.map(o => o.id === orderId ? { ...o, status } : o));
+      }
+    } catch (err: any) {
+      alert(`ไม่สามารถอัปเดตสถานะได้: ${err.message}`);
+      throw err;
+    }
   };
 
   return (
