@@ -1,43 +1,47 @@
 export interface Product {
   id: string;
   name: string;
-  category: 'fiberglass' | 'plastic' | 'rowboat' | 'accessory';
+  originalPrice: number;
   price: number;
+  discountRate?: number;
+  category: 'rowboat' | 'fishing' | 'kayak' | 'accessory';
+  categoryThai: string;
+  images: string[];
+  length?: string;
+  width?: string;
+  weight?: string;
+  capacity?: string;
+  seats?: number;
   description: string;
-  specs: {
-    size: string;
-    material: string;
-    capacity: string;
-  };
-  image: string;
-  status: 'available' | 'preorder' | 'outofstock';
+  longDescription: string;
+  features: string[];
+  colors: { name: string; hex: string }[];
+  rating: number;
+  reviewCount: number;
+  inStock: boolean;
+  status?: 'instock' | 'outofstock' | 'preorder';
+  stockQuantity?: number;
+  specs?: string;
 }
 
-export interface CartItem extends Product {
+export interface FAQItem {
+  id: string;
+  question: string;
+  answer: string;
+  category: string;
+}
+
+export interface CartItem {
+  product: Product;
   quantity: number;
+  selectedColor: string;
 }
 
-export interface User {
+export interface Review {
   id: string;
-  name: string;
-  email: string;
-  password?: string;
-  phone: string;
-  lineId: string;
-  address: string;
-  role: 'admin' | 'user';
-}
-
-export interface PreOrder {
-  id: string;
-  userId: string;
-  userName: string;
-  userPhone: string;
-  userLineId: string;
-  items: CartItem[];
-  status: 'pending' | 'contacting' | 'producing' | 'shipped' | 'cancelled';
-  totalEstimatedPrice: number;
-  shippingAddress: string;
-  notes: string;
-  createdAt: string;
+  author: string;
+  rating: number;
+  date: string;
+  comment: string;
+  verified: boolean;
 }
