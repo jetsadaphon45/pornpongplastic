@@ -1,6 +1,0 @@
-{
-  "name": "พรพงศ์พลาสติก - จำหน่ายเรือไฟเบอร์และเรือพลาสติก",
-  "description": "ร้านจำหน่ายเรือไฟเบอร์ เรือพลาสติก เรือพาย และอุปกรณ์เสริมเรือคุณภาพสูง ทนทาน สำหรับการประมงและสันทนาการ",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}
