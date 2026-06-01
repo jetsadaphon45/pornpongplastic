@@ -32,7 +32,7 @@ import {
   X
 } from 'lucide-react';
 import { Product } from '../types';
-import { supabaseProducts } from '../lib/supabase';
+import { supabaseProducts, supabase } from '../lib/supabase';
 import { AppNotification } from './NotificationDropdown';
 
 interface AdminDashboardProps {
@@ -155,25 +155,26 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
   // Interactive Administration Datasets backed by Supabase
   const [adminProducts, setAdminProducts] = React.useState<Product[]>([]);
 
+  const reloadProducts = React.useCallback(async () => {
+    try {
+      const data = await supabaseProducts.list();
+      setAdminProducts(data);
+    } catch (err) {
+      console.error('Failed to sync admin products with Supabase:', err);
+    }
+  }, []);
+
   React.useEffect(() => {
-    const fetchAdminProducts = async () => {
-      try {
-        const data = await supabaseProducts.list();
-        setAdminProducts(data);
-      } catch (err) {
-        console.error('Failed to sync admin products with Supabase:', err);
-      }
-    };
-    fetchAdminProducts();
+    reloadProducts();
 
     const handleProductsUpdated = () => {
-      fetchAdminProducts();
+      reloadProducts();
     };
     window.addEventListener('products-updated', handleProductsUpdated);
     return () => {
       window.removeEventListener('products-updated', handleProductsUpdated);
     };
-  }, []);
+  }, [reloadProducts]);
 
   const [adminOrders, setAdminOrders] = React.useState<any[]>(() => {
     const saved = localStorage.getItem('pornpong_admin_orders');
@@ -552,94 +553,93 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
   const [pDescription, setPDescription] = React.useState<string>('');
   const [pSpecs, setPSpecs] = React.useState<string>('');
   const [pImage, setPImage] = React.useState<string>('');
+  const [pFormError, setPFormError] = React.useState<string | null>(null);
+  const [isUploadingImage, setIsUploadingImage] = React.useState(false);
+
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsUploadingImage(true);
+    setPFormError(null);
+
+    try {
+      if (!supabase) {
+        throw new Error('Supabase client is not initialized. Please configure VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY first.');
+      }
+
+      const path = `products/${Date.now()}-${file.name}`;
+      const { error: uploadError } = await supabase.storage
+        .from('product-images')
+        .upload(path, file);
+
+      if (uploadError) {
+        throw uploadError;
+      }
+
+      const { data } = supabase.storage
+        .from('product-images')
+        .getPublicUrl(path);
+
+      if (!data?.publicUrl) {
+        throw new Error('Failed to retrieve the uploaded public URL.');
+      }
+
+      setPImage(data.publicUrl);
+      triggerToast('อัปโหลดไฟล์ภาพสินค้าไปยัง Supabase Storage สำเร็จแล้ว!');
+    } catch (err: any) {
+      console.error('Failed to upload image:', err);
+      const errMsg = err?.message || String(err);
+      setPFormError(`ล้มเหลวในการอัปโหลดรูปภาพ: ${errMsg}`);
+      triggerToast(`อัปโหลดล้มเหลว: ${errMsg}`);
+    } finally {
+      setIsUploadingImage(false);
+    }
+  };
 
   const handleProductSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!pName || !pId) return;
 
-    const finalInStock = pStatus === 'instock' || (pStatus === 'preorder' && pStockQty > 0);
-    const computedCategoryThai = pCategory === 'rowboat' ? 'เรือพายอเนกประสงค์' : pCategory === 'fishing' ? 'เรือตกปลา / พ่วงเครื่องยนต์' : pCategory === 'kayak' ? 'เรือคายัคสุดแรง' : 'อุปกรณ์พรมัดระนาบ';
+    setPFormError(null);
 
     const itemPayload = {
-      id: pId,
+      sku: pId,
+      model_id: pId,
       name: pName,
       price: Number(pPrice),
       category: pCategory,
       status: pStatus,
       description: pDescription || 'เรือพกพา คุณภาพเกรดบอดี้หลอมหนาพิเศษ ตราพรพงศ์',
-      images: pImage ? [pImage] : ['https://images.unsplash.com/photo-1544551763-46a013bb70d5?q=80&w=800']
+      images: pImage ? [pImage] : ['https://images.unsplash.com/photo-1544551763-46a013bb70d5?q=80&w=800'],
+      stockQuantity: Number(pStockQty)
     };
 
     try {
       if (editingProduct) {
         // Edit mode (UPDATE statement in Supabase)
         await supabaseProducts.update(editingProduct.id, itemPayload);
-        
-        setAdminProducts(prev => prev.map(prod => {
-          if (prod.id === editingProduct.id) {
-            return {
-              ...prod,
-              name: pName,
-              price: Number(pPrice),
-              category: pCategory as any,
-              categoryThai: computedCategoryThai,
-              inStock: finalInStock,
-              status: pStatus,
-              length: pLength || prod.length,
-              capacity: pCapacity || prod.capacity,
-              stockQuantity: Number(pStockQty),
-              description: pDescription || prod.description,
-              longDescription: pDescription || prod.longDescription,
-              specs: pSpecs || prod.specs,
-              images: pImage ? [pImage] : prod.images
-            };
-          }
-          return prod;
-        }));
         triggerToast('แก้ไขข้อมูลสินค้าในระบบระบบ Supabase เรียบร้อยแล้ว');
       } else {
-        // Add mode (INSERT statement in Supabase)
-        const newProd: Product = {
-          id: pId,
-          name: pName,
-          originalPrice: Math.floor(pPrice * 1.25),
-          price: Number(pPrice),
-          discountRate: 20,
-          category: pCategory as any,
-          categoryThai: computedCategoryThai,
-          images: pImage ? [pImage] : ['https://images.unsplash.com/photo-1544551763-46a013bb70d5?q=80&w=800'],
-          length: pLength || '2.80 เมตร',
-          width: '1.0 เมตร',
-          weight: '25 กิโลกรัม',
-          capacity: pCapacity || '200 กิโลกรัม',
-          seats: 2,
-          description: pDescription || 'เรือพกพา คุณภาพเกรดบอดี้หลอมหนาพิเศษ',
-          longDescription: pDescription || 'เรือพลาสติกหนาพิเศษ ผลิตตรงจากโรงงานสมุทรสาคร เหมาะสำหรับพกพาและใช้งานในน้ำหลากชนิด ทนแดด UV สารป้องกัน 8 เท่า',
-          features: ['ทนต่อแสงแดด UV-8', 'ความเหนียวแน่นสองชั้น', 'รับส่วนลดพิเศษแคมเปญ'],
-          colors: [{ name: 'ฟ้าพรีเซ้นต์', hex: '#0284c7' }],
-          rating: 4.8,
-          reviewCount: 1,
-          inStock: finalInStock,
-          status: pStatus,
-          stockQuantity: Number(pStockQty),
-          specs: pSpecs
-        };
-
-        await supabaseProducts.insert(newProd);
-        setAdminProducts(prev => [newProd, ...prev]);
+        // Add mode (INSERT statement in Supabase without sending id property)
+        await supabaseProducts.insert(itemPayload);
         triggerToast('เพิ่มผลิตภัณฑ์ใหม่เข้าระบบ Supabase สำเร็จ');
       }
 
+      // Reload products list directly from database (ensuring the new UUID product is matched)
+      await reloadProducts();
+
       // Notify App.tsx immediately of database updates
       window.dispatchEvent(new Event('products-updated'));
-    } catch (err) {
+
+      setIsProductAddOpen(false);
+      setEditingProduct(null);
+      clearProductForm();
+    } catch (err: any) {
       console.error('Failed to submit product through Supabase:', err);
+      setPFormError(err?.message || String(err));
       triggerToast('เกิดข้อผิดพลาดในการเขียนข้อมูลไปยัง database');
     }
-
-    setIsProductAddOpen(false);
-    setEditingProduct(null);
-    clearProductForm();
   };
 
   const clearProductForm = () => {
@@ -655,11 +655,13 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
     setPDescription('');
     setPSpecs('');
     setPImage('');
+    setPFormError(null);
   };
 
   const openEditProduct = (prod: Product) => {
+    setPFormError(null);
     setEditingProduct(prod);
-    setPId(prod.id);
+    setPId(prod.sku || prod.model_id || prod.id);
     setPName(prod.name);
     setPPrice(prod.price);
     setPCategory(prod.category);
@@ -678,7 +680,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
     if (confirm('คุณต้องการลบรื้อถอนสินค้า ID: ' + id + ' หรือไม่? ข้อมูลรูปภาพและสถิติจะถูกล้าง')) {
       try {
         await supabaseProducts.delete(id);
-        setAdminProducts(prev => prev.filter(prod => prod.id !== id));
+        await reloadProducts();
         window.dispatchEvent(new Event('products-updated'));
         triggerToast('ถอนรหัสถอนลายพลาสติกเรือออกจาก Supabase แล้ว');
       } catch (err) {
@@ -1074,7 +1076,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                   </div>
 
                   {/* Accessories Month */}
-                  <div className="flex flex-col items-center flex-1 group">
+                  <div className="flex flex-col items-center flex-1 group text-center">
                     <div className="relative w-full flex justify-center">
                       <div className="absolute -top-7 scale-0 group-hover:scale-100 transition-all bg-slate-950 border border-slate-800 text-[9px] py-0.5 px-2 rounded-md text-white font-bold leading-none pointer-events-none whitespace-nowrap">
                         2,940 บาท
@@ -1284,7 +1286,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                     <tbody className="divide-y divide-slate-850/60">
                       {filteredAdminProducts.map((prod) => (
                         <tr key={prod.id} className="hover:bg-slate-900/40 text-[11px]">
-                          <td className="py-3.5 px-4 font-mono font-bold text-slate-350">{prod.id}</td>
+                          <td className="py-3.5 px-4 font-mono font-bold text-slate-350">{prod.sku || prod.model_id || prod.id}</td>
                           <td className="py-3.5 px-3">
                             <img 
                               src={prod.images?.[0]} 
@@ -1362,6 +1364,14 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                     </h3>
 
                     <form onSubmit={handleProductSubmit} className="space-y-4">
+                      {pFormError && (
+                        <div className="bg-rose-950/60 border border-rose-850 rounded-xl p-3 text-rose-200">
+                          <p className="font-bold mb-1 font-sans text-xs text-rose-400">
+                            เกิดข้อผิดพลาดในการบันทึกข้อมูลไปยัง Supabase
+                          </p>
+                          <p className="font-mono text-[10px] bg-slate-950/80 px-2.5 py-1.5 rounded-lg border border-slate-900 mt-1.5 break-words leading-tight max-h-24 overflow-y-auto whitespace-pre-wrap">{pFormError}</p>
+                        </div>
+                      )}
                       
                       {/* Image Upload UI */}
                       <div className="bg-slate-950/40 p-3 rounded-xl border border-slate-800/60">

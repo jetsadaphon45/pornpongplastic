@@ -1,5 +1,7 @@
 export interface Product {
   id: string;
+  sku?: string;
+  model_id?: string;
   name: string;
   originalPrice: number;
   price: number;
