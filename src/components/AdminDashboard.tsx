@@ -32,7 +32,7 @@ import {
   X
 } from 'lucide-react';
 import { Product } from '../types';
-import { PRODUCTS } from '../data';
+import { supabaseProducts } from '../lib/supabase';
 import { AppNotification } from './NotificationDropdown';
 
 interface AdminDashboardProps {
@@ -152,11 +152,28 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
   // Active Menu Tab state
   const [activeMenu, setActiveMenu] = React.useState<string>('dashboard');
 
-  // Interactive Administration Datasets backed by localState
-  const [adminProducts, setAdminProducts] = React.useState<Product[]>(() => {
-    const saved = localStorage.getItem('pornpong_admin_products');
-    return saved ? JSON.parse(saved) : PRODUCTS;
-  });
+  // Interactive Administration Datasets backed by Supabase
+  const [adminProducts, setAdminProducts] = React.useState<Product[]>([]);
+
+  React.useEffect(() => {
+    const fetchAdminProducts = async () => {
+      try {
+        const data = await supabaseProducts.list();
+        setAdminProducts(data);
+      } catch (err) {
+        console.error('Failed to sync admin products with Supabase:', err);
+      }
+    };
+    fetchAdminProducts();
+
+    const handleProductsUpdated = () => {
+      fetchAdminProducts();
+    };
+    window.addEventListener('products-updated', handleProductsUpdated);
+    return () => {
+      window.removeEventListener('products-updated', handleProductsUpdated);
+    };
+  }, []);
 
   const [adminOrders, setAdminOrders] = React.useState<any[]>(() => {
     const saved = localStorage.getItem('pornpong_admin_orders');
@@ -313,9 +330,6 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
   };
 
   // Cache persistence for all dynamic lists
-  React.useEffect(() => {
-    localStorage.setItem('pornpong_admin_products', JSON.stringify(adminProducts));
-  }, [adminProducts]);
 
   React.useEffect(() => {
     localStorage.setItem('pornpong_admin_orders', JSON.stringify(adminOrders));
@@ -539,66 +553,88 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
   const [pSpecs, setPSpecs] = React.useState<string>('');
   const [pImage, setPImage] = React.useState<string>('');
 
-  const handleProductSubmit = (e: React.FormEvent) => {
+  const handleProductSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!pName || !pId) return;
 
     const finalInStock = pStatus === 'instock' || (pStatus === 'preorder' && pStockQty > 0);
-    const computedCategoryThai = pCategory === 'rowboat' ? 'เรือพายทั่วไป' : pCategory === 'fishing' ? 'เรือตกปลา' : pCategory === 'kayak' ? 'เรือคายัค' : 'อุปกรณ์เสริม';
+    const computedCategoryThai = pCategory === 'rowboat' ? 'เรือพายอเนกประสงค์' : pCategory === 'fishing' ? 'เรือตกปลา / พ่วงเครื่องยนต์' : pCategory === 'kayak' ? 'เรือคายัคสุดแรง' : 'อุปกรณ์พรมัดระนาบ';
 
-    if (editingProduct) {
-      // Edit mode
-      setAdminProducts(prev => prev.map(prod => {
-        if (prod.id === editingProduct.id) {
-          return {
-            ...prod,
-            name: pName,
-            price: Number(pPrice),
-            category: pCategory as any,
-            categoryThai: computedCategoryThai,
-            inStock: finalInStock,
-            status: pStatus,
-            length: pLength || prod.length,
-            capacity: pCapacity || prod.capacity,
-            stockQuantity: Number(pStockQty),
-            description: pDescription || prod.description,
-            longDescription: pDescription || prod.longDescription,
-            specs: pSpecs || prod.specs,
-            images: pImage ? [pImage] : prod.images
-          };
-        }
-        return prod;
-      }));
-      triggerToast('แก้ไขข้อมูลสินค้าเรียบร้อยแล้ว');
-    } else {
-      // Add mode
-      const newProd: Product = {
-        id: pId,
-        name: pName,
-        originalPrice: Math.floor(pPrice * 1.2),
-        price: Number(pPrice),
-        discountRate: 15,
-        category: pCategory as any,
-        categoryThai: computedCategoryThai,
-        images: pImage ? [pImage] : ['https://images.unsplash.com/photo-1540959733332-eab4deceeaf7?q=80&w=800&auto=format&fit=crop'],
-        length: pLength || '2.80 เมตร',
-        width: '1.0 เมตร',
-        weight: '25 กิโลกรัม',
-        capacity: pCapacity || '200 กิโลกรัม',
-        seats: 2,
-        description: pDescription || 'เรือพกพา คุณภาพเกรดบอดี้หลอมหนาพิเศษ',
-        longDescription: pDescription || 'เรือพลาสติกหนาพิเศษ ผลิตตรงจากโรงงานสมุทรสาคร เหมาะสำหรับพกพาและใช้งานในน้ำหลากชนิด ทนแดด UV สารป้องกัน 8 เท่า',
-        features: ['ทนต่อแสงแดด UV-8', 'ความเหนียวแน่นสองชั้น', 'รับส่วนลดพิเศษแคมเปญ'],
-        colors: [{ name: 'ฟ้าพรีเซ้นต์', hex: '#0284c7' }],
-        rating: 4.8,
-        reviewCount: 1,
-        inStock: finalInStock,
-        status: pStatus,
-        stockQuantity: Number(pStockQty),
-        specs: pSpecs
-      };
-      setAdminProducts(prev => [newProd, ...prev]);
-      triggerToast('บันทึกเพิ่มผลิตภัณฑ์ใหม่เสร็จสมบูรณ์');
+    const itemPayload = {
+      id: pId,
+      name: pName,
+      price: Number(pPrice),
+      category: pCategory,
+      status: pStatus,
+      description: pDescription || 'เรือพกพา คุณภาพเกรดบอดี้หลอมหนาพิเศษ ตราพรพงศ์',
+      images: pImage ? [pImage] : ['https://images.unsplash.com/photo-1544551763-46a013bb70d5?q=80&w=800']
+    };
+
+    try {
+      if (editingProduct) {
+        // Edit mode (UPDATE statement in Supabase)
+        await supabaseProducts.update(editingProduct.id, itemPayload);
+        
+        setAdminProducts(prev => prev.map(prod => {
+          if (prod.id === editingProduct.id) {
+            return {
+              ...prod,
+              name: pName,
+              price: Number(pPrice),
+              category: pCategory as any,
+              categoryThai: computedCategoryThai,
+              inStock: finalInStock,
+              status: pStatus,
+              length: pLength || prod.length,
+              capacity: pCapacity || prod.capacity,
+              stockQuantity: Number(pStockQty),
+              description: pDescription || prod.description,
+              longDescription: pDescription || prod.longDescription,
+              specs: pSpecs || prod.specs,
+              images: pImage ? [pImage] : prod.images
+            };
+          }
+          return prod;
+        }));
+        triggerToast('แก้ไขข้อมูลสินค้าในระบบระบบ Supabase เรียบร้อยแล้ว');
+      } else {
+        // Add mode (INSERT statement in Supabase)
+        const newProd: Product = {
+          id: pId,
+          name: pName,
+          originalPrice: Math.floor(pPrice * 1.25),
+          price: Number(pPrice),
+          discountRate: 20,
+          category: pCategory as any,
+          categoryThai: computedCategoryThai,
+          images: pImage ? [pImage] : ['https://images.unsplash.com/photo-1544551763-46a013bb70d5?q=80&w=800'],
+          length: pLength || '2.80 เมตร',
+          width: '1.0 เมตร',
+          weight: '25 กิโลกรัม',
+          capacity: pCapacity || '200 กิโลกรัม',
+          seats: 2,
+          description: pDescription || 'เรือพกพา คุณภาพเกรดบอดี้หลอมหนาพิเศษ',
+          longDescription: pDescription || 'เรือพลาสติกหนาพิเศษ ผลิตตรงจากโรงงานสมุทรสาคร เหมาะสำหรับพกพาและใช้งานในน้ำหลากชนิด ทนแดด UV สารป้องกัน 8 เท่า',
+          features: ['ทนต่อแสงแดด UV-8', 'ความเหนียวแน่นสองชั้น', 'รับส่วนลดพิเศษแคมเปญ'],
+          colors: [{ name: 'ฟ้าพรีเซ้นต์', hex: '#0284c7' }],
+          rating: 4.8,
+          reviewCount: 1,
+          inStock: finalInStock,
+          status: pStatus,
+          stockQuantity: Number(pStockQty),
+          specs: pSpecs
+        };
+
+        await supabaseProducts.insert(newProd);
+        setAdminProducts(prev => [newProd, ...prev]);
+        triggerToast('เพิ่มผลิตภัณฑ์ใหม่เข้าระบบ Supabase สำเร็จ');
+      }
+
+      // Notify App.tsx immediately of database updates
+      window.dispatchEvent(new Event('products-updated'));
+    } catch (err) {
+      console.error('Failed to submit product through Supabase:', err);
+      triggerToast('เกิดข้อผิดพลาดในการเขียนข้อมูลไปยัง database');
     }
 
     setIsProductAddOpen(false);
@@ -638,10 +674,17 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
     setIsProductAddOpen(true);
   };
 
-  const deleteProduct = (id: string) => {
-    if (confirm('คุณต้องการรื้อถอนสินค้า ID: ' + id + ' หรือไม่?')) {
-      setAdminProducts(prev => prev.filter(prod => prod.id !== id));
-      triggerToast('ถอนรหัสเรือออกจากสารบบแล้ว');
+  const deleteProduct = async (id: string) => {
+    if (confirm('คุณต้องการลบรื้อถอนสินค้า ID: ' + id + ' หรือไม่? ข้อมูลรูปภาพและสถิติจะถูกล้าง')) {
+      try {
+        await supabaseProducts.delete(id);
+        setAdminProducts(prev => prev.filter(prod => prod.id !== id));
+        window.dispatchEvent(new Event('products-updated'));
+        triggerToast('ถอนรหัสถอนลายพลาสติกเรือออกจาก Supabase แล้ว');
+      } catch (err) {
+        console.error('Failed to delete product:', err);
+        triggerToast('ไม่สามารถลบสินค้าได้');
+      }
     }
   };
 
@@ -2092,6 +2135,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                     onClick={() => {
                       if (confirm('คุณต้องการคืนค่าโรงงานข้อมูลแอดมินทั้งหมดและล้างแคชจำลองหรือไม่? ข้อมูลพรีออเดอร์/การตั้งค่าจะรีเซ็ต')) {
                         localStorage.removeItem('pornpong_admin_products');
+                        localStorage.removeItem('pornpong_supabase_fallback_products');
                         localStorage.removeItem('pornpong_admin_orders');
                         localStorage.removeItem('pornpong_admin_pre_orders');
                         localStorage.removeItem('pornpong_admin_coupons');

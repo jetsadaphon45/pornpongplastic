@@ -62,7 +62,7 @@ export default function HomeSection({
           <div className="absolute bottom-10 left-10 w-96 h-96 bg-cyan-100/50 rounded-full filter blur-3xl" />
         </div>
 
-        <div className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 grid grid-cols-1 lg:grid-cols-12 gap-12 items-center">
+        <div className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 items-center">
           {/* Hero Left Info */}
           <div className="lg:col-span-7 text-center lg:text-left">
             <span className="inline-flex items-center gap-1.5 rounded-full bg-sky-100 px-3 py-1 text-xs font-bold text-brand-blue shadow-xs mb-4">

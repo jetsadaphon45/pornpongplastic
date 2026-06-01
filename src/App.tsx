@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 
 import { Product, CartItem } from './types';
-import { PRODUCTS } from './data';
+import { supabaseProducts } from './lib/supabase';
 
 import Header from './components/Header';
 import Footer from './components/Footer';
@@ -33,6 +33,35 @@ import FAQSection from './components/FAQSection';
 import ContactSection from './components/ContactSection';
 
 export default function App() {
+  const [products, setProducts] = React.useState<Product[]>([]);
+  const [isLoadingProducts, setIsLoadingProducts] = React.useState<boolean>(true);
+
+  const fetchSupabaseProducts = React.useCallback(async () => {
+    setIsLoadingProducts(true);
+    try {
+      const data = await supabaseProducts.list();
+      setProducts(data);
+    } catch (e) {
+      console.error('Failed to load products from Supabase:', e);
+    } finally {
+      setIsLoadingProducts(false);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    fetchSupabaseProducts();
+  }, [fetchSupabaseProducts]);
+
+  React.useEffect(() => {
+    const handleProductsUpdated = () => {
+      fetchSupabaseProducts();
+    };
+    window.addEventListener('products-updated', handleProductsUpdated);
+    return () => {
+      window.removeEventListener('products-updated', handleProductsUpdated);
+    };
+  }, [fetchSupabaseProducts]);
+
   // Navigation & View States
   const [activeTab, setActiveTab ] = React.useState<string>('home');
   const [selectedProduct, setSelectedProduct] = React.useState<Product | null>(null);
@@ -239,6 +268,89 @@ export default function App() {
     setCart([]);
   };
 
+  const handleSubmitOrder = (orderDetails: { fullName: string; phone: string; address: string; notes?: string }) => {
+    try {
+      // 1. Load existing orders
+      const savedOrdersStr = localStorage.getItem('pornpong_admin_orders');
+      let currentAdminOrders = [];
+      if (savedOrdersStr) {
+        try {
+          currentAdminOrders = JSON.parse(savedOrdersStr);
+        } catch {
+          currentAdminOrders = [];
+        }
+      }
+
+      // 2. Load existing pre-orders
+      const savedPreOrdersStr = localStorage.getItem('pornpong_admin_pre_orders');
+      let currentAdminPreOrders = [];
+      if (savedPreOrdersStr) {
+        try {
+          currentAdminPreOrders = JSON.parse(savedPreOrdersStr);
+        } catch {
+          currentAdminPreOrders = [];
+        }
+      }
+
+      // Format current date in Thai style e.g. "1 มิ.ย. 2026"
+      const dateOption: Intl.DateTimeFormatOptions = { day: 'numeric', month: 'short', year: 'numeric' };
+      const formattedDate = new Date().toLocaleDateString('th-TH', dateOption);
+
+      cart.forEach((item) => {
+        const isPre = item.product.status === 'preorder' || item.product.category === 'kayak';
+        const randomId = Math.floor(1000 + Math.random() * 9000);
+
+        if (isPre) {
+          const newPreOrder = {
+            id: `PRE-2026-${randomId}`,
+            customerName: orderDetails.fullName,
+            phone: orderDetails.phone,
+            date: formattedDate,
+            productName: item.product.name,
+            color: item.selectedColor,
+            quantity: item.quantity,
+            deposit: Math.round(item.product.price * 0.3), // 30% deposit
+            fullPrice: item.product.price * item.quantity,
+            status: 'Pending',
+            shipmentNo: ''
+          };
+          currentAdminPreOrders.unshift(newPreOrder);
+        } else {
+          const newOrder = {
+            id: `ORD-2026-${randomId}`,
+            customerName: orderDetails.fullName,
+            date: formattedDate,
+            productName: item.product.name,
+            color: item.selectedColor,
+            amount: item.product.price * item.quantity,
+            status: 'Pending',
+            shipmentNo: ''
+          };
+          currentAdminOrders.unshift(newOrder);
+        }
+      });
+
+      localStorage.setItem('pornpong_admin_orders', JSON.stringify(currentAdminOrders));
+      localStorage.setItem('pornpong_admin_pre_orders', JSON.stringify(currentAdminPreOrders));
+
+      // 3. Add order success notification
+      const randomId = 'noti-' + Math.floor(Math.random() * 1000000);
+      const newNoti = {
+        id: randomId,
+        title: 'คุณได้รับใบเสนอราคายืนยันการสั่งซื้อสำเร็จ',
+        message: `ใบจองสั่งซื้อของ คุณ ${orderDetails.fullName} ได้รับการบันทึกเข้าระบบหลังร้านพรพงศ์เรียบร้อยแล้ว`,
+        type: 'order',
+        date: 'เมื่อครู่',
+        isRead: false
+      };
+      setNotifications(prev => [newNoti, ...prev]);
+
+      triggerToast('บันทึกคำสั่งจองจำลองเข้าระบบคอนโซลแอดมินเรียบร้อย!');
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
   const categories = [
     { value: 'all', label: 'สินค้าทั้งหมด' },
     { value: 'rowboat', label: 'เรือพายอเนกประสงค์' },
@@ -248,7 +360,7 @@ export default function App() {
   ];
 
   // Filtering + Sorting Products data logic
-  const filteredProducts = PRODUCTS.filter((product) => {
+  const filteredProducts = products.filter((product) => {
     const matchesCategory = categoryFilter === 'all' || product.category === categoryFilter;
     const matchesStatus = statusFilter === 'all' || product.status === statusFilter;
     const matchesSearch = product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -344,7 +456,7 @@ export default function App() {
         {/* Home Window */}
         {activeTab === 'home' && (
           <HomeSection 
-            products={PRODUCTS}
+            products={products}
             onSelectProduct={(prod) => {
               setSelectedProduct(prod);
             }}
@@ -500,6 +612,8 @@ export default function App() {
         onUpdateQuantity={handleUpdateCartQuantity}
         onRemoveItem={handleRemoveCartItem}
         onClearCart={handleClearCart}
+        currentUser={currentUser}
+        onSubmitOrder={handleSubmitOrder}
       />
 
       {/* 6. STATIC TRUSTFOOTER */}

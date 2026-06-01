@@ -45,3 +45,10 @@ export interface Review {
   comment: string;
   verified: boolean;
 }
+
+export interface User {
+  name?: string;
+  fullName?: string;
+  email: string;
+  phone: string;
+}

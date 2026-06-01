@@ -32,7 +32,7 @@ export default function CartDrawer({
   // Auto fill details if user is logged in
   React.useEffect(() => {
     if (isOpen && currentUser) {
-      setFullName(currentUser.fullName);
+      setFullName(currentUser.fullName || currentUser.name || '');
       setPhone(currentUser.phone);
     } else if (isOpen) {
       setFullName('');
