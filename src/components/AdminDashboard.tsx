@@ -599,13 +599,20 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
 
   const handleProductSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!pName || !pId) return;
+    if (!pName) return;
 
     setPFormError(null);
 
+    let finalModelId = pId ? pId.trim() : '';
+    if (!finalModelId) {
+      const catPrefix = pCategory ? pCategory.toLowerCase().replace(/[^a-z0-9]/g, '') : 'boat';
+      const randSuffix = Math.floor(1000 + Math.random() * 9000);
+      finalModelId = `boat-${catPrefix}-${Date.now().toString().slice(-6)}-${randSuffix}`;
+    }
+
     const itemPayload = {
-      sku: pId,
-      model_id: pId,
+      sku: finalModelId,
+      model_id: finalModelId,
       name: pName,
       price: Number(pPrice),
       category: pCategory,
@@ -1421,14 +1428,13 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
 
                       <div className="grid grid-cols-2 gap-3">
                         <div>
-                          <label className="block text-[10px] text-slate-400 font-bold uppercase mb-1">รหัสโมเดล (Unique Model ID)*</label>
+                          <label className="block text-[10px] text-slate-400 font-bold uppercase mb-1">รหัสโมเดล (เว้นว่างเพื่อสร้างอัตโนมัติ)</label>
                           <input
                             type="text"
-                            required
                             disabled={!!editingProduct}
                             value={pId}
                             onChange={(e) => setPId(e.target.value)}
-                            placeholder="boat-kayak-v2"
+                            placeholder="ระบบจะสร้างให้อัตโนมัติ..."
                             className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white outline-none placeholder-slate-650"
                           />
                         </div>
