@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 
 import { Product, CartItem } from './types';
-import { supabaseProducts } from './lib/supabase';
+import { supabaseProducts, supabaseCustomers } from './lib/supabase';
 
 import Header from './components/Header';
 import Footer from './components/Footer';
@@ -667,24 +667,15 @@ export default function App() {
         isOpen={isProfileOpen}
         onClose={() => setIsProfileOpen(false)}
         currentUser={currentUser}
-        onUpdateProfile={(updatedUser) => {
+        onUpdateProfile={async (updatedUser) => {
           setCurrentUser(updatedUser);
           localStorage.setItem('pornpong_current_user', JSON.stringify(updatedUser));
           
-          // Also update in registered accounts list so subsequent logins use new info
           try {
-            const savedAccountsStr = localStorage.getItem('pornpong_accounts');
-            if (savedAccountsStr) {
-              const accounts = JSON.parse(savedAccountsStr);
-              const index = accounts.findIndex((acc: any) => acc.email.toLowerCase() === updatedUser.email.toLowerCase());
-              if (index > -1) {
-                accounts[index].name = updatedUser.name;
-                accounts[index].phone = updatedUser.phone;
-                localStorage.setItem('pornpong_accounts', JSON.stringify(accounts));
-              }
-            }
+            await supabaseCustomers.updateProfile(updatedUser.email, updatedUser.name, updatedUser.phone);
+            window.dispatchEvent(new Event('customer-registered'));
           } catch (err) {
-            console.error("Error keeping local accounts in sync", err);
+            console.error("Error keeping Supabase customers in sync", err);
           }
         }}
         onLogout={() => {

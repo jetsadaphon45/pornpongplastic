@@ -1,5 +1,6 @@
 import React from 'react';
 import { X, Mail, Lock, User, Phone, Eye, EyeOff, CheckCircle2, AlertCircle } from 'lucide-react';
+import { supabaseCustomers } from '../lib/supabase';
 
 interface UserData {
   name: string;
@@ -42,7 +43,7 @@ export function LoginModal({ isOpen, onClose, onOpenRegister, onLoginSuccess, tr
     triggerToast(`ระบบได้ส่งลิงก์รีเซ็ตรหัสผ่านไปยัง ${email} แล้ว! (ตัวอย่างเสมือน)`);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const newErrors: Record<string, string> = {};
 
@@ -61,35 +62,44 @@ export function LoginModal({ isOpen, onClose, onOpenRegister, onLoginSuccess, tr
       return;
     }
 
-    // Load registered accounts from localStorage
-    const savedAccountsStr = localStorage.getItem('pornpong_accounts');
-    const accounts = savedAccountsStr ? JSON.parse(savedAccountsStr) : [
-      {
-        name: 'สมชาย พรพงศ์',
-        email: 'admin@pornpong.com',
-        phone: '0812345678',
-        password: 'password123'
+    try {
+      let matchedUser: any = null;
+      if (email.trim().toLowerCase() === 'admin@pornpong.com' && password === 'password123') {
+        matchedUser = {
+          name: 'สมชาย พรพงศ์',
+          email: 'admin@pornpong.com',
+          phone: '0812345678'
+        };
+      } else {
+        const dbUser = await supabaseCustomers.validateUser(email, password);
+        if (dbUser) {
+          matchedUser = {
+            name: dbUser.name,
+            email: dbUser.email,
+            phone: dbUser.phone
+          };
+        }
       }
-    ];
 
-    const matchedUser = accounts.find(
-      (acc: any) => acc.email.toLowerCase() === email.trim().toLowerCase() && acc.password === password
-    );
-
-    if (matchedUser) {
-      setErrors({});
-      onLoginSuccess({
-        name: matchedUser.name,
-        email: matchedUser.email,
-        phone: matchedUser.phone
-      });
-      setEmail('');
-      setPassword('');
-      triggerToast('เข้าสู่ระบบสำเร็จ! ยินดีต้อนรับกลับสู่พรพงศ์พลาสติก');
-      onClose();
-    } else {
+      if (matchedUser) {
+        setErrors({});
+        onLoginSuccess({
+          name: matchedUser.name,
+          email: matchedUser.email,
+          phone: matchedUser.phone
+        });
+        setEmail('');
+        setPassword('');
+        triggerToast('เข้าสู่ระบบสำเร็จ! ยินดีต้อนรับกลับสู่พรพงศ์พลาสติก');
+        onClose();
+      } else {
+        setErrors({
+          form: 'อีเมลหรือรหัสผ่านไม่ถูกต้อง หรือยังไม่ได้สมัครสมาชิก'
+        });
+      }
+    } catch (err: any) {
       setErrors({
-        form: 'อีเมลหรือรหัสผ่านไม่ถูกต้อง หรือยังไม่ได้สมัครสมาชิก'
+        form: err.message || 'เกิดข้อผิดพลาดในการตรวจสอบข้อมูลกับระบบฐานข้อมูล'
       });
     }
   };
@@ -246,7 +256,7 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onRegisterSuccess,
     return re.test(emailStr);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const newErrors: Record<string, string> = {};
 
@@ -283,56 +293,58 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onRegisterSuccess,
       return;
     }
 
-    // Fetch existing accounts
-    const savedAccountsStr = localStorage.getItem('pornpong_accounts');
-    const accounts = savedAccountsStr ? JSON.parse(savedAccountsStr) : [
-      {
-        name: 'สมชาย พรพงศ์',
-        email: 'admin@pornpong.com',
-        phone: '0812345678',
-        password: 'password123'
+    try {
+      // Check duplicate in Supabase
+      const duplicatedUser = await supabaseCustomers.checkEmailExists(email);
+      if (duplicatedUser) {
+        setErrors({ email: 'อีเมลนี้ถูกใช้งานแล้ว กรุณากรอกอีเมลอื่น' });
+        return;
       }
-    ];
 
-    // Check duplicate
-    const duplicatedUser = accounts.find((acc: any) => acc.email.toLowerCase() === email.trim().toLowerCase());
-    if (duplicatedUser) {
-      setErrors({ email: 'อีเมลนี้ถูกใช้งานแล้ว กรุณากรอกอีเมลอื่น' });
-      return;
+      // Save and register account in Supabase
+      const newAccount = {
+        name: fullName.trim(),
+        email: email.trim(),
+        phone: phone.trim(),
+        password: password,
+        membership_level: 'Standard',
+        points: 0
+      };
+
+      await supabaseCustomers.create(newAccount);
+
+      // Clear state
+      setFullName('');
+      setPhone('');
+      setEmail('');
+      setPassword('');
+      setConfirmPassword('');
+      setErrors({});
+
+      triggerToast('สมัครสมาชิกสำเร็จ! ท่านสามารถใช้ข้อมูลดังกล่าวเข้าสู่ระบบได้ทันที');
+      onRegisterSuccess({
+        name: newAccount.name,
+        email: newAccount.email,
+        phone: newAccount.phone
+      });
+
+      // Requirement 5: dispatch customer-registered and customers-updated event
+      window.dispatchEvent(new Event('customer-registered'));
+      window.dispatchEvent(new Event('customers-updated'));
+
+      onClose();
+    } catch (err: any) {
+      // Requirement 6: show error.message on register form
+      setErrors({
+        form: err.message || 'เกิดข้อผิดพลาดในการลงทะเบียน โปรดลองอีกครั้งในภายหลัง'
+      });
     }
-
-    // Save and register account
-    const newAccount = {
-      name: fullName.trim(),
-      email: email.trim(),
-      phone: phone.trim(),
-      password: password
-    };
-
-    accounts.push(newAccount);
-    localStorage.setItem('pornpong_accounts', JSON.stringify(accounts));
-
-    // Clear state
-    setFullName('');
-    setPhone('');
-    setEmail('');
-    setPassword('');
-    setConfirmPassword('');
-    setErrors({});
-
-    triggerToast('สมัครสมาชิกสำเร็จ! ท่านสามารถใช้ข้อมูลดังกล่าวเข้าสู่ระบบได้ทันที');
-    onRegisterSuccess({
-      name: newAccount.name,
-      email: newAccount.email,
-      phone: newAccount.phone
-    });
-    onClose();
   };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs font-sans">
       <div 
-        className="relative w-full max-w-md overflow-hidden rounded-2xl border border-sky-100 bg-white shadow-2xl transition-all duration-350 animate-fadeIn"
+         className="relative w-full max-w-md overflow-hidden rounded-2xl border border-sky-100 bg-white shadow-2xl transition-all duration-350 animate-fadeIn"
         id="register-modal-container"
       >
         {/* Modal Header */}
@@ -352,6 +364,12 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onRegisterSuccess,
 
         {/* Modal Body / Form */}
         <form onSubmit={handleSubmit} className="p-6 space-y-3.5 max-h-[80vh] overflow-y-auto">
+          {errors.form && (
+            <div className="flex items-start gap-2.5 rounded-lg bg-red-50 p-3 text-xs text-red-600 border border-red-100">
+              <AlertCircle size={15} className="shrink-0 mt-0.5" />
+              <span>{errors.form}</span>
+            </div>
+          )}
           
           {/* Full Name Input */}
           <div className="space-y-1">

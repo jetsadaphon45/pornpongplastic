@@ -32,7 +32,7 @@ import {
   X
 } from 'lucide-react';
 import { Product } from '../types';
-import { supabaseProducts, supabase } from '../lib/supabase';
+import { supabaseProducts, supabase, supabaseCustomers } from '../lib/supabase';
 import { AppNotification } from './NotificationDropdown';
 
 interface AdminDashboardProps {
@@ -206,71 +206,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
     ];
   });
 
-  const [adminMembers, setAdminMembers] = React.useState<any[]>(() => {
-    try {
-      const savedMembers = localStorage.getItem('pornpong_admin_members');
-      if (savedMembers) return JSON.parse(savedMembers);
-    } catch {}
-
-    const defaultMembers = [
-      { 
-        name: "คุณ นลิน วัฒนกิจ", 
-        email: "nalin@gmail.com", 
-        phone: "089-765-4321", 
-        rewardPoints: 240, 
-        rank: "VIP Gold",
-        registerDate: "2025-01-14",
-        orderHistory: ["ORD-2026-9874"],
-        preorderHistory: ["PRE-2026-0005"],
-        status: "Active" 
-      },
-      { 
-        name: "คุณ สมมาตร รักดี", 
-        email: "sommart@yahoo.com", 
-        phone: "081-345-6789", 
-        rewardPoints: 120, 
-        rank: "Standard",
-        registerDate: "2025-03-22",
-        orderHistory: ["ORD-2026-4512"],
-        preorderHistory: ["PRE-2026-0008"],
-        status: "Active"
-      },
-      { 
-        name: "คุณ อรวรรณ สิมะโรจน์", 
-        email: "orawan@outlook.co.th", 
-        phone: "095-224-1182", 
-        rewardPoints: 500, 
-        rank: "VIP Family Platinum",
-        registerDate: "2024-11-05",
-        orderHistory: [],
-        preorderHistory: [],
-        status: "Active"
-      }
-    ];
-
-    const savedAccounts = localStorage.getItem('pornpong_accounts');
-    const parsedAccounts = savedAccounts ? JSON.parse(savedAccounts) : [];
-    const mappedAccounts = parsedAccounts.map(acc => ({
-      name: acc.name || acc.email.split('@')[0],
-      email: acc.email,
-      phone: acc.phone || 'ไม่ระบุ',
-      rewardPoints: 50,
-      rank: "Standard New",
-      registerDate: acc.registerDate || "2026-05-01",
-      orderHistory: [],
-      preorderHistory: [],
-      status: "Active"
-    }));
-
-    const merged = [...defaultMembers];
-    mappedAccounts.forEach(acc => {
-      if (!merged.some(m => m.email.toLowerCase() === acc.email.toLowerCase())) {
-        merged.push(acc);
-      }
-    });
-
-    return merged;
-  });
+  const [adminMembers, setAdminMembers] = React.useState<any[]>([]);
 
   // Settings State parameters (expanded)
   const [shopName, setShopName] = React.useState(() => localStorage.getItem('pornpong_cfg_shopName') || "โรงงานพรพงศ์พลาสติก (Pornpong Plastic Co.)");
@@ -348,10 +284,6 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
     localStorage.setItem('pornpong_reviews_list', JSON.stringify(adminReviews));
   }, [adminReviews]);
 
-  React.useEffect(() => {
-    localStorage.setItem('pornpong_admin_members', JSON.stringify(adminMembers));
-  }, [adminMembers]);
-
   // Website settings persistence auto-saver helper
   React.useEffect(() => {
     localStorage.setItem('pornpong_cfg_shopName', shopName);
@@ -378,6 +310,42 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
   React.useEffect(() => {
     localStorage.setItem('pornpong_promotions_list', JSON.stringify(adminPromotionsList));
   }, [adminPromotionsList]);
+
+  const fetchCustomers = React.useCallback(async () => {
+    try {
+      const data = await supabaseCustomers.list();
+      const mapped = data.map(db => ({
+        id: db.id,
+        name: db.name,
+        email: db.email,
+        phone: db.phone || 'ไม่ระบุ',
+        rewardPoints: db.points || 0,
+        rank: db.membership_level || 'Standard',
+        registerDate: db.created_at ? new Date(db.created_at).toISOString().split('T')[0] : '2026-05-01',
+        orderHistory: [],
+        preorderHistory: [],
+        status: "Active"
+      }));
+      setAdminMembers(mapped);
+    } catch (err) {
+      console.error('Failed to load customers from Supabase:', err);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    fetchCustomers();
+
+    const handleRegistered = () => {
+      fetchCustomers();
+    };
+
+    window.addEventListener('customer-registered', handleRegistered);
+    window.addEventListener('customers-updated', handleRegistered);
+    return () => {
+      window.removeEventListener('customer-registered', handleRegistered);
+      window.removeEventListener('customers-updated', handleRegistered);
+    };
+  }, [fetchCustomers]);
 
   // Promotions Form Modal variables
   const [isPromoFormOpen, setIsPromoFormOpen] = React.useState(false);
@@ -1758,15 +1726,46 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                           </td>
                           <td className="py-3 px-3 text-right font-black text-cyan-400 font-mono">{member.rewardPoints || 0} pt</td>
                           <td className="py-3 px-4 text-center">
-                            <button
-                              onClick={() => {
-                                setAdminMembers(prev => prev.map((m, i) => i === idx ? { ...m, rewardPoints: (m.rewardPoints || 0) + 10 } : m));
-                                triggerToast(`มอบแต้มสมาชิกพิเศษ 10 คะแนน แก่คุณ ${member.name} สำเร็จ!`);
-                              }}
-                              className="px-2.5 py-1 bg-cyan-950 border border-cyan-900 text-cyan-400 font-bold text-[9.5px] rounded-lg cursor-pointer hover:bg-cyan-900 transition-colors"
-                            >
-                              + แถม 10 แต้มรางวัลพิเศษ
-                            </button>
+                            <div className="flex justify-center items-center gap-2">
+                              <button
+                                onClick={async () => {
+                                  try {
+                                    const newPoints = (member.rewardPoints || 0) + 10;
+                                    if (member.id) {
+                                      await supabaseCustomers.updatePoints(member.id, newPoints);
+                                    }
+                                    setAdminMembers(prev => prev.map((m, i) => i === idx ? { ...m, rewardPoints: newPoints } : m));
+                                    triggerToast(`มอบแต้มสมาชิกพิเศษ 10 คะแนน แก่คุณ ${member.name} สำเร็จ!`);
+                                  } catch (err: any) {
+                                    triggerToast(`ข้อผิดพลาด: ${err.message || 'ไม่สามารถอัปเดตแต้มรางวัลได้'}`);
+                                  }
+                                }}
+                                className="px-2.5 py-1 bg-cyan-950 border border-cyan-900 text-cyan-400 font-bold text-[9.5px] rounded-lg cursor-pointer hover:bg-cyan-900 transition-colors"
+                              >
+                                + 10 แต้มพิเศษ
+                              </button>
+                              
+                              <button
+                                onClick={async () => {
+                                  if (confirm(`คุณแน่ใจหรือไม่ที่จะลบข้อมูลผู้ใช้งานของ คุณ ${member.name}?`)) {
+                                    try {
+                                      if (member.id) {
+                                        await supabaseCustomers.delete(member.id);
+                                        window.dispatchEvent(new Event('customers-updated'));
+                                        triggerToast(`ลบข้อมูลสมาชิกคุณ ${member.name} สำเร็จ!`);
+                                      } else {
+                                        triggerToast(`ไม่พบรหัสสมาชิกที่ต้องการลบ`);
+                                      }
+                                    } catch (err: any) {
+                                      triggerToast(`ข้อผิดพลาด: ${err.message || 'ไม่สามารถลบข้อมูลได้'}`);
+                                    }
+                                  }
+                                }}
+                                className="px-2.5 py-1 bg-red-950/40 border border-red-900/60 hover:bg-red-900/40 text-red-400 font-bold text-[9.5px] rounded-lg cursor-pointer transition-colors"
+                              >
+                                ลบระเบียน
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       ))}

@@ -253,3 +253,134 @@ export const supabaseProducts = {
     return true;
   }
 };
+
+export interface DbCustomer {
+  id?: string;
+  name: string;
+  email: string;
+  phone: string;
+  password?: string;
+  membership_level?: string;
+  points?: number;
+  created_at?: string;
+}
+
+export const supabaseCustomers = {
+  async list(): Promise<DbCustomer[]> {
+    if (!isSupabaseConfigured || !supabase) {
+      console.warn('Supabase is not configured. Returning empty customers.');
+      return [];
+    }
+    const { data, error } = await supabase
+      .from('customers')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      throw error;
+    }
+    return data || [];
+  },
+
+  async insert(item: DbCustomer): Promise<DbCustomer> {
+    if (!isSupabaseConfigured || !supabase) {
+      throw new Error('Supabase is not configured.');
+    }
+    const { data, error } = await supabase
+      .from('customers')
+      .insert([{
+        name: item.name,
+        email: item.email.toLowerCase().trim(),
+        phone: item.phone,
+        password: item.password,
+        membership_level: item.membership_level || 'Standard',
+        points: item.points || 0
+      }])
+      .select()
+      .single();
+
+    if (error) {
+      throw error;
+    }
+    return data;
+  },
+
+  async create(item: DbCustomer): Promise<DbCustomer> {
+    return this.insert(item);
+  },
+
+  async delete(id: string): Promise<boolean> {
+    if (!isSupabaseConfigured || !supabase) {
+      throw new Error('Supabase is not configured.');
+    }
+    const { error } = await supabase
+      .from('customers')
+      .delete()
+      .eq('id', id);
+
+    if (error) {
+      throw error;
+    }
+    return true;
+  },
+
+  async updatePoints(id: string, points: number): Promise<boolean> {
+    if (!isSupabaseConfigured || !supabase) {
+      throw new Error('Supabase is not configured.');
+    }
+    const { error } = await supabase
+      .from('customers')
+      .update({ points })
+      .eq('id', id);
+
+    if (error) {
+      throw error;
+    }
+    return true;
+  },
+
+  async updateProfile(email: string, name: string, phone: string): Promise<boolean> {
+    if (!isSupabaseConfigured || !supabase) {
+      throw new Error('Supabase is not configured.');
+    }
+    const { error } = await supabase
+      .from('customers')
+      .update({ name, phone })
+      .eq('email', email.toLowerCase().trim());
+
+    if (error) {
+      throw error;
+    }
+    return true;
+  },
+
+  async checkEmailExists(email: string): Promise<boolean> {
+    if (!isSupabaseConfigured || !supabase) {
+      return false;
+    }
+    const { data, error } = await supabase
+      .from('customers')
+      .select('email')
+      .eq('email', email.toLowerCase().trim());
+    
+    if (error) return false;
+    return (data && data.length > 0);
+  },
+
+  async validateUser(email: string, passwordStr: string): Promise<DbCustomer | null> {
+    if (!isSupabaseConfigured || !supabase) {
+      return null;
+    }
+    const { data, error } = await supabase
+      .from('customers')
+      .select('*')
+      .eq('email', email.toLowerCase().trim())
+      .eq('password', passwordStr);
+
+    if (error || !data || data.length === 0) {
+      return null;
+    }
+    return data[0];
+  }
+};
+
