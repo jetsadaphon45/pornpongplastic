@@ -45,6 +45,11 @@ export default function Header({
   const totalCartItems = cart.reduce((sum, item) => sum + item.quantity, 0);
   const unreadNotificationsCount = notifications.filter(n => !n.isRead).length;
 
+  const displayName =
+    currentUser?.name && currentUser.name.length > 14
+      ? currentUser.name.substring(0, 14) + '...'
+      : (currentUser?.name || '');
+
   const menuItems = [
     { id: 'home', label: 'หน้าแรก' },
     { id: 'products', label: 'หน้าสินค้า' },
@@ -146,8 +151,8 @@ export default function Header({
                     title={`ดูโปรไฟล์และประวัติคำสั่งซื้อ สำหรับ คุณ ${currentUser.name}`}
                   >
                     <User size={13} className="shrink-0 text-brand-blue/80" />
-                    <span className="text-[11px] font-bold max-w-[180px] truncate whitespace-nowrap overflow-hidden hidden md:inline-block">
-                      คุณ {currentUser.name}
+                    <span className="text-[11px] font-bold max-w-[140px] truncate overflow-hidden whitespace-nowrap hidden md:inline-block">
+                      คุณ {displayName}
                     </span>
                   </button>
                   <button
@@ -299,7 +304,7 @@ export default function Header({
                   id="mobile-profile-button"
                 >
                   <User size={14} className="text-brand-blue/80 shrink-0" />
-                  <span className="truncate">คุณ {currentUser.name} (ดูโปรไฟล์สมาชิก)</span>
+                  <span className="truncate">คุณ {displayName} (ดูโปรไฟล์สมาชิก)</span>
                 </button>
                 <button
                   onClick={() => {
