@@ -133,28 +133,31 @@ export default function Header({
           </nav>
 
           {/* Cart Icon & Menu Button */}
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 md:gap-2 shrink-0">
             
             {/* Desktop Auth Buttons */}
-            <div className="hidden sm:flex items-center gap-2 mr-1">
+            <div className="hidden sm:flex items-center gap-1.5 md:gap-2 mr-1 shrink-0">
               {currentUser ? (
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5 shrink-0">
                   <button
                     onClick={onOpenProfile}
-                    className="flex items-center gap-1.5 px-3 py-1.8 bg-sky-50 hover:bg-sky-100 text-brand-blue rounded-full border border-sky-100 max-w-[170px] cursor-pointer transition-all active:scale-97"
+                    className="flex items-center gap-1 px-2 md:px-2.5 py-1 bg-sky-50 hover:bg-sky-100 text-brand-blue rounded-full border border-sky-100 cursor-pointer transition-all active:scale-97 min-w-0"
                     id="desktop-profile-button"
-                    title="ดูโปรไฟล์และประวัติคำสั่งซื้อ"
+                    title={`ดูโปรไฟล์และประวัติคำสั่งซื้อ สำหรับ คุณ ${currentUser.name}`}
                   >
                     <User size={13} className="shrink-0 text-brand-blue/80" />
-                    <span className="text-[11px] font-bold truncate">คุณ {currentUser.name}</span>
+                    <span className="text-[11px] font-bold max-w-[180px] truncate whitespace-nowrap overflow-hidden hidden md:inline-block">
+                      คุณ {currentUser.name}
+                    </span>
                   </button>
                   <button
                     onClick={onLogout}
-                    className="flex items-center gap-1.5 hover:text-red-500 hover:bg-red-50 text-slate-500 font-bold text-[11px] px-2.5 py-1.8 rounded-lg border border-transparent hover:border-red-100 transition-colors cursor-pointer"
+                    className="flex items-center gap-1 px-2 py-1 hover:text-red-500 hover:bg-red-50 text-slate-500 font-bold text-[11px] rounded-lg border border-transparent hover:border-red-100 transition-colors cursor-pointer shrink-0"
                     id="desktop-logout-button"
+                    title="ออกจากระบบ"
                   >
-                    <LogOut size={13} />
-                    <span>ออกจากระบบ</span>
+                    <LogOut size={13} className="shrink-0" />
+                    <span className="hidden md:inline">ออกจากระบบ</span>
                   </button>
                 </div>
               ) : (
