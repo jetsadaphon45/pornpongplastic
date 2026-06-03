@@ -146,14 +146,11 @@ export default function Header({
                 <div className="flex items-center gap-1.5 shrink-0">
                   <button
                     onClick={onOpenProfile}
-                    className="flex items-center gap-1 px-2 md:px-2.5 py-1 bg-sky-50 hover:bg-sky-100 text-brand-blue rounded-full border border-sky-100 cursor-pointer transition-all active:scale-97 min-w-0"
+                    className="flex items-center justify-center w-8 h-8 bg-sky-50 hover:bg-sky-100 text-brand-blue rounded-full border border-sky-100 cursor-pointer transition-all active:scale-97 shrink-0"
                     id="desktop-profile-button"
                     title={`ดูโปรไฟล์และประวัติคำสั่งซื้อ สำหรับ คุณ ${currentUser.name}`}
                   >
-                    <User size={13} className="shrink-0 text-brand-blue/80" />
-                    <span className="text-[11px] font-bold max-w-[140px] truncate overflow-hidden whitespace-nowrap hidden md:inline-block">
-                      คุณ {displayName}
-                    </span>
+                    <User size={14} className="shrink-0 text-brand-blue/80" />
                   </button>
                   <button
                     onClick={onLogout}
@@ -300,11 +297,12 @@ export default function Header({
                     onOpenProfile();
                     setIsMobileMenuOpen(false);
                   }}
-                  className="w-full flex items-center gap-2 px-3 py-2.5 bg-sky-50 hover:bg-sky-100 text-brand-blue active:bg-sky-150 rounded-lg text-xs font-bold transition-all text-left cursor-pointer"
+                  className="w-full flex items-center justify-center gap-2 px-3 py-2.5 bg-sky-50 hover:bg-sky-100 text-brand-blue active:bg-sky-150 rounded-lg text-xs font-bold transition-all cursor-pointer"
                   id="mobile-profile-button"
+                  title="ดูโปรไฟล์สมาชิก"
                 >
                   <User size={14} className="text-brand-blue/80 shrink-0" />
-                  <span className="truncate">คุณ {displayName} (ดูโปรไฟล์สมาชิก)</span>
+                  <span>ดูโปรไฟล์สมาชิก</span>
                 </button>
                 <button
                   onClick={() => {
