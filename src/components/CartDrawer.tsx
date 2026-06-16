@@ -52,7 +52,12 @@ export default function CartDrawer({
     e.preventDefault();
     if (fullName && phone && address) {
       onSubmitOrder({ fullName, phone, address, notes });
-      setCheckoutStep('success');
+      setCheckoutStep('cart');
+      setFullName('');
+      setPhone('');
+      setAddress('');
+      setNotes('');
+      onClose();
     }
   };
 

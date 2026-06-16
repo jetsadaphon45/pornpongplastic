@@ -294,23 +294,21 @@ export default function App() {
         color: colorsSummary
       });
 
-      if (createdOrder) {
-        setCurrentOrder(createdOrder);
-      } else {
-        // Fallback representation for frontend preview stability
-        setCurrentOrder({
-          id: 'ORD-2026-' + Math.floor(1000 + Math.random() * 9000),
-          customer_id: customerId,
-          customer_name: orderDetails.fullName,
-          customer_email: customerEmail,
-          customer_phone: orderDetails.phone,
-          total_amount: totalSum,
-          payment_status: 'pending',
-          order_status: 'waiting_payment',
-          productName: productNameSummary,
-          color: colorsSummary
-        });
-      }
+      const fallbackOrder = {
+        id: 'ORD-2026-' + Math.floor(1000 + Math.random() * 9000),
+        customer_id: customerId,
+        customer_name: orderDetails.fullName,
+        customer_email: customerEmail,
+        customer_phone: orderDetails.phone,
+        total_amount: totalSum,
+        payment_status: 'pending',
+        order_status: 'waiting_payment',
+        productName: productNameSummary,
+        color: colorsSummary
+      };
+
+      const finalOrder = createdOrder || fallbackOrder;
+      setCurrentOrder(finalOrder);
 
       // Keep local notifications for UI reactivity
       const randomId = 'noti-' + Math.floor(Math.random() * 1000000);
@@ -330,8 +328,11 @@ export default function App() {
 
       triggerToast('บันทึกคำสั่งซื้อลงในระบบฐานข้อมูล Supabase สำเร็จ!');
       
-      // Redirect to Payment Page
-      navigateTo('/payment');
+      // Close the cart drawer immediately
+      setIsCartOpen(false);
+
+      // Redirect to Payment Page with orderId
+      navigateTo(`/payment?orderId=${finalOrder.id}`);
     } catch (e: any) {
       console.error(e);
       triggerToast('ข้อผิดพลาดเชื่อมข้อมูลระบบ Supabase: ' + (e.message || 'โปรดตรวจสอบสิทธิ์เชื่อมต่อ'));
