@@ -32,7 +32,16 @@ import {
   X
 } from 'lucide-react';
 import { Product } from '../types';
-import { supabaseProducts, supabase, supabaseCustomers } from '../lib/supabase';
+import { 
+  supabaseProducts, 
+  supabase, 
+  supabaseCustomers,
+  supabaseOrders,
+  supabasePreOrders,
+  supabaseCoupons,
+  supabaseReviews,
+  supabasePromotions
+} from '../lib/supabase';
 import { AppNotification } from './NotificationDropdown';
 
 interface AdminDashboardProps {
@@ -46,85 +55,6 @@ interface AdminDashboardProps {
 // Initial default administrative credentials
 const ADMIN_EMAIL = 'admin@pornpongplastic.com';
 const ADMIN_PASS = 'Admin@2026';
-
-// Initial internal mock orders & preorders
-const DEFAULT_ORDERS = [
-  {
-    id: "ORD-2026-9874",
-    customerName: "คุณ นลิน วัฒนกิจ",
-    date: "12 มี.ค. 2026",
-    productName: "เรือพายพลาสติก ตราพรพงศ์ รุ่น 2.5 เมตร - ท้องเรือแบนสัญจรง่าย",
-    color: "สีน้ำเงินพรีเมียม (Royal Blue)",
-    amount: 4900,
-    status: "Delivered", // 'Pending', 'Shipping', 'Delivered'
-    shipmentNo: "TH-EX-291823"
-  },
-  {
-    id: "ORD-2026-4512",
-    customerName: "คุณ สมมาตร รักดี",
-    date: "04 ม.ค. 2026",
-    productName: "พายพลาสติกเกรดพรีเมียม ใบพายหนาเหนียวพิเศษ",
-    color: "สีเหลืองพาสเทล (Pastel Yellow)",
-    amount: 350,
-    status: "Delivered",
-    shipmentNo: "TH-EX-104928"
-  },
-  {
-    id: "ORD-2026-1044",
-    customerName: "คุณ อรวรรณ สิมะโรจน์",
-    date: "20 พ.ค. 2026",
-    productName: "เรือพลาสติก 2 ที่นั่ง รุ่นสแตนดาร์ดคลาสสิก 3.0 เมตร",
-    color: "สีเหลืองสด",
-    amount: 8900,
-    status: "Shipping",
-    shipmentNo: "TH-POST-829103"
-  },
-  {
-    id: "ORD-2026-2910",
-    customerName: "คุณ มานนท์ วงษา",
-    date: "21 พ.ค. 2026",
-    productName: "เสื้อชูชีพสะท้อนแสงติดนกหวีด รุ่น Safety-Max",
-    color: "ส้มสะท้อนหน้าต่าง",
-    amount: 550,
-    status: "Pending",
-    shipmentNo: ""
-  }
-];
-
-const DEFAULT_PRE_ORDERS = [
-  {
-    id: "PRE-2026-0005",
-    customerName: "คุณ นลิน วัฒนกิจ",
-    phone: "089-765-4321",
-    date: "18 พ.ค. 2026",
-    productName: "เรือคายัคคู่ใจทัวร์ริ่ง ตราพรพงศ์",
-    color: "สีส้มสลับเหลือง (Sun Hybrid)",
-    quantity: 1,
-    deposit: 2500,
-    fullPrice: 14500,
-    estDelivery: "2026-06-30",
-    status: "Confirmed" // 'Waiting confirmation' | 'Confirmed' | 'In production' | 'Ready to deliver' | 'Completed' | 'Cancelled'
-  },
-  {
-    id: "PRE-2026-0008",
-    customerName: "คุณ ธนดล ทองศิริ",
-    phone: "081-345-6789",
-    date: "20 พ.ค. 2026",
-    productName: "เรือตกปลาพรีเมี่ยม รุ่นมารีนโปรฟิชชิ่ง 3.2 เมตร",
-    color: "เขียวทหารลายพราง",
-    quantity: 2,
-    deposit: 3000,
-    fullPrice: 13200,
-    estDelivery: "2026-07-15",
-    status: "Waiting confirmation"
-  }
-];
-
-const DEFAULT_COUPONS = [
-  { code: 'PORNPONG100', discount: 100, type: 'flat', description: 'ลดราคาพิเศษทันที 100 บาท', active: true },
-  { code: 'WAVE2026', discount: 10, type: 'percent', description: 'ส่วนลดรับคลื่นฤดูร้อน 10% สำหรับเรือคายัค', active: true },
-  { code: 'FREESHIP', discount: 500, type: 'flat', description: 'คูปองช่วยสนับสนุนค่าจัดส่ง 500 บาทแรก', active: true }
-];
 
 export function AdminDashboard({ onClose, triggerToast, notifications, setNotifications }: AdminDashboardProps) {
   // Login auth state
@@ -176,35 +106,10 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
     };
   }, [reloadProducts]);
 
-  const [adminOrders, setAdminOrders] = React.useState<any[]>(() => {
-    const saved = localStorage.getItem('pornpong_admin_orders');
-    return saved ? JSON.parse(saved) : DEFAULT_ORDERS;
-  });
-
-  const [adminPreOrders, setAdminPreOrders] = React.useState<any[]>(() => {
-    const saved = localStorage.getItem('pornpong_admin_pre_orders');
-    return saved ? JSON.parse(saved) : DEFAULT_PRE_ORDERS;
-  });
-
-  const [adminCoupons, setAdminCoupons] = React.useState<any[]>(() => {
-    const saved = localStorage.getItem('pornpong_admin_coupons');
-    return saved ? JSON.parse(saved) : DEFAULT_COUPONS;
-  });
-
-  const [adminReviews, setAdminReviews] = React.useState<any[]>(() => {
-    try {
-      const savedReview = localStorage.getItem('pornpong_reviews_list');
-      if (savedReview) return JSON.parse(savedReview);
-    } catch {}
-    
-    // Fallback default review records with explicit product Name
-    return [
-      { id: 'rev-1', productName: "เรือพายพลาสติก ตราพรพงศ์ รุ่น 2.5 เมตร - ท้องเรือแบนสัญจรง่าย", author: 'คุณสมมาตร รักดี (นักตกปลาฉะเชิงเทรา)', rating: 5, date: '2026-04-12', comment: 'ซื้อรุ่นหัวแหลม 3.2 เมตรไปติดตั้งเครื่องหางยาว 5.5 แรง ขี่ลุยตกปลากลางเขื่อนบางปะกงลอยน้ำนิ่งดีมาก ชนตอไม้โครมใหญ่ตัวเรือแค่เป็นรอยถลอกตื้นๆ ไม่ทะลุสมราคาค้มมากๆ ครับ', approved: true },
-      { id: 'rev-2', productName: "เปิดจองล่วงหน้า เรือคายัคคู่ใจทัวร์ริ่ง ตราพรพงศ์", author: 'คุณนลิน วัฒนกิจ (รีสอร์ตกวางคีรี กาญจนบุรี)', rating: 5, date: '2026-05-02', comment: 'สั่งซื้อเรือคายัค 1 ที่นั่งและ 2 ที่นั่งจำนวนรวม 12 ลำไปให้บริการลูกค้าประทับใจ สีสวยพลาสติกหนาแข็งแกร่งค่ะ', approved: true },
-      { id: 'rev-3', productName: "เรือพลาสติก 2 ที่นั่ง รุ่นสแตนดาร์ดคลาสสิก 3.0 เมตร", author: 'ลุงประวิทย์ ช่วยเกษตร (อัมพวา สมุทรสงคราม)', rating: 4, date: '2026-05-15', comment: 'ซื้อเรือพาย 2.5 เมตรมาใช้ในสวน น้ำหนักเบา คล่องตัวดีมากครับคุณหลาน', approved: true },
-      { id: 'rev-4', productName: "พายพลาสติกเกรดพรีเมียม ใบพายหนาเหนียวพิเศษ", author: 'นาย ทนันท์ นครพงษ์', rating: 2, date: '2026-05-21', comment: 'จัดส่งล่าช้าไป 1 วันในช่วงเทศกาล แต่เรือสวยงามเนื้อแน่นดีครับ', approved: false }
-    ];
-  });
+  const [adminOrders, setAdminOrders] = React.useState<any[]>([]);
+  const [adminPreOrders, setAdminPreOrders] = React.useState<any[]>([]);
+  const [adminCoupons, setAdminCoupons] = React.useState<any[]>([]);
+  const [adminReviews, setAdminReviews] = React.useState<any[]>([]);
 
   const [adminMembers, setAdminMembers] = React.useState<any[]>([]);
 
@@ -228,6 +133,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
   const [productsStatusFilter, setProductsStatusFilter] = React.useState<string>('all');
   const [ordersSearch, setOrdersSearch] = React.useState('');
   const [preordersSearch, setPreordersSearch] = React.useState('');
+  const [supabaseOrdersSearch, setSupabaseOrdersSearch] = React.useState('');
 
   // Editing modal / drawer states
   const [isProductAddOpen, setIsProductAddOpen] = React.useState(false);
@@ -266,23 +172,59 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
     onClose();
   };
 
-  // Cache persistence for all dynamic lists
+  // Load dynamic lists directly from Supabase
+  const reloadOrders = React.useCallback(async () => {
+    try {
+      const data = await supabaseOrders.list();
+      setAdminOrders(data);
+    } catch (err) {
+      console.error('Failed to reload orders from Supabase:', err);
+    }
+  }, []);
+
+  const reloadPreOrders = React.useCallback(async () => {
+    try {
+      const data = await supabasePreOrders.list();
+      setAdminPreOrders(data);
+    } catch (err) {
+      console.error('Failed to reload pre-orders from Supabase:', err);
+    }
+  }, []);
+
+  const reloadCoupons = React.useCallback(async () => {
+    try {
+      const data = await supabaseCoupons.list();
+      setAdminCoupons(data);
+    } catch (err) {
+      console.error('Failed to reload coupons from Supabase:', err);
+    }
+  }, []);
+
+  const reloadReviews = React.useCallback(async () => {
+    try {
+      const data = await supabaseReviews.list();
+      setAdminReviews(data);
+    } catch (err) {
+      console.error('Failed to reload reviews from Supabase:', err);
+    }
+  }, []);
+
+  const reloadPromotions = React.useCallback(async () => {
+    try {
+      const data = await supabasePromotions.list();
+      setAdminPromotionsList(data);
+    } catch (err) {
+      console.error('Failed to reload promotions from Supabase:', err);
+    }
+  }, []);
 
   React.useEffect(() => {
-    localStorage.setItem('pornpong_admin_orders', JSON.stringify(adminOrders));
-  }, [adminOrders]);
-
-  React.useEffect(() => {
-    localStorage.setItem('pornpong_admin_pre_orders', JSON.stringify(adminPreOrders));
-  }, [adminPreOrders]);
-
-  React.useEffect(() => {
-    localStorage.setItem('pornpong_admin_coupons', JSON.stringify(adminCoupons));
-  }, [adminCoupons]);
-
-  React.useEffect(() => {
-    localStorage.setItem('pornpong_reviews_list', JSON.stringify(adminReviews));
-  }, [adminReviews]);
+    reloadOrders();
+    reloadPreOrders();
+    reloadCoupons();
+    reloadReviews();
+    reloadPromotions();
+  }, [reloadOrders, reloadPreOrders, reloadCoupons, reloadReviews, reloadPromotions]);
 
   // Website settings persistence auto-saver helper
   React.useEffect(() => {
@@ -298,18 +240,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
   }, [shopName, shopLogo, shopPhone, shopLineId, shopFacebook, shopEmail, shopAddress, googleMapPlaceholder, isPreOrderActive]);
 
   // Storefront Promotion Management States
-  const [adminPromotionsList, setAdminPromotionsList] = React.useState<any[]>(() => {
-    const saved = localStorage.getItem('pornpong_promotions_list');
-    return saved ? JSON.parse(saved) : [
-      { id: 'prom-1', name: 'แคมเปญสัปดาห์ทองคำเรือคายัคลมร้อน', discount: 'ลดราคาทันที 1,500 บาท', startDate: '2026-05-15', endDate: '2026-06-15', status: 'Active' },
-      { id: 'prom-2', name: 'รับโปรโมชั่นเรือพายติดเครื่องหางยาวตระกูลดั้งเดิม', discount: 'ฟรีส่วนลด 10% เม็ดหลอมพิเศษ', startDate: '2026-05-01', endDate: '2026-05-31', status: 'Active' },
-      { id: 'prom-3', name: 'สิทธิพิเศษมัดจำคิวโมเดลตกปลารุ่นโปรฟิชเชอร์', discount: 'รับเสื้อชูชีพ Safety-Max มูลค่า 550.- ทันที', startDate: '2026-04-01', endDate: '2026-04-30', status: 'Expired' }
-    ];
-  });
-
-  React.useEffect(() => {
-    localStorage.setItem('pornpong_promotions_list', JSON.stringify(adminPromotionsList));
-  }, [adminPromotionsList]);
+  const [adminPromotionsList, setAdminPromotionsList] = React.useState<any[]>([]);
 
   const fetchCustomers = React.useCallback(async () => {
     try {
@@ -380,26 +311,23 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
     e.preventDefault();
     if (!promoName.trim() || !promoDiscount.trim()) return;
 
+    const promoPayload = {
+      name: promoName.trim(),
+      discount: promoDiscount.trim(),
+      startDate: promoStartDate,
+      endDate: promoEndDate,
+      status: promoStatus
+    };
+
     if (editingPromo) {
-      setAdminPromotionsList(prev => prev.map(p => p.id === editingPromo.id ? {
-        ...p,
-        name: promoName.trim(),
-        discount: promoDiscount.trim(),
-        startDate: promoStartDate,
-        endDate: promoEndDate,
-        status: promoStatus
-      } : p));
+      supabasePromotions.update(editingPromo.id, promoPayload).then(() => {
+        reloadPromotions();
+      });
       triggerToast('ปรับปรุงรายละเอียดแคมเปญโปรโมชั่นเรียบร้อยแล้ว');
     } else {
-      const newP = {
-        id: 'prom-' + Date.now(),
-        name: promoName.trim(),
-        discount: promoDiscount.trim(),
-        startDate: promoStartDate,
-        endDate: promoEndDate,
-        status: promoStatus
-      };
-      setAdminPromotionsList(prev => [newP, ...prev]);
+      supabasePromotions.insert(promoPayload).then(() => {
+        reloadPromotions();
+      });
       triggerToast('เพิ่มแคมเปญโปรโมชั่นหน้าร้านสำเร็จแล้ว');
     }
     setIsPromoFormOpen(false);
@@ -407,29 +335,21 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
 
   const handleDeletePromo = (id: string) => {
     if (confirm('คุณต้องการรื้อถอนแคมเปญโปรโมชั่นนี้ใช่หรือไม่?')) {
-      setAdminPromotionsList(prev => prev.filter(p => p.id !== id));
+      supabasePromotions.delete(id).then(() => {
+        reloadPromotions();
+      });
       triggerToast('ลบรายการแคมเปญเรียบร้อยแล้ว');
     }
   };
 
   // Notification History Management
-  const [notiHistory, setNotiHistory] = React.useState<any[]>(() => {
-    const saved = localStorage.getItem('pornpong_noti_history');
-    return saved ? JSON.parse(saved) : [
-      { id: 'not-1', title: 'เปิดตัว เรือคายัคลุยคลื่นรุ่นใหม่!', message: 'ทนแดดเกรดสูงสุด 8 เท่า จองมัดจำรับพายพลาสติกหนา 2 ชิ้นฟรีทันที', type: 'New product', date: '2026-05-20', recipientsCount: 'สมาชิกทั้งหมด (3 ท่าน)' },
-      { id: 'not-2', title: 'ยินดีต้อนรับสมาชิกใหม่รับส่วนลดทันที', message: 'สมาชิกใหม่จดทะเบียนระบบ รับโค้ดคูปองพิเศษ "NEWFAMILY" ลด 200.- บาท', type: 'Promotion', date: '2026-05-19', recipientsCount: 'สมาชิกทั้งหมด (3 ท่าน)' },
-      { id: 'not-3', title: 'ตารางแจ้งหลอม คิวผลิตเรือลำ 3.0 เมตร', message: 'สายผลิตกำลังเตรียมนำเมล็ดเม็ดหลอมเข้าไฟปฐมภูมิ คาดแล้วเสร็จ 10 ต.ค.', type: 'Pre-order update', date: '2026-05-15', recipientsCount: 'สมาชิกทั้งหมด (3 ท่าน)' }
-    ];
-  });
+  const [notiHistory, setNotiHistory] = React.useState<any[]>([]);
 
   // Preorder actions
   const changePreOrderStatus = (preId: string, nextStatus: 'Waiting confirmation' | 'Confirmed' | 'In production' | 'Ready to deliver' | 'Completed' | 'Cancelled' | string) => {
-    setAdminPreOrders(prev => prev.map(p => {
-      if (p.id === preId) {
-        return { ...p, status: nextStatus };
-      }
-      return p;
-    }));
+    supabasePreOrders.updateStatus(preId, nextStatus).then(() => {
+      reloadPreOrders();
+    });
     triggerToast('อัปเดตสถานะพรีออเดอร์ ' + preId + ' เป็น [' + nextStatus + '] สำเร็จ');
   };
 
@@ -451,24 +371,13 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
   const totalOrdersCount = adminOrders.length;
   const totalPreOrdersCount = adminPreOrders.length;
   const totalMembersCount = adminMembers.length;
-  const grossSalesVolume = adminOrders.reduce((sum, ord) => sum + ord.amount, 0) + adminPreOrders.reduce((sum, pre) => sum + pre.deposit, 0);
+  const grossSalesVolume = adminOrders.reduce((sum, ord) => sum + Number(ord.amount || 0), 0) + adminPreOrders.reduce((sum, pre) => sum + Number(pre.deposit || 0), 0);
 
   // Order actions
   const changeOrderStatus = (orderId: string, nextStatus: 'Pending' | 'Shipping' | 'Delivered') => {
-    let trackingNo = '';
-    if (nextStatus === 'Shipping') {
-      trackingNo = 'TH-EX-' + Math.floor(100000 + Math.random() * 900000);
-    }
-    setAdminOrders(prev => prev.map(o => {
-      if (o.id === orderId) {
-        return { 
-          ...o, 
-          status: nextStatus,
-          shipmentNo: trackingNo || o.shipmentNo
-        };
-      }
-      return o;
-    }));
+    supabaseOrders.updateStatus(orderId, nextStatus).then(() => {
+      reloadOrders();
+    });
     triggerToast(`อัปเดตสถานะออเดอร์ ${orderId} เป็น [${nextStatus === 'Shipping' ? 'จัดส่งแล้ว' : nextStatus === 'Delivered' ? 'สำเร็จเรียบร้อย' : 'รอดำเนินการ'}]`);
   };
 
@@ -492,19 +401,27 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
       active: true
     };
 
-    setAdminCoupons(prev => [newCoupon, ...prev]);
+    supabaseCoupons.insert(newCoupon).then(() => {
+      reloadCoupons();
+    });
     setNewCouponCode('');
     setNewCouponDesc('');
     triggerToast(`คูปองโค้ด "${newCoupon.code}" บันทึกเปิดใช้งานแล้ว!`);
   };
 
   const toggleCoupon = (code: string) => {
-    setAdminCoupons(prev => prev.map(c => c.code === code ? { ...c, active: !c.active } : c));
+    const couponObj = adminCoupons.find(c => c.code === code);
+    if (!couponObj) return;
+    supabaseCoupons.updateActive(code, !couponObj.active).then(() => {
+      reloadCoupons();
+    });
     triggerToast('สลับสถานะคูปองจัดส่งพรีเซ้นต์');
   };
 
   const deleteCoupon = (code: string) => {
-    setAdminCoupons(prev => prev.filter(c => c.code !== code));
+    supabaseCoupons.delete(code).then(() => {
+      reloadCoupons();
+    });
     triggerToast('ลบส่วนลดเรียบร้อย');
   };
 
@@ -667,12 +584,18 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
 
   // Review status
   const toggleReviewApprove = (id: string) => {
-    setAdminReviews(prev => prev.map(rev => rev.id === id ? { ...rev, approved: !rev.approved } : rev));
+    const revObj = adminReviews.find(r => r.id === id);
+    if (!revObj) return;
+    supabaseReviews.updateApproval(id, !revObj.approved).then(() => {
+      reloadReviews();
+    });
     triggerToast('ปรับปรุงสถานะอนุมัติรีวิวสำหรับหน้าเว็บบอร์ด');
   };
 
   const deleteReview = (id: string) => {
-    setAdminReviews(prev => prev.filter(rev => rev.id !== id));
+    supabaseReviews.delete(id).then(() => {
+      reloadReviews();
+    });
     triggerToast('ลบข้อความรีวิวนั้นแล้ว');
   };
 
@@ -826,6 +749,17 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
     p.id.toLowerCase().includes(preordersSearch.toLowerCase()) ||
     p.productName.toLowerCase().includes(preordersSearch.toLowerCase())
   );
+
+  const filteredSupabaseOrders = adminOrders.filter(o => {
+    const term = supabaseOrdersSearch.toLowerCase().trim();
+    if (!term) return true;
+    return (
+      (o.id && String(o.id).toLowerCase().includes(term)) ||
+      (o.customer_name && o.customer_name.toLowerCase().includes(term)) ||
+      (o.customer_email && o.customer_email.toLowerCase().includes(term)) ||
+      (o.customerName && o.customerName.toLowerCase().includes(term))
+    );
+  });
 
   return (
     <div className="min-h-screen bg-slate-900 flex flex-col md:flex-row text-slate-100 font-sans">
@@ -1093,24 +1027,30 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-850/50">
-                          {adminOrders.slice(0, 3).map((order) => (
-                            <tr key={order.id} className="hover:bg-slate-900/40">
-                              <td className="py-2 px-3 font-semibold text-white">{order.id}</td>
-                              <td className="py-2 px-2 text-slate-300 font-medium">{order.customerName}</td>
-                              <td className="py-2 px-2 text-right font-bold text-emerald-400">฿{order.amount.toLocaleString()}</td>
-                              <td className="py-2 px-3 text-center">
-                                <span className={`inline-flex px-2 py-0.5 rounded-full text-[9px] font-bold ${
-                                  order.status === 'Delivered' 
-                                    ? 'bg-emerald-950/40 border border-emerald-900 text-emerald-400'
-                                    : order.status === 'Shipping'
-                                      ? 'bg-sky-955/40 border border-sky-900 text-sky-400'
-                                      : 'bg-amber-955/40 border border-amber-900 text-amber-400'
-                                }`}>
-                                  {order.status === 'Delivered' ? 'ส่งมอบเสร็จ' : order.status === 'Shipping' ? 'กำลังขนส่ง' : 'รอชำระ'}
-                                </span>
-                              </td>
+                          {adminOrders.length === 0 ? (
+                            <tr>
+                              <td colSpan={4} className="py-6 text-center text-slate-500 font-medium">ยังไม่มีข้อมูล</td>
                             </tr>
-                          ))}
+                          ) : (
+                            adminOrders.slice(0, 3).map((order) => (
+                              <tr key={order.id} className="hover:bg-slate-900/40">
+                                <td className="py-2 px-3 font-semibold text-white">{order.id}</td>
+                                <td className="py-2 px-2 text-slate-300 font-medium">{order.customerName}</td>
+                                <td className="py-2 px-2 text-right font-bold text-emerald-400">฿{order.amount.toLocaleString()}</td>
+                                <td className="py-2 px-3 text-center">
+                                  <span className={`inline-flex px-2 py-0.5 rounded-full text-[9px] font-bold ${
+                                    order.status === 'Delivered' 
+                                      ? 'bg-emerald-950/40 border border-emerald-900 text-emerald-400'
+                                      : order.status === 'Shipping'
+                                        ? 'bg-sky-955/40 border border-sky-900 text-sky-400'
+                                        : 'bg-amber-955/40 border border-amber-900 text-amber-400'
+                                  }`}>
+                                    {order.status === 'Delivered' ? 'ส่งมอบเสร็จ' : order.status === 'Shipping' ? 'กำลังขนส่ง' : 'รอชำระ'}
+                                  </span>
+                                </td>
+                              </tr>
+                            ))
+                          )}
                         </tbody>
                       </table>
                     </div>
@@ -1144,22 +1084,28 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-850/50">
-                          {adminPreOrders.slice(0, 3).map((pre) => (
-                            <tr key={pre.id} className="hover:bg-slate-900/40">
-                              <td className="py-2 px-3 font-semibold text-white">{pre.id}</td>
-                              <td className="py-2 px-2 text-slate-300 font-medium">{pre.customerName}</td>
-                              <td className="py-2 px-2 text-right font-bold text-amber-400">฿{pre.deposit.toLocaleString()}</td>
-                              <td className="py-2 px-3 text-center">
-                                <span className={`inline-flex px-2 py-0.5 rounded-full text-[9px] font-bold ${
-                                  pre.status === 'DepositConfirmed' 
-                                    ? 'bg-emerald-950/40 border border-emerald-900 text-emerald-400'
-                                    : 'bg-amber-955/40 border border-amber-900 text-amber-400'
-                                }`}>
-                                  {pre.status === 'DepositConfirmed' ? 'อนุมัติมัดจำ' : 'รอตรวจสอบเงิน'}
-                                </span>
-                              </td>
+                          {adminPreOrders.length === 0 ? (
+                            <tr>
+                              <td colSpan={4} className="py-6 text-center text-slate-500 font-medium">ยังไม่มีข้อมูล</td>
                             </tr>
-                          ))}
+                          ) : (
+                            adminPreOrders.slice(0, 3).map((pre) => (
+                              <tr key={pre.id} className="hover:bg-slate-900/40">
+                                <td className="py-2 px-3 font-semibold text-white">{pre.id}</td>
+                                <td className="py-2 px-2 text-slate-300 font-medium">{pre.customerName}</td>
+                                <td className="py-2 px-2 text-right font-bold text-amber-400">฿{pre.deposit.toLocaleString()}</td>
+                                <td className="py-2 px-3 text-center">
+                                  <span className={`inline-flex px-2 py-0.5 rounded-full text-[9px] font-bold ${
+                                    pre.status === 'DepositConfirmed' 
+                                      ? 'bg-emerald-950/40 border border-emerald-900 text-emerald-400'
+                                      : 'bg-amber-955/40 border border-amber-900 text-amber-400'
+                                  }`}>
+                                    {pre.status === 'DepositConfirmed' ? 'อนุมัติมัดจำ' : 'รอตรวจสอบเงิน'}
+                                  </span>
+                                </td>
+                              </tr>
+                            ))
+                          )}
                         </tbody>
                       </table>
                     </div>
@@ -1259,66 +1205,72 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-850/60">
-                      {filteredAdminProducts.map((prod) => (
-                        <tr key={prod.id} className="hover:bg-slate-900/40 text-[11px]">
-                          <td className="py-3.5 px-4 font-mono font-bold text-slate-350">{prod.sku || prod.model_id || prod.id}</td>
-                          <td className="py-3.5 px-3">
-                            <img 
-                              src={prod.images?.[0]} 
-                              alt="product" 
-                              className="w-12 h-12 object-cover rounded-xl border border-slate-800" 
-                              referrerPolicy="no-referrer"
-                            />
-                          </td>
-                          <td className="py-3.5 px-3">
-                            <strong className="text-white block font-sans font-bold">{prod.name}</strong>
-                          </td>
-                          <td className="py-3.5 px-3">
-                            <span className="px-2 py-0.5 rounded-full bg-slate-900 border border-slate-800 text-[10px] text-slate-400">
-                              {prod.categoryThai}
-                            </span>
-                          </td>
-                          <td className="py-3.5 px-3 text-right font-black text-brand-blue">
-                            ฿{prod.price.toLocaleString()}
-                          </td>
-                          <td className="py-3.5 px-3 text-center text-slate-300 font-bold">
-                            {prod.stockQuantity !== undefined ? prod.stockQuantity : (prod.inStock ? 12 : 0)} ชิ้น
-                          </td>
-                          <td className="py-3.5 px-3 text-center">
-                            {(() => {
-                              const computedStatus = prod.status || (prod.inStock ? 'instock' : 'outofstock');
-                              return (
-                                <span className={`inline-flex px-2 py-0.5 rounded-full text-[9px] font-bold ${
-                                  computedStatus === 'instock' 
-                                    ? 'bg-emerald-950/40 text-emerald-400 border border-emerald-900' 
-                                    : computedStatus === 'preorder'
-                                      ? 'bg-sky-950/40 text-sky-400 border border-sky-900'
-                                      : 'bg-red-950/40 text-red-400 border border-red-900'
-                                }`}>
-                                  {computedStatus === 'instock' ? 'พร้อมส่ง (Instock)' : computedStatus === 'preorder' ? 'พรีออเดอร์ (Pre-order)' : 'หมด (Out of Stock)'}
-                                </span>
-                              );
-                            })()}
-                          </td>
-                          <td className="py-3.5 px-4 text-center">
-                            <div className="flex items-center justify-center gap-2">
-                              <button
-                                onClick={() => openEditProduct(prod)}
-                                className="p-1 px-2.5 rounded-lg bg-sky-950 text-brand-blue hover:bg-sky-900/60 font-semibold cursor-pointer text-[10px] border border-sky-900/30 flex items-center gap-1"
-                              >
-                                <Edit size={11} />
-                                <span>แก้ไข</span>
-                              </button>
-                              <button
-                                onClick={() => deleteProduct(prod.id)}
-                                className="p-1.5 rounded-lg bg-red-950/30 hover:bg-red-950 text-red-400 font-semibold cursor-pointer border border-red-950/50"
-                              >
-                                <Trash2 size={12} />
-                              </button>
-                            </div>
-                          </td>
+                      {filteredAdminProducts.length === 0 ? (
+                        <tr>
+                          <td colSpan={8} className="py-12 text-center text-slate-500 font-medium">ยังไม่มีข้อมูล</td>
                         </tr>
-                      ))}
+                      ) : (
+                        filteredAdminProducts.map((prod) => (
+                          <tr key={prod.id} className="hover:bg-slate-900/40 text-[11px]">
+                            <td className="py-3.5 px-4 font-mono font-bold text-slate-350">{prod.sku || prod.model_id || prod.id}</td>
+                            <td className="py-3.5 px-3">
+                              <img 
+                                src={prod.images?.[0]} 
+                                alt="product" 
+                                className="w-12 h-12 object-cover rounded-xl border border-slate-800" 
+                                referrerPolicy="no-referrer"
+                              />
+                            </td>
+                            <td className="py-3.5 px-3">
+                              <strong className="text-white block font-sans font-bold">{prod.name}</strong>
+                            </td>
+                            <td className="py-3.5 px-3">
+                              <span className="px-2 py-0.5 rounded-full bg-slate-900 border border-slate-800 text-[10px] text-slate-400">
+                                {prod.categoryThai}
+                              </span>
+                            </td>
+                            <td className="py-3.5 px-3 text-right font-black text-brand-blue">
+                              ฿{prod.price.toLocaleString()}
+                            </td>
+                            <td className="py-3.5 px-3 text-center text-slate-300 font-bold">
+                              {prod.stockQuantity !== undefined ? prod.stockQuantity : (prod.inStock ? 12 : 0)} ชิ้น
+                            </td>
+                            <td className="py-3.5 px-3 text-center">
+                              {(() => {
+                                const computedStatus = prod.status || (prod.inStock ? 'instock' : 'outofstock');
+                                return (
+                                  <span className={`inline-flex px-2 py-0.5 rounded-full text-[9px] font-bold ${
+                                    computedStatus === 'instock' 
+                                      ? 'bg-emerald-950/40 text-emerald-400 border border-emerald-900' 
+                                      : computedStatus === 'preorder'
+                                        ? 'bg-sky-950/40 text-sky-400 border border-sky-900'
+                                        : 'bg-red-950/40 text-red-400 border border-red-900'
+                                  }`}>
+                                    {computedStatus === 'instock' ? 'พร้อมส่ง (Instock)' : computedStatus === 'preorder' ? 'พรีออเดอร์ (Pre-order)' : 'หมด (Out of Stock)'}
+                                  </span>
+                                );
+                              })()}
+                            </td>
+                            <td className="py-3.5 px-4 text-center">
+                              <div className="flex items-center justify-center gap-2">
+                                <button
+                                  onClick={() => openEditProduct(prod)}
+                                  className="p-1 px-2.5 rounded-lg bg-sky-950 text-brand-blue hover:bg-sky-900/60 font-semibold cursor-pointer text-[10px] border border-sky-900/30 flex items-center gap-1"
+                                >
+                                  <Edit size={11} />
+                                  <span>แก้ไข</span>
+                                </button>
+                                <button
+                                  onClick={() => deleteProduct(prod.id)}
+                                  className="p-1.5 rounded-lg bg-red-950/30 hover:bg-red-950 text-red-400 font-semibold cursor-pointer border border-red-950/50"
+                                >
+                                  <Trash2 size={12} />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))
+                      )}
                     </tbody>
                   </table>
                 </div>
@@ -1542,7 +1494,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-xs border-collapse">
                     <thead>
-                      <tr className="border-b border-slate-810 bg-slate-950 text-slate-405 text-slate-400 font-bold">
+                      <tr className="border-b border-slate-810 bg-slate-950 text-slate-400 font-bold">
                         <th className="py-3 px-4">เลขที่ใบชำระ</th>
                         <th className="py-3 px-3">ชื่อคู่ค้าจัดส่ง</th>
                         <th className="py-3 px-3">รายละเอียดเรือพลาสติก</th>
@@ -1553,59 +1505,65 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-850/50">
-                      {filteredAdminOrders.map((ord) => (
-                        <tr key={ord.id} className="hover:bg-slate-900/30 text-[11px]">
-                          <td className="py-3.5 px-4 font-mono font-bold text-white">{ord.id}</td>
-                          <td className="py-3.5 px-3">
-                            <span className="font-bold block text-slate-200">{ord.customerName}</span>
-                            <span className="text-[9px] text-slate-400">จดทะเบียน {ord.date}</span>
-                          </td>
-                          <td className="py-3.5 px-3 max-w-[200px] truncate" title={ord.productName}>
-                            {ord.productName}
-                          </td>
-                          <td className="py-3.5 px-3 text-slate-300 font-medium">{ord.color}</td>
-                          <td className="py-3.5 px-3 text-right font-black text-emerald-400">
-                            ฿{ord.amount.toLocaleString()}
-                          </td>
-                          <td className="py-3.5 px-3 text-center">
-                            {ord.shipmentNo ? (
-                              <code className="bg-sky-950/40 border border-sky-900/60 rounded-md px-1.8 py-0.5 text-sky-400 font-mono text-[10px]">
-                                {ord.shipmentNo}
-                              </code>
-                            ) : (
-                              <span className="text-slate-500 italic">รอรันลำเลียงรหัสคิว</span>
-                            )}
-                          </td>
-                          <td className="py-3.5 px-3 text-center">
-                            <div className="flex items-center justify-center gap-1">
-                              <button
-                                onClick={() => changeOrderStatus(ord.id, 'Pending')}
-                                className={`px-2 py-1 rounded text-[9px] font-extrabold cursor-pointer transition-all ${
-                                  ord.status === 'Pending' ? 'bg-amber-500 text-slate-950 font-black' : 'bg-slate-900 text-slate-500'
-                                }`}
-                              >
-                                รอขนย้าย
-                              </button>
-                              <button
-                                onClick={() => changeOrderStatus(ord.id, 'Shipping')}
-                                className={`px-2 py-1 rounded text-[9px] font-extrabold cursor-pointer transition-all ${
-                                  ord.status === 'Shipping' ? 'bg-brand-blue text-white font-black' : 'bg-slate-900 text-slate-500'
-                                }`}
-                              >
-                                ส่งของ
-                              </button>
-                              <button
-                                onClick={() => changeOrderStatus(ord.id, 'Delivered')}
-                                className={`px-2 py-1 rounded text-[9px] font-extrabold cursor-pointer transition-all ${
-                                  ord.status === 'Delivered' ? 'bg-emerald-555 bg-emerald-500 text-slate-950 font-black' : 'bg-slate-900 text-slate-500'
-                                }`}
-                              >
-                                ส่งสำเร็จ
-                              </button>
-                            </div>
-                          </td>
+                      {filteredAdminOrders.length === 0 ? (
+                        <tr>
+                          <td colSpan={7} className="py-12 text-center text-slate-500 font-medium">ยังไม่มีข้อมูล</td>
                         </tr>
-                      ))}
+                      ) : (
+                        filteredAdminOrders.map((ord) => (
+                          <tr key={ord.id} className="hover:bg-slate-900/30 text-[11px]">
+                            <td className="py-3.5 px-4 font-mono font-bold text-white">{ord.id}</td>
+                            <td className="py-3.5 px-3">
+                              <span className="font-bold block text-slate-200">{ord.customerName}</span>
+                              <span className="text-[9px] text-slate-400">จดทะเบียน {ord.date}</span>
+                            </td>
+                            <td className="py-3.5 px-3 max-w-[200px] truncate" title={ord.productName}>
+                              {ord.productName}
+                            </td>
+                            <td className="py-3.5 px-3 text-slate-300 font-medium">{ord.color}</td>
+                            <td className="py-3.5 px-3 text-right font-black text-emerald-400">
+                              ฿{ord.amount.toLocaleString()}
+                            </td>
+                            <td className="py-3.5 px-3 text-center">
+                              {ord.shipmentNo ? (
+                                <code className="bg-sky-950/40 border border-sky-900/60 rounded-md px-1.8 py-0.5 text-sky-400 font-mono text-[10px]">
+                                  {ord.shipmentNo}
+                                </code>
+                              ) : (
+                                <span className="text-slate-500 italic">รอรันลำเลียงรหัสคิว</span>
+                              )}
+                            </td>
+                            <td className="py-3.5 px-3 text-center">
+                              <div className="flex items-center justify-center gap-1">
+                                <button
+                                  onClick={() => changeOrderStatus(ord.id, 'Pending')}
+                                  className={`px-2 py-1 rounded text-[9px] font-extrabold cursor-pointer transition-all ${
+                                    ord.status === 'Pending' ? 'bg-amber-500 text-slate-950 font-black' : 'bg-slate-900 text-slate-500'
+                                  }`}
+                                >
+                                  รอขนย้าย
+                                </button>
+                                <button
+                                  onClick={() => changeOrderStatus(ord.id, 'Shipping')}
+                                  className={`px-2 py-1 rounded text-[9px] font-extrabold cursor-pointer transition-all ${
+                                    ord.status === 'Shipping' ? 'bg-brand-blue text-white font-black' : 'bg-slate-900 text-slate-500'
+                                  }`}
+                                >
+                                  ส่งของ
+                                </button>
+                                <button
+                                  onClick={() => changeOrderStatus(ord.id, 'Delivered')}
+                                  className={`px-2 py-1 rounded text-[9px] font-extrabold cursor-pointer transition-all ${
+                                    ord.status === 'Delivered' ? 'bg-emerald-555 bg-emerald-500 text-slate-950 font-black' : 'bg-slate-900 text-slate-500'
+                                  }`}
+                                >
+                                  ส่งสำเร็จ
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))
+                      )}
                     </tbody>
                   </table>
                 </div>
@@ -1647,40 +1605,46 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-850/50">
-                      {filteredAdminPreorders.map((pre) => (
-                        <tr key={pre.id} className="hover:bg-slate-900/30 text-[11px]">
-                          <td className="py-3.5 px-4 font-mono font-bold text-white">{pre.id}</td>
-                          <td className="py-3.5 px-3">
-                            <span className="font-bold block text-slate-205 text-slate-200">{pre.customerName}</span>
-                            <span className="text-[9.5px] text-slate-400 font-mono">ลงทะเบียน {pre.date}</span>
-                          </td>
-                          <td className="py-3.5 px-3">
-                            <span className="block font-semibold text-slate-300">{pre.productName}</span>
-                            <span className="text-[10px] text-slate-450">{pre.color}</span>
-                          </td>
-                          <td className="py-3.5 px-3 text-right font-bold text-amber-500">
-                            ฿{pre.deposit.toLocaleString()}
-                          </td>
-                          <td className="py-3.5 px-3 text-right font-black text-brand-blue">
-                            ฿{pre.fullPrice.toLocaleString()}
-                          </td>
-                          <td className="py-3.5 px-3 text-slate-300 font-semibold">{pre.estDelivery}</td>
-                          <td className="py-3.5 px-4 text-center">
-                            <div className="flex items-center justify-center gap-1.5">
-                              <select
-                                value={pre.status}
-                                onChange={(e) => changePreOrderStatus(pre.id, e.target.value as any)}
-                                className="bg-slate-900 border border-slate-700 rounded-md py-1 px-2.5 text-[10.5px] text-slate-200 cursor-pointer text-center font-bold"
-                              >
-                                <option value="AwaitingDeposit">รอตรวจค่ามัดจำ</option>
-                                <option value="DepositConfirmed">ยืนยันเงินเรียบร้อย</option>
-                                <option value="InProduction">กำลังหลอมขึ้นรูป</option>
-                                <option value="Ready">ประกอบพร้อมจัดส่ง</option>
-                              </select>
-                            </div>
-                          </td>
+                      {filteredAdminPreorders.length === 0 ? (
+                        <tr>
+                          <td colSpan={7} className="py-12 text-center text-slate-500 font-medium">ยังไม่มีข้อมูล</td>
                         </tr>
-                      ))}
+                      ) : (
+                        filteredAdminPreorders.map((pre) => (
+                          <tr key={pre.id} className="hover:bg-slate-900/30 text-[11px]">
+                            <td className="py-3.5 px-4 font-mono font-bold text-white">{pre.id}</td>
+                            <td className="py-3.5 px-3">
+                              <span className="font-bold block text-slate-205 text-slate-200">{pre.customerName}</span>
+                              <span className="text-[9.5px] text-slate-400 font-mono">ลงทะเบียน {pre.date}</span>
+                            </td>
+                            <td className="py-3.5 px-3">
+                              <span className="block font-semibold text-slate-300">{pre.productName}</span>
+                              <span className="text-[10px] text-slate-450">{pre.color}</span>
+                            </td>
+                            <td className="py-3.5 px-3 text-right font-bold text-amber-500">
+                              ฿{pre.deposit.toLocaleString()}
+                            </td>
+                            <td className="py-3.5 px-3 text-right font-black text-brand-blue">
+                              ฿{pre.fullPrice.toLocaleString()}
+                            </td>
+                            <td className="py-3.5 px-3 text-slate-300 font-semibold">{pre.estDelivery}</td>
+                            <td className="py-3.5 px-4 text-center">
+                              <div className="flex items-center justify-center gap-1.5">
+                                <select
+                                  value={pre.status}
+                                  onChange={(e) => changePreOrderStatus(pre.id, e.target.value as any)}
+                                  className="bg-slate-900 border border-slate-700 rounded-md py-1 px-2.5 text-[10.5px] text-slate-200 cursor-pointer text-center font-bold"
+                                >
+                                  <option value="AwaitingDeposit">รอตรวจค่ามัดจำ</option>
+                                  <option value="DepositConfirmed">ยืนยันเงินเรียบร้อย</option>
+                                  <option value="InProduction">กำลังหลอมขึ้นรูป</option>
+                                  <option value="Ready">ประกอบพร้อมจัดส่ง</option>
+                                </select>
+                              </div>
+                            </td>
+                          </tr>
+                        ))
+                      )}
                     </tbody>
                   </table>
                 </div>
@@ -1712,63 +1676,69 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-850/60">
-                      {adminMembers.map((member, idx) => (
-                        <tr key={idx} className="hover:bg-slate-900/30 text-[11px]">
-                          <td className="py-3 px-3.5">
-                            <strong className="text-white block font-bold">คุณ {member.name}</strong>
-                          </td>
-                          <td className="py-3 px-3 font-mono text-slate-430 text-slate-400">{member.email}</td>
-                          <td className="py-3 px-3 text-center text-slate-300 font-mono">{member.phone}</td>
-                          <td className="py-3 px-3 text-center">
-                            <span className="px-2.5 py-0.5 rounded-full bg-sky-950/50 text-brand-blue text-[9px] font-bold border border-sky-900/40">
-                              {member.rank || 'Standard Family'}
-                            </span>
-                          </td>
-                          <td className="py-3 px-3 text-right font-black text-cyan-400 font-mono">{member.rewardPoints || 0} pt</td>
-                          <td className="py-3 px-4 text-center">
-                            <div className="flex justify-center items-center gap-2">
-                              <button
-                                onClick={async () => {
-                                  try {
-                                    const newPoints = (member.rewardPoints || 0) + 10;
-                                    if (member.id) {
-                                      await supabaseCustomers.updatePoints(member.id, newPoints);
-                                    }
-                                    setAdminMembers(prev => prev.map((m, i) => i === idx ? { ...m, rewardPoints: newPoints } : m));
-                                    triggerToast(`มอบแต้มสมาชิกพิเศษ 10 คะแนน แก่คุณ ${member.name} สำเร็จ!`);
-                                  } catch (err: any) {
-                                    triggerToast(`ข้อผิดพลาด: ${err.message || 'ไม่สามารถอัปเดตแต้มรางวัลได้'}`);
-                                  }
-                                }}
-                                className="px-2.5 py-1 bg-cyan-950 border border-cyan-900 text-cyan-400 font-bold text-[9.5px] rounded-lg cursor-pointer hover:bg-cyan-900 transition-colors"
-                              >
-                                + 10 แต้มพิเศษ
-                              </button>
-                              
-                              <button
-                                onClick={async () => {
-                                  if (confirm(`คุณแน่ใจหรือไม่ที่จะลบข้อมูลผู้ใช้งานของ คุณ ${member.name}?`)) {
-                                    try {
-                                      if (member.id) {
-                                        await supabaseCustomers.delete(member.id);
-                                        window.dispatchEvent(new Event('customers-updated'));
-                                        triggerToast(`ลบข้อมูลสมาชิกคุณ ${member.name} สำเร็จ!`);
-                                      } else {
-                                        triggerToast(`ไม่พบรหัสสมาชิกที่ต้องการลบ`);
-                                      }
-                                    } catch (err: any) {
-                                      triggerToast(`ข้อผิดพลาด: ${err.message || 'ไม่สามารถลบข้อมูลได้'}`);
-                                    }
-                                  }
-                                }}
-                                className="px-2.5 py-1 bg-red-950/40 border border-red-900/60 hover:bg-red-900/40 text-red-400 font-bold text-[9.5px] rounded-lg cursor-pointer transition-colors"
-                              >
-                                ลบระเบียน
-                              </button>
-                            </div>
-                          </td>
+                      {adminMembers.length === 0 ? (
+                        <tr>
+                          <td colSpan={6} className="py-12 text-center text-slate-500 font-medium">ยังไม่มีข้อมูล</td>
                         </tr>
-                      ))}
+                      ) : (
+                        adminMembers.map((member, idx) => (
+                          <tr key={idx} className="hover:bg-slate-900/30 text-[11px]">
+                            <td className="py-3 px-3.5">
+                              <strong className="text-white block font-bold">คุณ {member.name}</strong>
+                            </td>
+                            <td className="py-3 px-3 font-mono text-slate-430 text-slate-400">{member.email}</td>
+                            <td className="py-3 px-3 text-center text-slate-300 font-mono">{member.phone}</td>
+                            <td className="py-3 px-3 text-center">
+                              <span className="px-2.5 py-0.5 rounded-full bg-sky-950/50 text-brand-blue text-[9px] font-bold border border-sky-900/40">
+                                {member.rank || 'Standard Family'}
+                              </span>
+                            </td>
+                            <td className="py-3 px-3 text-right font-black text-cyan-400 font-mono">{member.rewardPoints || 0} pt</td>
+                            <td className="py-3 px-4 text-center">
+                              <div className="flex justify-center items-center gap-2">
+                                <button
+                                  onClick={async () => {
+                                    try {
+                                      const newPoints = (member.rewardPoints || 0) + 10;
+                                      if (member.id) {
+                                        await supabaseCustomers.updatePoints(member.id, newPoints);
+                                      }
+                                      setAdminMembers(prev => prev.map((m, i) => i === idx ? { ...m, rewardPoints: newPoints } : m));
+                                      triggerToast(`มอบแต้มสมาชิกพิเศษ 10 คะแนน แก่คุณ ${member.name} สำเร็จ!`);
+                                    } catch (err: any) {
+                                      triggerToast(`ข้อผิดพลาด: ${err.message || 'ไม่สามารถอัปเดตแต้มรางวัลได้'}`);
+                                    }
+                                  }}
+                                  className="px-2.5 py-1 bg-cyan-950 border border-cyan-900 text-cyan-400 font-bold text-[9.5px] rounded-lg cursor-pointer hover:bg-cyan-900 transition-colors"
+                                >
+                                  + 10 แต้มพิเศษ
+                                </button>
+                                
+                                <button
+                                  onClick={async () => {
+                                    if (confirm(`คุณแน่ใจหรือไม่ที่จะลบข้อมูลผู้ใช้งานของ คุณ ${member.name}?`)) {
+                                      try {
+                                        if (member.id) {
+                                          await supabaseCustomers.delete(member.id);
+                                          window.dispatchEvent(new Event('customers-updated'));
+                                          triggerToast(`ลบข้อมูลสมาชิกคุณ ${member.name} สำเร็จ!`);
+                                        } else {
+                                          triggerToast(`ไม่พบรหัสสมาชิกที่ต้องการลบ`);
+                                        }
+                                      } catch (err: any) {
+                                        triggerToast(`ข้อผิดพลาด: ${err.message || 'ไม่สามารถลบข้อมูลได้'}`);
+                                      }
+                                    }
+                                  }}
+                                  className="px-2.5 py-1 bg-red-950/40 border border-red-900/60 hover:bg-red-900/40 text-red-400 font-bold text-[9.5px] rounded-lg cursor-pointer transition-colors"
+                                >
+                                  ลบระเบียน
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))
+                      )}
                     </tbody>
                   </table>
                 </div>
@@ -1789,50 +1759,56 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                 </div>
 
                 <div className="grid grid-cols-1 gap-3.5">
-                  {adminReviews.map((rev) => (
-                    <div key={rev.id} className="p-4 border border-slate-850 bg-slate-900/60 rounded-xl space-y-2">
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
-                        <div className="flex items-center gap-2">
-                          <strong className="text-white font-bold">{rev.author}</strong>
-                          <span className="text-slate-450 text-[10px] bg-slate-950 px-2 py-0.5 rounded-full border border-slate-850 text-slate-400">{rev.date}</span>
-                        </div>
-                        
-                        <div className="flex items-center gap-2">
-                          <div className="flex gap-0.5 text-amber-500 font-bold">
-                            {"★".repeat(rev.rating)}
-                            {"☆".repeat(5 - rev.rating)}
+                  {adminReviews.length === 0 ? (
+                    <div className="p-8 text-center text-slate-500 font-medium bg-slate-900 border border-slate-850 rounded-xl">
+                      ยังไม่มีข้อมูล
+                    </div>
+                  ) : (
+                    adminReviews.map((rev) => (
+                      <div key={rev.id} className="p-4 border border-slate-850 bg-slate-900/60 rounded-xl space-y-2">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+                          <div className="flex items-center gap-2">
+                            <strong className="text-white font-bold">{rev.author}</strong>
+                            <span className="text-slate-450 text-[10px] bg-slate-950 px-2 py-0.5 rounded-full border border-slate-850 text-slate-400">{rev.date}</span>
                           </div>
                           
-                          <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-bold ${
-                            rev.approved 
-                              ? 'bg-emerald-950/40 border border-emerald-900 text-emerald-400' 
-                              : 'bg-red-953/40 border border-red-900 text-amber-500'
-                          }`}>
-                            {rev.approved ? 'โชว์หน้าเวที' : 'ซ่อนระงับบริการเพื่อเซ็นเซอร์'}
-                          </span>
+                          <div className="flex items-center gap-2">
+                            <div className="flex gap-0.5 text-amber-500 font-bold">
+                              {"★".repeat(rev.rating)}
+                              {"☆".repeat(5 - rev.rating)}
+                            </div>
+                            
+                            <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-bold ${
+                              rev.approved 
+                                ? 'bg-emerald-950/40 border border-emerald-900 text-emerald-400' 
+                                : 'bg-red-953/40 border border-red-900 text-amber-500'
+                            }`}>
+                              {rev.approved ? 'โชว์หน้าเวที' : 'ซ่อนระงับบริการเพื่อเซ็นเซอร์'}
+                            </span>
+                          </div>
+                        </div>
+
+                        <p className="text-xs text-slate-300 leading-normal bg-slate-950/30 p-2 rounded-lg border border-slate-850/40">
+                          {rev.comment}
+                        </p>
+
+                        <div className="flex gap-2 pt-1 justify-end">
+                          <button
+                            onClick={() => toggleReviewApprove(rev.id)}
+                            className="px-3 py-1 bg-slate-955 hover:bg-slate-800 border border-slate-810 text-slate-300 text-[10px] font-bold rounded-lg cursor-pointer transition-colors"
+                          >
+                            {rev.approved ? 'ปิดกั้นระงับบอร์ด' : 'อนุมัติผ่านโชว์'}
+                          </button>
+                          <button
+                            onClick={() => deleteReview(rev.id)}
+                            className="px-2.5 py-1 bg-red-950/40 border border-red-950 text-red-400 text-[10px] font-bold rounded-lg cursor-pointer hover:bg-red-950 transition-colors"
+                          >
+                            ลบถาวร
+                          </button>
                         </div>
                       </div>
-
-                      <p className="text-xs text-slate-300 leading-normal bg-slate-950/30 p-2 rounded-lg border border-slate-850/40">
-                        {rev.comment}
-                      </p>
-
-                      <div className="flex gap-2 pt-1 justify-end">
-                        <button
-                          onClick={() => toggleReviewApprove(rev.id)}
-                          className="px-3 py-1 bg-slate-955 hover:bg-slate-800 border border-slate-810 text-slate-300 text-[10px] font-bold rounded-lg cursor-pointer transition-colors"
-                        >
-                          {rev.approved ? 'ปิดกั้นระงับบอร์ด' : 'อนุมัติผ่านโชว์'}
-                        </button>
-                        <button
-                          onClick={() => deleteReview(rev.id)}
-                          className="px-2.5 py-1 bg-red-950/40 border border-red-950 text-red-400 text-[10px] font-bold rounded-lg cursor-pointer hover:bg-red-950 transition-colors"
-                        >
-                          ลบถาวร
-                        </button>
-                      </div>
-                    </div>
-                  ))}
+                    ))
+                  )}
                 </div>
               </div>
 
@@ -2018,48 +1994,54 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                   <h4 className="text-xs font-bold text-white">คูปองที่เปิดใช้งานในระบบปัจจุบัน ({adminCoupons.length} คูปอง)</h4>
 
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
-                    {adminCoupons.map((coupon) => (
-                      <div key={coupon.code} className="p-3.5 border border-slate-850 bg-slate-900 rounded-xl relative overflow-hidden flex flex-col justify-between">
-                        
-                        {/* Tag details */}
-                        <div className="space-y-1">
-                          <div className="flex justify-between items-center">
-                            <span className="font-mono text-sm font-black text-brand-blue bg-sky-950/40 px-2.5 py-0.5 rounded-lg border border-sky-900">
-                              {coupon.code}
-                            </span>
-                            <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${
-                              coupon.active ? 'bg-emerald-950 text-emerald-400 border border-emerald-900/60' : 'bg-slate-950 text-slate-400'
-                            }`}>
-                              {coupon.active ? 'เปิดอยู่' : 'ปิดโค้ด'}
+                    {adminCoupons.length === 0 ? (
+                      <div className="col-span-full p-8 text-center text-slate-500 font-medium bg-slate-900 border border-slate-850 rounded-xl">
+                        ยังไม่มีข้อมูล
+                      </div>
+                    ) : (
+                      adminCoupons.map((coupon) => (
+                        <div key={coupon.code} className="p-3.5 border border-slate-850 bg-slate-900 rounded-xl relative overflow-hidden flex flex-col justify-between">
+                          
+                          {/* Tag details */}
+                          <div className="space-y-1">
+                            <div className="flex justify-between items-center">
+                              <span className="font-mono text-sm font-black text-brand-blue bg-sky-950/40 px-2.5 py-0.5 rounded-lg border border-sky-900">
+                                {coupon.code}
+                              </span>
+                              <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${
+                                coupon.active ? 'bg-emerald-950 text-emerald-400 border border-emerald-900/60' : 'bg-slate-950 text-slate-400'
+                              }`}>
+                                {coupon.active ? 'เปิดอยู่' : 'ปิดโค้ด'}
+                              </span>
+                            </div>
+                            
+                            <p className="text-[11px] text-slate-300 font-bold mt-1.5 leading-snug">
+                              {coupon.description}
+                            </p>
+                            <span className="block text-[10.5px] font-semibold text-emerald-400 font-mono">
+                              ลดพิเศษ: +{coupon.type === 'flat' ? `${coupon.discount} บาท` : `${coupon.discount}%`}
                             </span>
                           </div>
-                          
-                          <p className="text-[11px] text-slate-300 font-bold mt-1.5 leading-snug">
-                            {coupon.description}
-                          </p>
-                          <span className="block text-[10.5px] font-semibold text-emerald-400 font-mono">
-                            ลดพิเศษ: +{coupon.type === 'flat' ? `${coupon.discount} บาท` : `${coupon.discount}%`}
-                          </span>
-                        </div>
 
-                        {/* Actions buttons */}
-                        <div className="flex gap-2 pt-3.5 mt-3.5 border-t border-slate-850/60 justify-end">
-                          <button
-                            onClick={() => toggleCoupon(coupon.code)}
-                            className="px-2 py-1 bg-slate-950 text-[10px] text-slate-350 cursor-pointer text-slate-350 hover:bg-slate-900 rounded border border-slate-800 transition-all font-bold"
-                          >
-                            สลับเปิด/ปิด
-                          </button>
-                          <button
-                            onClick={() => deleteCoupon(coupon.code)}
-                            className="p-1 px-2.5 rounded bg-red-950 text-red-400 border border-red-950 hover:bg-red-900 transition-all text-[10px] font-bold cursor-pointer"
-                          >
-                            ถอนสิทธิ์คูปอง
-                          </button>
+                          {/* Actions buttons */}
+                          <div className="flex gap-2 pt-3.5 mt-3.5 border-t border-slate-850/60 justify-end">
+                            <button
+                              onClick={() => toggleCoupon(coupon.code)}
+                              className="px-2 py-1 bg-slate-950 text-[10px] text-slate-350 cursor-pointer text-slate-350 hover:bg-slate-900 rounded border border-slate-800 transition-all font-bold"
+                            >
+                              สลับเปิด/ปิด
+                            </button>
+                            <button
+                              onClick={() => deleteCoupon(coupon.code)}
+                              className="p-1 px-2.5 rounded bg-red-950 text-red-400 border border-red-950 hover:bg-red-900 transition-all text-[10px] font-bold cursor-pointer"
+                            >
+                              ถอนสิทธิ์คูปอง
+                            </button>
+                          </div>
+                          
                         </div>
-                        
-                      </div>
-                    ))}
+                      ))
+                    )}
                   </div>
                 </div>
 

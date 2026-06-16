@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 
 import { Product, CartItem } from './types';
-import { supabaseProducts, supabaseCustomers } from './lib/supabase';
+import { supabaseProducts, supabaseCustomers, supabaseOrders } from './lib/supabase';
 
 import Header from './components/Header';
 import Footer from './components/Footer';
@@ -26,6 +26,7 @@ import { ProfileModal } from './components/ProfileModal';
 import { AppNotification } from './components/NotificationDropdown';
 import { AdminDashboard } from './components/AdminDashboard';
 import AdminLoginPage from './components/AdminLoginPage';
+import PaymentPage from './components/PaymentPage';
 
 import HomeSection from './components/HomeSection';
 import AboutSection from './components/AboutSection';
@@ -96,6 +97,9 @@ export default function App() {
     window.history.pushState(null, '', path);
     window.dispatchEvent(new Event('pushstate-changed'));
   };
+
+  // Order state for payment page redirections
+  const [currentOrder, setCurrentOrder] = React.useState<any>(null);
 
   // User Authentication state
   const [currentUser, setCurrentUser] = React.useState<{ name: string; email: string; phone: string } | null>(() => {
@@ -268,86 +272,69 @@ export default function App() {
     setCart([]);
   };
 
-  const handleSubmitOrder = (orderDetails: { fullName: string; phone: string; address: string; notes?: string }) => {
+  const handleSubmitOrder = async (orderDetails: { fullName: string; phone: string; address: string; notes?: string }) => {
     try {
-      // 1. Load existing orders
-      const savedOrdersStr = localStorage.getItem('pornpong_admin_orders');
-      let currentAdminOrders = [];
-      if (savedOrdersStr) {
-        try {
-          currentAdminOrders = JSON.parse(savedOrdersStr);
-        } catch {
-          currentAdminOrders = [];
-        }
-      }
+      const totalSum = cart.reduce((sum, item) => sum + item.product.price * item.quantity, 0);
+      
+      // Save order to Supabase orders table
+      const customerId = currentUser?.id || 'guest-' + Math.floor(1000 + Math.random() * 9000);
+      const customerEmail = currentUser?.email || 'guest@example.com';
+      const productNameSummary = cart.map(item => `${item.product.name} x${item.quantity}`).join(', ');
+      const colorsSummary = cart.map(item => item.selectedColor).join(', ');
 
-      // 2. Load existing pre-orders
-      const savedPreOrdersStr = localStorage.getItem('pornpong_admin_pre_orders');
-      let currentAdminPreOrders = [];
-      if (savedPreOrdersStr) {
-        try {
-          currentAdminPreOrders = JSON.parse(savedPreOrdersStr);
-        } catch {
-          currentAdminPreOrders = [];
-        }
-      }
-
-      // Format current date in Thai style e.g. "1 มิ.ย. 2026"
-      const dateOption: Intl.DateTimeFormatOptions = { day: 'numeric', month: 'short', year: 'numeric' };
-      const formattedDate = new Date().toLocaleDateString('th-TH', dateOption);
-
-      cart.forEach((item) => {
-        const isPre = item.product.status === 'preorder' || item.product.category === 'kayak';
-        const randomId = Math.floor(1000 + Math.random() * 9000);
-
-        if (isPre) {
-          const newPreOrder = {
-            id: `PRE-2026-${randomId}`,
-            customerName: orderDetails.fullName,
-            phone: orderDetails.phone,
-            date: formattedDate,
-            productName: item.product.name,
-            color: item.selectedColor,
-            quantity: item.quantity,
-            deposit: Math.round(item.product.price * 0.3), // 30% deposit
-            fullPrice: item.product.price * item.quantity,
-            status: 'Pending',
-            shipmentNo: ''
-          };
-          currentAdminPreOrders.unshift(newPreOrder);
-        } else {
-          const newOrder = {
-            id: `ORD-2026-${randomId}`,
-            customerName: orderDetails.fullName,
-            date: formattedDate,
-            productName: item.product.name,
-            color: item.selectedColor,
-            amount: item.product.price * item.quantity,
-            status: 'Pending',
-            shipmentNo: ''
-          };
-          currentAdminOrders.unshift(newOrder);
-        }
+      const createdOrder = await supabaseOrders.create({
+        customer_id: customerId,
+        customer_name: orderDetails.fullName,
+        customer_email: customerEmail,
+        customer_phone: orderDetails.phone,
+        total_amount: totalSum,
+        payment_status: 'pending',
+        order_status: 'waiting_payment',
+        productName: productNameSummary,
+        color: colorsSummary
       });
 
-      localStorage.setItem('pornpong_admin_orders', JSON.stringify(currentAdminOrders));
-      localStorage.setItem('pornpong_admin_pre_orders', JSON.stringify(currentAdminPreOrders));
+      if (createdOrder) {
+        setCurrentOrder(createdOrder);
+      } else {
+        // Fallback representation for frontend preview stability
+        setCurrentOrder({
+          id: 'ORD-2026-' + Math.floor(1000 + Math.random() * 9000),
+          customer_id: customerId,
+          customer_name: orderDetails.fullName,
+          customer_email: customerEmail,
+          customer_phone: orderDetails.phone,
+          total_amount: totalSum,
+          payment_status: 'pending',
+          order_status: 'waiting_payment',
+          productName: productNameSummary,
+          color: colorsSummary
+        });
+      }
 
-      // 3. Add order success notification
+      // Keep local notifications for UI reactivity
       const randomId = 'noti-' + Math.floor(Math.random() * 1000000);
       const newNoti = {
         id: randomId,
         title: 'คุณได้รับใบเสนอราคายืนยันการสั่งซื้อสำเร็จ',
-        message: `ใบจองสั่งซื้อของ คุณ ${orderDetails.fullName} ได้รับการบันทึกเข้าระบบหลังร้านพรพงศ์เรียบร้อยแล้ว`,
+        message: `ใบสั่งซื้อของ คุณ ${orderDetails.fullName} ยอดรวม ฿${totalSum.toLocaleString()} ได้รับการบันทึกเข้าระบบเรือจริงเรียบร้อยเรียบร้อยแล้ว`,
         type: 'order',
         date: 'เมื่อครู่',
         isRead: false
       };
       setNotifications(prev => [newNoti, ...prev]);
 
-      triggerToast('บันทึกคำสั่งจองจำลองเข้าระบบคอนโซลแอดมินเรียบร้อย!');
-    } catch (e) {
+      // Clear the cart on successful checkout
+      setCart([]);
+      localStorage.removeItem('pornpong_cart');
+
+      triggerToast('บันทึกคำสั่งซื้อลงในระบบฐานข้อมูล Supabase สำเร็จ!');
+      
+      // Redirect to Payment Page
+      navigateTo('/payment');
+    } catch (e: any) {
       console.error(e);
+      triggerToast('ข้อผิดพลาดเชื่อมข้อมูลระบบ Supabase: ' + (e.message || 'โปรดตรวจสอบสิทธิ์เชื่อมต่อ'));
     }
   };
 
@@ -401,6 +388,19 @@ export default function App() {
         triggerToast={triggerToast}
         notifications={notifications}
         setNotifications={setNotifications}
+      />
+    );
+  }
+
+  if (currentPath === '/payment') {
+    return (
+      <PaymentPage
+        order={currentOrder}
+        onBackToHome={() => {
+          setCurrentOrder(null);
+          navigateTo('/');
+        }}
+        triggerToast={triggerToast}
       />
     );
   }

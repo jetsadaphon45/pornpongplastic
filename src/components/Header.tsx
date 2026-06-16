@@ -54,7 +54,6 @@ export default function Header({
     { id: 'home', label: 'หน้าแรก' },
     { id: 'products', label: 'หน้าสินค้า' },
     { id: 'about', label: 'เกี่ยวกับเรา' },
-    { id: 'faq', label: 'คำถามที่พบบ่อย (FAQ)' },
     { id: 'contact', label: 'ติดต่อเรา' }
   ];
 
@@ -138,7 +137,7 @@ export default function Header({
           </nav>
 
           {/* Cart Icon & Menu Button */}
-          <div className="flex items-center gap-1.5 md:gap-2 shrink-0">
+          <div className="flex items-center gap-1.5 md:gap-2 shrink-0 border-r border-slate-100 pr-1.5 mr-1.5">
             
             {/* Desktop Auth Buttons */}
             <div className="hidden sm:flex items-center gap-1.5 md:gap-2 mr-1 shrink-0">

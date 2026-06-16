@@ -157,20 +157,7 @@ export const supabaseProducts = {
       throw error;
     }
 
-    // Seeding database conditionally if configured but empty
-    if (!data || data.length === 0) {
-      console.log('Database table is empty. Auto-seeding default clean products list...');
-      await this.seed();
-      const { data: reloaded, error: reloadErr } = await supabase
-        .from('products')
-        .select('*')
-        .order('created_at', { ascending: false });
-      
-      if (reloadErr) throw reloadErr;
-      return (reloaded || DEFAULT_CLEAN_SEED).map(mapDbToProduct);
-    }
-
-    return data.map(mapDbToProduct);
+    return (data || []).map(mapDbToProduct);
   },
 
   async insert(item: any): Promise<boolean> {
@@ -381,6 +368,421 @@ export const supabaseCustomers = {
       return null;
     }
     return data[0];
+  }
+};
+
+export const supabaseOrders = {
+  async list(): Promise<any[]> {
+    if (!isSupabaseConfigured || !supabase) return [];
+    try {
+      const { data, error } = await supabase
+        .from('orders')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.warn('Could not select from orders table in Supabase:', error.message);
+        return [];
+      }
+
+      return (data || []).map((row: any) => ({
+        ...row,
+        // Old view compatible fields:
+        id: row.id,
+        customerName: row.customer_name || row.customerName || '',
+        date: row.created_at ? new Date(row.created_at).toISOString().split('T')[0] : '',
+        productName: row.productName || row.product_name || 'เรือพลาสติกและอุปกรณ์',
+        color: row.color || 'คละสี',
+        amount: Number(row.total_amount || row.amount || 0),
+        status: row.payment_status || row.status || 'Pending',
+        shipmentNo: row.shipmentNo || row.shipment_no || '',
+        
+        // New view exact fields:
+        customer_id: row.customer_id || '',
+        customer_name: row.customer_name || row.customerName || '',
+        customer_email: row.customer_email || 'guest@example.com',
+        total_amount: Number(row.total_amount || row.amount || 0),
+        payment_status: row.payment_status || row.status || 'pending',
+        created_at: row.created_at || row.date || ''
+      }));
+    } catch (e: any) {
+      console.warn('Orders fetch caught error:', e.message);
+      return [];
+    }
+  },
+
+  async create(item: {
+    customer_id: string;
+    customer_name: string;
+    customer_email: string;
+    customer_phone: string;
+    total_amount: number;
+    payment_status: string;
+    order_status: string;
+    created_at?: string;
+    // compatible fields:
+    productName?: string;
+    color?: string;
+  }): Promise<any> {
+    if (!isSupabaseConfigured || !supabase) return null;
+    try {
+      const dbPayload = {
+        customer_id: item.customer_id,
+        customer_name: item.customer_name,
+        customer_email: item.customer_email,
+        customer_phone: item.customer_phone,
+        total_amount: Number(item.total_amount),
+        payment_status: item.payment_status || 'pending',
+        order_status: item.order_status || 'waiting_payment',
+        created_at: item.created_at || new Date().toISOString(),
+        
+        // compatible fields:
+        customerName: item.customer_name,
+        productName: item.productName || 'เรือพลาสติกและอุปกรณ์',
+        color: item.color || 'คละสี',
+        amount: Number(item.total_amount),
+        status: item.payment_status === 'pending' ? 'Pending' : item.payment_status
+      };
+
+      const { data, error } = await supabase.from('orders').insert([dbPayload]).select();
+      if (error) {
+        console.warn('First insert attempt failed:', error.message);
+        // Fallback for schema that might be missing some fields
+        const { data: fallbackData, error: fallbackError } = await supabase.from('orders').insert([{
+          customer_id: item.customer_id,
+          customer_name: item.customer_name,
+          customer_email: item.customer_email,
+          customer_phone: item.customer_phone,
+          customerName: item.customer_name,
+          total_amount: Number(item.total_amount),
+          amount: Number(item.total_amount),
+          payment_status: item.payment_status || 'pending',
+          order_status: item.order_status || 'waiting_payment',
+          status: item.payment_status === 'pending' ? 'Pending' : item.payment_status
+        }]).select();
+
+        if (fallbackError) {
+          console.warn('Fallback insert attempt failed:', fallbackError.message);
+          // Absolute barebones fallback
+          const { data: simpleData, error: simpleError } = await supabase.from('orders').insert([{
+            customer_id: item.customer_id,
+            customer_name: item.customer_name,
+            customer_email: item.customer_email,
+            total_amount: Number(item.total_amount),
+            payment_status: item.payment_status || 'pending'
+          }]).select();
+          
+          if (simpleError) {
+            throw simpleError;
+          }
+          return simpleData?.[0];
+        }
+        return fallbackData?.[0];
+      }
+      return data?.[0];
+    } catch (err: any) {
+      console.error('Failed to create order in Supabase:', err.message);
+      throw err;
+    }
+  },
+
+  async update(id: string, item: any): Promise<boolean> {
+    if (!isSupabaseConfigured || !supabase) return false;
+    try {
+      const { error } = await supabase.from('orders').update(item).eq('id', id);
+      if (error) {
+        throw error;
+      }
+      return true;
+    } catch (err: any) {
+      console.error('Failed to update order in Supabase:', err.message);
+      throw err;
+    }
+  },
+
+  async delete(id: string): Promise<boolean> {
+    if (!isSupabaseConfigured || !supabase) return false;
+    try {
+      const { error } = await supabase.from('orders').delete().eq('id', id);
+      if (error) {
+        throw error;
+      }
+      return true;
+    } catch (err: any) {
+      console.error('Failed to delete order from Supabase:', err.message);
+      throw err;
+    }
+  },
+
+  async updateStatus(id: string, status: string): Promise<boolean> {
+    if (!isSupabaseConfigured || !supabase) return false;
+    try {
+      const { error } = await supabase.from('orders').update({ payment_status: status, status }).eq('id', id);
+      if (error) {
+        await supabase.from('orders').update({ status }).eq('id', id);
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  },
+
+  async uploadSlip(orderId: string, file: File): Promise<string | null> {
+    if (!isSupabaseConfigured || !supabase) return null;
+    try {
+      // Create a unique clean path name
+      const fileExt = file.name.split('.').pop() || 'png';
+      const cleanFileName = `slip_${orderId}_${Date.now()}.${fileExt}`;
+      
+      const { data: uploadData, error: uploadError } = await supabase.storage
+        .from('payment-slips')
+        .upload(cleanFileName, file, {
+          cacheControl: '3600',
+          upsert: true
+        });
+
+      if (uploadError) {
+        console.error('Error uploading file to storage bucket of Supabase:', uploadError.message);
+        throw uploadError;
+      }
+
+      // Retrieve public URL
+      const { data: { publicUrl } } = supabase.storage
+        .from('payment-slips')
+        .getPublicUrl(cleanFileName);
+
+      // Update the orders table with payment_slip_url and payment_status = 'waiting_verify'
+      const { error: updateError } = await supabase
+        .from('orders')
+        .update({
+          payment_slip_url: publicUrl,
+          payment_status: 'waiting_verify',
+          status: 'WaitingVerify' // Legacy view support
+        })
+        .eq('id', orderId);
+
+      if (updateError) {
+        console.warn('Update with payment_slip_url failed, attempting base update:', updateError.message);
+        // Fallback update in case payment_slip_url field is missing in your Postgres DB schema
+        const { error: baseUpdateError } = await supabase
+          .from('orders')
+          .update({
+            payment_status: 'waiting_verify',
+            status: 'WaitingVerify'
+          })
+          .eq('id', orderId);
+        
+        if (baseUpdateError) {
+          throw baseUpdateError;
+        }
+      }
+
+      return publicUrl;
+    } catch (err: any) {
+      console.error('Failed in uploadSlip:', err.message || err);
+      throw err;
+    }
+  }
+};
+
+export const supabasePreOrders = {
+  async list(): Promise<any[]> {
+    if (!isSupabaseConfigured || !supabase) return [];
+    try {
+      const { data, error } = await supabase.from('preorders').select('*');
+      if (error) {
+        const { data: data2, error: error2 } = await supabase.from('pre_orders').select('*');
+        if (error2) {
+          console.warn('Could not select from preorders/pre_orders table in Supabase:', error2.message);
+          return [];
+        }
+        return (data2 || []).map(this.mapRow);
+      }
+      return (data || []).map(this.mapRow);
+    } catch (e: any) {
+      console.warn('Pre-orders fetch caught error:', e.message);
+      return [];
+    }
+  },
+  mapRow(row: any) {
+    return {
+      id: row.id,
+      customerName: row.customerName || row.customer_name || '',
+      phone: row.phone || '',
+      date: row.date || row.created_at ? new Date(row.date || row.created_at).toISOString().split('T')[0] : '',
+      productName: row.productName || row.product_name || '',
+      color: row.color || '',
+      quantity: Number(row.quantity || 1),
+      deposit: Number(row.deposit || 0),
+      fullPrice: Number(row.fullPrice || row.full_price || 0),
+      estDelivery: row.estDelivery || row.est_delivery_date || row.est_delivery || '',
+      status: row.status || 'AwaitingDeposit'
+    };
+  },
+  async updateStatus(id: string, status: string): Promise<boolean> {
+    if (!isSupabaseConfigured || !supabase) return false;
+    try {
+      await supabase.from('preorders').update({ status }).eq('id', id);
+      await supabase.from('pre_orders').update({ status }).eq('id', id);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+};
+
+export const supabaseCoupons = {
+  async list(): Promise<any[]> {
+    if (!isSupabaseConfigured || !supabase) return [];
+    try {
+      const { data, error } = await supabase.from('coupons').select('*');
+      if (error) {
+        console.warn('Could not select from coupons table in Supabase:', error.message);
+        return [];
+      }
+      return (data || []).map((row: any) => ({
+        code: row.code,
+        discount: Number(row.discount || 0),
+        type: row.type || 'flat',
+        description: row.description || '',
+        active: row.active !== undefined ? row.active : true
+      }));
+    } catch {
+      return [];
+    }
+  },
+  async insert(item: any): Promise<boolean> {
+    if (!isSupabaseConfigured || !supabase) return false;
+    try {
+      const { error } = await supabase.from('coupons').insert([item]);
+      return !error;
+    } catch {
+      return false;
+    }
+  },
+  async updateActive(code: string, active: boolean): Promise<boolean> {
+    if (!isSupabaseConfigured || !supabase) return false;
+    try {
+      await supabase.from('coupons').update({ active }).eq('code', code);
+      return true;
+    } catch {
+      return false;
+    }
+  },
+  async delete(code: string): Promise<boolean> {
+    if (!isSupabaseConfigured || !supabase) return false;
+    try {
+      await supabase.from('coupons').delete().eq('code', code);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+};
+
+export const supabaseReviews = {
+  async list(): Promise<any[]> {
+    if (!isSupabaseConfigured || !supabase) return [];
+    try {
+      const { data, error } = await supabase.from('reviews').select('*');
+      if (error) {
+        console.warn('Could not select from reviews table in Supabase:', error.message);
+        return [];
+      }
+      return (data || []).map((row: any) => ({
+        id: row.id,
+        productName: row.productName || row.product_name || '',
+        author: row.author || '',
+        rating: Number(row.rating || 5),
+        date: row.date || row.created_at ? new Date(row.date || row.created_at).toISOString().split('T')[0] : '',
+        comment: row.comment || '',
+        approved: row.approved !== undefined ? row.approved : false
+      }));
+    } catch {
+      return [];
+    }
+  },
+  async updateApproval(id: string, approved: boolean): Promise<boolean> {
+    if (!isSupabaseConfigured || !supabase) return false;
+    try {
+      await supabase.from('reviews').update({ approved }).eq('id', id);
+      return true;
+    } catch {
+      return false;
+    }
+  },
+  async delete(id: string): Promise<boolean> {
+    if (!isSupabaseConfigured || !supabase) return false;
+    try {
+      await supabase.from('reviews').delete().eq('id', id);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+};
+
+export const supabasePromotions = {
+  async list(): Promise<any[]> {
+    if (!isSupabaseConfigured || !supabase) return [];
+    try {
+      const { data, error } = await supabase.from('promotions').select('*');
+      if (error) {
+        console.warn('Could not select from promotions table in Supabase:', error.message);
+        return [];
+      }
+      return (data || []).map((row: any) => ({
+        id: row.id,
+        name: row.name || '',
+        discount: row.discount || '',
+        startDate: row.startDate || row.start_date || '',
+        endDate: row.endDate || row.end_date || '',
+        status: row.status || 'Active'
+      }));
+    } catch {
+      return [];
+    }
+  },
+  async insert(item: any): Promise<boolean> {
+    if (!isSupabaseConfigured || !supabase) return false;
+    try {
+      const dbItem: any = {
+        name: item.name,
+        discount: item.discount,
+        startDate: item.startDate,
+        endDate: item.endDate,
+        status: item.status
+      };
+      await supabase.from('promotions').insert([dbItem]);
+      return true;
+    } catch {
+      return false;
+    }
+  },
+  async update(id: string, item: any): Promise<boolean> {
+    if (!isSupabaseConfigured || !supabase) return false;
+    try {
+      const dbItem: any = {
+        name: item.name,
+        discount: item.discount,
+        startDate: item.startDate,
+        endDate: item.endDate,
+        status: item.status
+      };
+      await supabase.from('promotions').update(dbItem).eq('id', id);
+      return true;
+    } catch {
+      return false;
+    }
+  },
+  async delete(id: string): Promise<boolean> {
+    if (!isSupabaseConfigured || !supabase) return false;
+    try {
+      await supabase.from('promotions').delete().eq('id', id);
+      return true;
+    } catch {
+      return false;
+    }
   }
 };
 
