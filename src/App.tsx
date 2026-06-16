@@ -277,7 +277,7 @@ export default function App() {
       const totalSum = cart.reduce((sum, item) => sum + item.product.price * item.quantity, 0);
       
       // Save order to Supabase orders table
-      const customerId = currentUser?.id || 'guest-' + Math.floor(1000 + Math.random() * 9000);
+      const customerId = currentUser?.id || null;
       const customerEmail = currentUser?.email || 'guest@example.com';
       const productNameSummary = cart.map(item => `${item.product.name} x${item.quantity}`).join(', ');
       const colorsSummary = cart.map(item => item.selectedColor).join(', ');

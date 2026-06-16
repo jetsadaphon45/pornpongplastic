@@ -412,7 +412,7 @@ export const supabaseOrders = {
   },
 
   async create(item: {
-    customer_id: string;
+    customer_id: string | null;
     customer_name: string;
     customer_email: string;
     customer_phone: string;
@@ -443,6 +443,16 @@ export const supabaseOrders = {
         amount: Number(item.total_amount),
         status: item.payment_status === 'pending' ? 'Pending' : item.payment_status
       };
+
+      const customer_id = item.customer_id;
+      const customer_name = item.customer_name;
+      const customer_email = item.customer_email;
+
+      console.log({
+        customer_id,
+        customer_name,
+        customer_email
+      });
 
       const { data, error } = await supabase.from('orders').insert([dbPayload]).select();
       if (error) {
