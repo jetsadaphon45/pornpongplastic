@@ -537,6 +537,89 @@ export const supabaseOrders = {
     }
   },
 
+  async listWaitingVerify(): Promise<any[]> {
+    if (!isSupabaseConfigured || !supabase) return [];
+    try {
+      const { data, error } = await supabase
+        .from('orders')
+        .select('*')
+        .eq('payment_status', 'waiting_verify')
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.warn('Could not select waiting verify from orders table in Supabase:', error.message);
+        return [];
+      }
+
+      return (data || []).map((row: any) => ({
+        ...row,
+        id: row.id,
+        customerName: row.customer_name || row.customerName || '',
+        date: row.created_at ? new Date(row.created_at).toISOString().split('T')[0] : '',
+        productName: row.productName || row.product_name || 'เรือพลาสติกและอุปกรณ์',
+        color: row.color || 'คละสี',
+        amount: Number(row.total_amount || row.amount || 0),
+        status: row.payment_status || row.status || 'Pending',
+        shipmentNo: row.shipmentNo || row.shipment_no || '',
+        payment_slip_url: row.payment_slip_url || '',
+        
+        customer_id: row.customer_id || null,
+        customer_name: row.customer_name || row.customerName || '',
+        customer_email: row.customer_email || 'guest@example.com',
+        customer_phone: row.customer_phone || '',
+        total_amount: Number(row.total_amount || row.amount || 0),
+        payment_status: row.payment_status || row.status || 'pending',
+        order_status: row.order_status || 'waiting_payment',
+        created_at: row.created_at || row.date || ''
+      }));
+    } catch (e: any) {
+      console.warn('Orders fetch waiting verify caught error:', e.message);
+      return [];
+    }
+  },
+
+  async approve(id: string): Promise<boolean> {
+    if (!isSupabaseConfigured || !supabase) return false;
+    try {
+      const { error } = await supabase
+        .from('orders')
+        .update({
+          payment_status: 'approved',
+          order_status: 'confirmed',
+          status: 'Approved'
+        })
+        .eq('id', id);
+      if (error) {
+        await supabase.from('orders').update({ payment_status: 'approved' }).eq('id', id);
+      }
+      return true;
+    } catch (err: any) {
+      console.error('Failed to approve order:', err.message);
+      return false;
+    }
+  },
+
+  async reject(id: string): Promise<boolean> {
+    if (!isSupabaseConfigured || !supabase) return false;
+    try {
+      const { error } = await supabase
+        .from('orders')
+        .update({
+          payment_status: 'rejected',
+          order_status: 'payment_failed',
+          status: 'Rejected'
+        })
+        .eq('id', id);
+      if (error) {
+        await supabase.from('orders').update({ payment_status: 'rejected' }).eq('id', id);
+      }
+      return true;
+    } catch (err: any) {
+      console.error('Failed to reject order:', err.message);
+      return false;
+    }
+  },
+
   async uploadSlip(orderId: string, file: File): Promise<string | null> {
     if (!isSupabaseConfigured || !supabase) return null;
     try {

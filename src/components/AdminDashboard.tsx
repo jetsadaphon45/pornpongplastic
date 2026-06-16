@@ -139,6 +139,11 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
   const [isProductAddOpen, setIsProductAddOpen] = React.useState(false);
   const [editingProduct, setEditingProduct] = React.useState<Product | null>(null);
 
+  // Payment verification states
+  const [waitingVerifyOrders, setWaitingVerifyOrders] = React.useState<any[]>([]);
+  const [isVerifying, setIsVerifying] = React.useState<string | null>(null);
+  const [zoomedSlipUrl, setZoomedSlipUrl] = React.useState<string | null>(null);
+
   // Member & Preorder detail states
   const [selectedMember, setSelectedMember] = React.useState<any | null>(null);
   const [isMemberDetailOpen, setIsMemberDetailOpen] = React.useState<boolean>(false);
@@ -173,6 +178,15 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
   };
 
   // Load dynamic lists directly from Supabase
+  const reloadWaitingVerifyOrders = React.useCallback(async () => {
+    try {
+      const data = await supabaseOrders.listWaitingVerify();
+      setWaitingVerifyOrders(data);
+    } catch (err) {
+      console.error('Failed to reload waiting verify orders:', err);
+    }
+  }, []);
+
   const reloadOrders = React.useCallback(async () => {
     try {
       const data = await supabaseOrders.list();
@@ -224,7 +238,8 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
     reloadCoupons();
     reloadReviews();
     reloadPromotions();
-  }, [reloadOrders, reloadPreOrders, reloadCoupons, reloadReviews, reloadPromotions]);
+    reloadWaitingVerifyOrders();
+  }, [reloadOrders, reloadPreOrders, reloadCoupons, reloadReviews, reloadPromotions, reloadWaitingVerifyOrders]);
 
   // Website settings persistence auto-saver helper
   React.useEffect(() => {
@@ -356,6 +371,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
     // Navigation Sidebar Lists
   const MENUS = [
     { id: 'dashboard', label: 'หน้าแดชบอร์ด', icon: LayoutDashboard },
+    { id: 'payment-verify', label: 'ตรวจสอบการชำระเงิน', icon: ShieldCheck },
     { id: 'products', label: 'จัดการรหัสสินค้า', icon: Package },
     { id: 'orders', label: 'คำสั่งซื้อสำเร็จ', icon: FileText },
     { id: 'preorders', label: 'ประวัติพรีออเดอร์', icon: Calendar },
@@ -811,7 +827,14 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                 >
                   <div className="flex items-center gap-2.5">
                     <IconComp size={15} className={activeMenu === menu.id ? 'text-white' : 'text-slate-400'} />
-                    <span>{menu.label}</span>
+                    <span>
+                      {menu.label}
+                      {menu.id === 'payment-verify' && waitingVerifyOrders.length > 0 && (
+                        <span className="ml-2 px-1.5 py-0.5 rounded-full bg-red-500 text-[9px] font-black text-white inline-flex items-center justify-center">
+                          {waitingVerifyOrders.length}
+                        </span>
+                      )}
+                    </span>
                   </div>
                   <ChevronRight size={10} className="text-slate-500" />
                 </button>
@@ -1572,6 +1595,223 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
           )}
 
           {/* -----------------------------------------------------------
+              PAYMENT VERIFICATION WINDOW TAB
+              ----------------------------------------------------------- */}
+          {activeMenu === 'payment-verify' && (
+            <div className="space-y-6 animate-fadeIn">
+              
+              {/* Header with waiting count */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-slate-950 p-5 rounded-2xl border border-slate-850">
+                <div>
+                  <h2 className="text-base font-black text-white flex items-center gap-2">
+                    <ShieldCheck className="text-emerald-400" size={20} />
+                    <span>รอตรวจสอบการชำระเงิน ({waitingVerifyOrders.length})</span>
+                  </h2>
+                  <p className="text-xs text-slate-400 mt-1">
+                    ตรวจสอบยืนยันสลิปจากแอปพลิเคชันลูกค้า เพื่ออนุมัติการวางจองและการผลิตเข้าระบบ
+                  </p>
+                </div>
+                <button
+                  onClick={reloadWaitingVerifyOrders}
+                  className="px-4 py-2 bg-slate-900 hover:bg-slate-850 border border-slate-800 text-slate-200 hover:text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 self-start sm:self-center cursor-pointer"
+                >
+                  <RefreshCw size={12} className={isVerifying ? 'animate-spin' : ''} />
+                  <span>ดึงข้อมูลล่าสุด (Sync)</span>
+                </button>
+              </div>
+
+              {/* Waiting Verify Grid / List */}
+              {waitingVerifyOrders.length === 0 ? (
+                <div className="bg-slate-950/40 border border-dashed border-slate-800 rounded-2xl p-12 text-center text-slate-500 font-medium">
+                  <CheckCircle2 size={36} className="mx-auto text-emerald-400/70 mb-3 animate-pulse" />
+                  <p className="text-sm font-bold text-slate-350">ไม่มีคำสั่งซื้อที่รอตรวจสอบสลิปในขณะนี้</p>
+                  <p className="text-xs text-slate-500 mt-1">ออเดอร์ทั้งหมดถูกตรวจสอบและดำเนินการอย่างสมบูรณ์แล้ว</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+                  {waitingVerifyOrders.map((ord) => {
+                    const orderDateStr = ord.created_at 
+                      ? new Date(ord.created_at).toLocaleString('th-TH', { 
+                          year: 'numeric', 
+                          month: 'long', 
+                          day: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit'
+                        })
+                      : 'ไม่พบลำดับเวลา';
+
+                    return (
+                      <div 
+                        key={ord.id} 
+                        className="bg-slate-950/80 border border-slate-850 hover:border-slate-800 duration-200 rounded-2xl overflow-hidden p-5 flex flex-col md:flex-row gap-5"
+                      >
+                        {/* LEFT: SLIP VIEW & ACTION FOR ZOOM */}
+                        <div className="w-full md:w-[150px] shrink-0 space-y-2">
+                          <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400 block">
+                            ภาพหลักฐานการโอน (Slip)
+                          </span>
+                          {ord.payment_slip_url ? (
+                            <div 
+                              onClick={() => setZoomedSlipUrl(ord.payment_slip_url)}
+                              className="border border-slate-800 hover:border-brand-blue rounded-xl overflow-hidden aspect-[3/4] md:aspect-auto md:h-[180px] bg-slate-900 flex items-center justify-center p-1 cursor-zoom-in relative group transition-all"
+                              title="คลิกเพื่อขยายดูรูปสลิปขนาดเต็ม"
+                            >
+                              <img 
+                                src={ord.payment_slip_url} 
+                                alt="สลิปโอนเงิน" 
+                                referrerPolicy="no-referrer"
+                                className="w-full h-full object-contain rounded-lg group-hover:scale-[1.03] duration-200"
+                              />
+                              <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 duration-200 flex items-center justify-center">
+                                <span className="bg-slate-900/90 text-white rounded-full p-2 text-[10px] font-bold px-3">
+                                  คลิกเพื่อตรวจรูปเต็ม
+                                </span>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="border-2 border-dashed border-slate-850 rounded-xl bg-slate-900/50 aspect-[3/4] md:aspect-auto md:h-[180px] flex flex-col items-center justify-center text-center p-3 text-slate-500">
+                              <AlertTriangle size={24} className="text-amber-550 mb-1" />
+                              <span className="text-[10.5px] leading-snug">ไม่มีข้อมูลรูปภาพสลิปที่แนบ</span>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* RIGHT: DETAILS & CONFIRMATION ACTIONS */}
+                        <div className="flex-1 flex flex-col justify-between space-y-4">
+                          <div className="space-y-3">
+                            {/* Order ID & Header */}
+                            <div className="flex justify-between items-start gap-2 border-b border-slate-900 pb-2.5">
+                              <div>
+                                <span className="text-[10px] uppercase tracking-wider text-slate-500 block font-bold">
+                                  เลขที่ใบสั่งซื้อ (Order ID)
+                                </span>
+                                <code className="text-xs font-mono font-bold text-white bg-slate-900 px-2 py-0.5 rounded border border-slate-850">
+                                  {ord.id}
+                                </code>
+                              </div>
+                              <div className="text-right">
+                                <span className="text-[10px] uppercase tracking-wider text-slate-500 block font-bold">
+                                  รหัสคิวผลิต / สถานะ
+                                </span>
+                                <span className="inline-flex rounded px-1.5 py-0.5 text-[9.5px] font-extrabold bg-amber-500/10 text-amber-400 border border-amber-900/40">
+                                  {ord.payment_status || 'waiting_verify'}
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* Info Fields */}
+                            <div className="grid grid-cols-2 gap-2 text-xs">
+                              <div>
+                                <span className="text-slate-500 text-[10px] block">ชื่อผู้จองสินค้า:</span>
+                                <strong className="text-slate-200 block truncate">{ord.customer_name || 'ไม่แจ้งชื่อ'}</strong>
+                              </div>
+                              <div>
+                                <span className="text-slate-500 text-[10px] block font-sans">เบอร์ติดต่อกลับ:</span>
+                                <strong className="text-slate-200 block truncate">{ord.customer_phone || 'ไม่ระบุ'}</strong>
+                              </div>
+                              <div className="col-span-2">
+                                <span className="text-slate-500 text-[10px] block">สเกลอีเมล:</span>
+                                <strong className="text-slate-300 block truncate font-mono text-[10px]" title={ord.customer_email}>{ord.customer_email}</strong>
+                              </div>
+                              <div className="col-span-2">
+                                <span className="text-slate-500 text-[10px] block">เรือที่สั่งหลอมสี:</span>
+                                <p className="text-slate-200 font-medium leading-relaxed max-h-[36px] line-clamp-1 overflow-hidden" title={ord.productName}>
+                                  {ord.productName} {ord.color ? `(${ord.color})` : ''}
+                                </p>
+                              </div>
+                              <div>
+                                <span className="text-slate-500 text-[10px] block">ตราเวลาสั่งซื้อ:</span>
+                                <span className="text-slate-400 text-[10.5px] block leading-tight">{orderDateStr}</span>
+                              </div>
+                              <div className="text-right">
+                                <span className="text-slate-500 text-[10px] block font-bold">ยอดเงินโอนสุทธิ:</span>
+                                <strong className="text-emerald-400 font-extrabold text-sm font-mono block">
+                                  ฿{Number(ord.total_amount || ord.amount || 0).toLocaleString()}
+                                </strong>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Action Buttons */}
+                          <div className="flex gap-2.5 pt-3 border-t border-slate-900">
+                            {/* REJECT BUTTON */}
+                            <button
+                              type="button"
+                              disabled={isVerifying !== null}
+                              onClick={async () => {
+                                if (confirm('คุณแน่ใจหรือไม่ว่าต้องการ "ปฏิเสธสลิปการโอนเงิน" นี้?')) {
+                                  setIsVerifying(ord.id);
+                                  try {
+                                    const success = await supabaseOrders.reject(ord.id);
+                                    if (success) {
+                                      triggerToast('อัปเดตสถานะเรียบร้อย');
+                                      await reloadWaitingVerifyOrders();
+                                      await reloadOrders();
+                                    } else {
+                                      triggerToast('ทำรายการไม่สำเร็จ กรุณาลองใหม่อีกครั้ง');
+                                    }
+                                  } catch (err: any) {
+                                    console.error(err);
+                                    triggerToast('ข้อผิดพลาด: ' + err.message);
+                                  } finally {
+                                    setIsVerifying(null);
+                                  }
+                                }
+                              }}
+                              className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl bg-red-950/40 hover:bg-red-950/80 border border-red-900/60 hover:border-red-600 text-red-100 hover:text-white font-bold text-xs cursor-pointer transition-all disabled:opacity-40"
+                            >
+                              {isVerifying === ord.id ? (
+                                <div className="h-3 w-3 rounded-full border-2 border-red-305 border-t-transparent animate-spin"></div>
+                              ) : (
+                                <span>❌ ปฏิเสธการชำระเงิน</span>
+                              )}
+                            </button>
+
+                            {/* APPROVE BUTTON */}
+                            <button
+                              type="button"
+                              disabled={isVerifying !== null}
+                              onClick={async () => {
+                                if (confirm('คุณแน่ใจหรือไม่ว่าต้องการ "อนุมัติสลิปการโอนเงิน" นี้?')) {
+                                  setIsVerifying(ord.id);
+                                  try {
+                                    const success = await supabaseOrders.approve(ord.id);
+                                    if (success) {
+                                      triggerToast('อัปเดตสถานะเรียบร้อย');
+                                      await reloadWaitingVerifyOrders();
+                                      await reloadOrders();
+                                    } else {
+                                      triggerToast('ทำรายการไม่สำเร็จ กรุณาลองใหม่อีกครั้ง');
+                                    }
+                                  } catch (err: any) {
+                                    console.error(err);
+                                    triggerToast('ข้อผิดพลาด: ' + err.message);
+                                  } finally {
+                                    setIsVerifying(null);
+                                  }
+                                }
+                              }}
+                              className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl bg-emerald-950/40 hover:bg-emerald-650 border border-emerald-900/60 hover:border-emerald-500 text-emerald-100 hover:text-white font-bold text-xs cursor-pointer transition-all disabled:opacity-40 shadow-md"
+                            >
+                              {isVerifying === ord.id ? (
+                                <div className="h-3 w-3 rounded-full border-2 border-emerald-305 border-t-transparent animate-spin"></div>
+                              ) : (
+                                <span>✅ อนุมัติการชำระเงิน</span>
+                              )}
+                            </button>
+                          </div>
+                        </div>
+
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+            </div>
+          )}
+
+          {/* -----------------------------------------------------------
               4. PRE-ORDERS CAMPAIGN LIST TAB
               ----------------------------------------------------------- */}
           {activeMenu === 'preorders' && (
@@ -2157,6 +2397,39 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
         </div>
 
       </main>
+
+      {/* ZOOMED SLIP IMAGE FULL-SCREEN MODAL PREVIEW */}
+      {zoomedSlipUrl && (
+        <div 
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/95 p-4 animate-fadeIn"
+          onClick={() => setZoomedSlipUrl(null)}
+        >
+          <div 
+            className="relative max-w-3xl w-full flex flex-col items-center justify-center"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Close instruction */}
+            <button
+              onClick={() => setZoomedSlipUrl(null)}
+              className="absolute -top-10 right-0 text-slate-400 hover:text-white transition-colors cursor-pointer text-xs font-bold flex items-center gap-1.5"
+            >
+              <X size={16} />
+              <span>ปิดหน้าต่างตรวจ</span>
+            </button>
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden p-2 shadow-2xl flex items-center justify-center">
+              <img 
+                src={zoomedSlipUrl} 
+                alt="Zoomed Slip Preview" 
+                referrerPolicy="no-referrer"
+                className="max-h-[85vh] max-w-full object-contain rounded-lg shadow-inner"
+              />
+            </div>
+            <p className="text-slate-500 text-center text-xs mt-3 font-semibold">
+              คลิกบริเวณรอบนอกรูป หรือคลิกปุ่มด้านบนเพื่อปิดหน้าต่าง
+            </p>
+          </div>
+        </div>
+      )}
 
     </div>
   );
