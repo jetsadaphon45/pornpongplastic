@@ -398,7 +398,7 @@ export const supabaseOrders = {
         shipmentNo: row.shipmentNo || row.shipment_no || '',
         
         // New view exact fields:
-        customer_id: row.customer_id || '',
+        customer_id: row.customer_id || null,
         customer_name: row.customer_name || row.customerName || '',
         customer_email: row.customer_email || 'guest@example.com',
         total_amount: Number(row.total_amount || row.amount || 0),

@@ -282,7 +282,7 @@ export default function App() {
       const productNameSummary = cart.map(item => `${item.product.name} x${item.quantity}`).join(', ');
       const colorsSummary = cart.map(item => item.selectedColor).join(', ');
 
-      const createdOrder = await supabaseOrders.create({
+      const payload = {
         customer_id: customerId,
         customer_name: orderDetails.fullName,
         customer_email: customerEmail,
@@ -292,7 +292,11 @@ export default function App() {
         order_status: 'waiting_payment',
         productName: productNameSummary,
         color: colorsSummary
-      });
+      };
+
+      console.log('ORDER PAYLOAD', payload);
+
+      const createdOrder = await supabaseOrders.create(payload);
 
       const fallbackOrder = {
         id: 'ORD-2026-' + Math.floor(1000 + Math.random() * 9000),

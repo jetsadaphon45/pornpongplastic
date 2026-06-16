@@ -55,7 +55,7 @@ export default function HomeSection({
     <div className="font-sans">
       
       {/* 1. HERO BANNER SECTION */}
-      <section className="relative overflow-hidden bg-gradient-to-b from-sky-50 via-white to-white pt-16 pb-20 sm:pt-20 sm:pb-24 lg:pt-[84px] lg:pb-[96px]">
+      <section style={{ paddingTop: '18px' }} className="relative overflow-hidden bg-gradient-to-b from-sky-50 via-white to-white pb-20 sm:pb-24 lg:pb-[96px]">
         {/* Abstract background decorative shapes */}
         <div className="absolute inset-0 z-0 pointer-events-none opacity-50">
           <div className="absolute top-10 right-1/4 w-72 h-72 bg-sky-200/40 rounded-full filter blur-3xl animate-pulse" />
