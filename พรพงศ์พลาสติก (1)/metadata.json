@@ -1,6 +1,0 @@
-{
-  "name": "พรพงศ์พลาสติก",
-  "description": "ร้านขายเรือพลาสติกคุณภาพสูง เรือพาย เรือตกปลา เรือคายัค และอุปกรณ์พลาสติกครบวงจร แข็งแรง ทนทาน ราคาโรงงาน",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}
