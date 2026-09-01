@@ -417,77 +417,34 @@ export const supabaseOrders = {
     customer_email: string;
     customer_phone: string;
     total_amount: number;
-    payment_status: string;
-    order_status: string;
+    payment_status?: string;
+    order_status?: string;
     created_at?: string;
-    // compatible fields:
     productName?: string;
     color?: string;
   }): Promise<any> {
     if (!isSupabaseConfigured || !supabase) return null;
     try {
-      const dbPayload = {
+      const insertPayload = {
         customer_id: item.customer_id,
         customer_name: item.customer_name,
         customer_email: item.customer_email,
         customer_phone: item.customer_phone,
         total_amount: Number(item.total_amount),
-        payment_status: item.payment_status || 'pending',
-        order_status: item.order_status || 'waiting_payment',
-        created_at: item.created_at || new Date().toISOString(),
-        
-        // compatible fields:
-        customerName: item.customer_name,
-        productName: item.productName || 'เรือพลาสติกและอุปกรณ์',
-        color: item.color || 'คละสี',
-        amount: Number(item.total_amount),
-        status: item.payment_status === 'pending' ? 'Pending' : item.payment_status
+        payment_status: 'pending',
+        order_status: 'waiting_payment'
       };
 
-      const customer_id = item.customer_id;
-      const customer_name = item.customer_name;
-      const customer_email = item.customer_email;
+      console.log('ORDER PAYLOAD', insertPayload);
 
-      console.log({
-        customer_id,
-        customer_name,
-        customer_email
-      });
+      const { data, error } = await supabase
+        .from('orders')
+        .insert([insertPayload])
+        .select();
 
-      const { data, error } = await supabase.from('orders').insert([dbPayload]).select();
       if (error) {
-        console.warn('First insert attempt failed:', error.message);
-        // Fallback for schema that might be missing some fields
-        const { data: fallbackData, error: fallbackError } = await supabase.from('orders').insert([{
-          customer_id: item.customer_id,
-          customer_name: item.customer_name,
-          customer_email: item.customer_email,
-          customer_phone: item.customer_phone,
-          customerName: item.customer_name,
-          total_amount: Number(item.total_amount),
-          amount: Number(item.total_amount),
-          payment_status: item.payment_status || 'pending',
-          order_status: item.order_status || 'waiting_payment',
-          status: item.payment_status === 'pending' ? 'Pending' : item.payment_status
-        }]).select();
-
-        if (fallbackError) {
-          console.warn('Fallback insert attempt failed:', fallbackError.message);
-          // Absolute barebones fallback
-          const { data: simpleData, error: simpleError } = await supabase.from('orders').insert([{
-            customer_id: item.customer_id,
-            customer_name: item.customer_name,
-            customer_email: item.customer_email,
-            total_amount: Number(item.total_amount),
-            payment_status: item.payment_status || 'pending'
-          }]).select();
-          
-          if (simpleError) {
-            throw simpleError;
-          }
-          return simpleData?.[0];
-        }
-        return fallbackData?.[0];
+        console.error('Failed to insert order into Supabase:', error.message);
+        throw error;
       }
       return data?.[0];
     } catch (err: any) {
@@ -527,10 +484,8 @@ export const supabaseOrders = {
   async updateStatus(id: string, status: string): Promise<boolean> {
     if (!isSupabaseConfigured || !supabase) return false;
     try {
-      const { error } = await supabase.from('orders').update({ payment_status: status, status }).eq('id', id);
-      if (error) {
-        await supabase.from('orders').update({ status }).eq('id', id);
-      }
+      const { error } = await supabase.from('orders').update({ payment_status: status }).eq('id', id);
+      if (error) throw error;
       return true;
     } catch {
       return false;
@@ -585,13 +540,10 @@ export const supabaseOrders = {
         .from('orders')
         .update({
           payment_status: 'approved',
-          order_status: 'confirmed',
-          status: 'Approved'
+          order_status: 'confirmed'
         })
         .eq('id', id);
-      if (error) {
-        await supabase.from('orders').update({ payment_status: 'approved' }).eq('id', id);
-      }
+      if (error) throw error;
       return true;
     } catch (err: any) {
       console.error('Failed to approve order:', err.message);
@@ -606,13 +558,10 @@ export const supabaseOrders = {
         .from('orders')
         .update({
           payment_status: 'rejected',
-          order_status: 'payment_failed',
-          status: 'Rejected'
+          order_status: 'payment_failed'
         })
         .eq('id', id);
-      if (error) {
-        await supabase.from('orders').update({ payment_status: 'rejected' }).eq('id', id);
-      }
+      if (error) throw error;
       return true;
     } catch (err: any) {
       console.error('Failed to reject order:', err.message);
@@ -644,30 +593,24 @@ export const supabaseOrders = {
         .from('payment-slips')
         .getPublicUrl(cleanFileName);
 
-      // Update the orders table with payment_slip_url and payment_status = 'waiting_verify'
-      const { error: updateError } = await supabase
+      const updatePayload = {
+        payment_slip_url: publicUrl,
+        payment_status: 'waiting_verify'
+      };
+
+      console.log('ORDER ID', orderId);
+      console.log('PUBLIC URL', publicUrl);
+      console.log('UPDATE PAYLOAD', updatePayload);
+
+      const result = await supabase
         .from('orders')
-        .update({
-          payment_slip_url: publicUrl,
-          payment_status: 'waiting_verify',
-          status: 'WaitingVerify' // Legacy view support
-        })
+        .update(updatePayload)
         .eq('id', orderId);
 
-      if (updateError) {
-        console.warn('Update with payment_slip_url failed, attempting base update:', updateError.message);
-        // Fallback update in case payment_slip_url field is missing in your Postgres DB schema
-        const { error: baseUpdateError } = await supabase
-          .from('orders')
-          .update({
-            payment_status: 'waiting_verify',
-            status: 'WaitingVerify'
-          })
-          .eq('id', orderId);
-        
-        if (baseUpdateError) {
-          throw baseUpdateError;
-        }
+      console.log('UPDATE RESULT', result);
+
+      if (result.error) {
+        throw result.error;
       }
 
       return publicUrl;
