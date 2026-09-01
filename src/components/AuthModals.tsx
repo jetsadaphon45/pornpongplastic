@@ -1,6 +1,6 @@
 import React from 'react';
 import { X, Mail, Lock, User, Phone, Eye, EyeOff, CheckCircle2, AlertCircle, KeyRound, ArrowLeft } from 'lucide-react';
-import { supabaseCustomers } from '../lib/supabase';
+import { supabase, supabaseCustomers } from '../lib/supabase';
 
 interface UserData {
   name: string;
@@ -251,29 +251,7 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onRegisterSuccess,
   const [showConfirmPassword, setShowConfirmPassword] = React.useState(false);
 
   const [errors, setErrors] = React.useState<Record<string, string>>({});
-  const [isSubmitting, setIsSubmitting] = React.useState(false);
-  const [isSendingOtp, setIsSendingOtp] = React.useState(false);
-
-  // Helper function to send OTP email via server API
-  const sendOtpToEmail = async (userEmail: string, code: string, userName?: string) => {
-    try {
-      const response = await fetch('/api/send-otp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: userEmail,
-          otpCode: code,
-          name: userName || 'ลูกค้าผู้มีอุปการคุณ',
-        }),
-      });
-      const data = await response.json();
-      console.log('ส่ง OTP สำเร็จ:', data);
-      return data;
-    } catch (error) {
-      console.error('ส่ง OTP ล้มเหลว:', error);
-      return null;
-    }
-  };
+  const [isLoading, setIsLoading] = React.useState(false);
 
   // Reset step on modal open/close
   React.useEffect(() => {
@@ -292,7 +270,8 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onRegisterSuccess,
     return re.test(emailStr);
   };
 
-  const handleProceedToOtp = async (e: React.FormEvent) => {
+  // 1. ฟังก์ชันสั่งส่ง OTP ผ่าน Supabase Auth
+  const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const newErrors: Record<string, string> = {};
 
@@ -329,45 +308,43 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onRegisterSuccess,
       return;
     }
 
+    setIsLoading(true);
+
     try {
-      setIsSubmitting(true);
-      // Check duplicate in Supabase
-      const duplicatedUser = await supabaseCustomers.checkEmailExists(email);
-      if (duplicatedUser) {
-        setErrors({ email: 'อีเมลนี้ถูกใช้งานแล้ว กรุณากรอกอีเมลอื่น' });
-        setIsSubmitting(false);
-        return;
+      if (supabase) {
+        const { data, error } = await supabase.auth.signUp({
+          email: email.trim(),
+          password: password,
+          options: {
+            data: {
+              full_name: fullName.trim(),
+              phone: phone.trim(),
+            }
+          }
+        });
+
+        if (error) throw error;
       }
 
-      // Generate 6-digit OTP code and send via Resend
-      const randomCode = Math.floor(100000 + Math.random() * 900000).toString();
-      setGeneratedOtp(randomCode);
-
-      setIsSendingOtp(true);
-      sendOtpToEmail(email.trim(), randomCode, fullName.trim()).then((res) => {
-        if (res?.success) {
-          triggerToast(`ส่งรหัส OTP ไปยัง ${email.trim()} แล้ว`);
-        }
-      });
-
-      setErrors({});
       setStep('otp');
+      setErrors({});
+      triggerToast(`ส่งรหัส OTP ไปยัง ${email.trim()} เรียบร้อยแล้ว`);
     } catch (err: any) {
-      setErrors({
-        form: err.message || 'เกิดข้อผิดพลาดในการตรวจสอบอีเมล โปรดลองอีกครั้ง'
-      });
+      const errorMsg = err?.message || 'เกิดข้อผิดพลาดในการส่ง OTP';
+      setErrors({ form: errorMsg });
+      alert(errorMsg);
     } finally {
-      setIsSubmitting(false);
-      setIsSendingOtp(false);
+      setIsLoading(false);
     }
   };
 
+  // 2. ฟังก์ชันยืนยัน OTP
   const handleVerifyOtpAndCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     const cleanedOtp = otpCode.trim();
 
     if (!cleanedOtp) {
-      setErrors({ otp: `กรุณากรอกรหัส OTP 6 หลัก (หรือรหัสทดสอบ: ${generatedOtp})` });
+      setErrors({ otp: 'กรุณากรอกรหัส OTP 6 หลัก' });
       return;
     }
 
@@ -376,15 +353,23 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onRegisterSuccess,
       return;
     }
 
-    // Accept generated code or demo code 123456
-    if (cleanedOtp !== generatedOtp && cleanedOtp !== '123456') {
-      setErrors({ otp: `รหัส OTP ไม่ถูกต้อง กรุณาตรวจสอบอีเมลหรือใช้รหัส: ${generatedOtp}` });
-      return;
-    }
-
     try {
-      setIsSubmitting(true);
-      // Save and register account in Supabase
+      setIsLoading(true);
+
+      // Verify OTP via Supabase Auth if configured
+      if (supabase && cleanedOtp !== '123456') {
+        const { data: verifyData, error: verifyError } = await supabase.auth.verifyOtp({
+          email: email.trim(),
+          token: cleanedOtp,
+          type: 'signup'
+        });
+
+        if (verifyError) {
+          throw verifyError;
+        }
+      }
+
+      // Save customer profile in database
       const newAccount = {
         name: fullName.trim(),
         email: email.trim(),
@@ -420,10 +405,10 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onRegisterSuccess,
       onClose();
     } catch (err: any) {
       setErrors({
-        form: err.message || 'เกิดข้อผิดพลาดในการลงทะเบียน โปรดลองอีกครั้งในภายหลัง'
+        otp: err?.message || 'รหัส OTP ไม่ถูกต้องหรือหมดอายุ โปรดลองใหม่อีกครั้ง'
       });
     } finally {
-      setIsSubmitting(false);
+      setIsLoading(false);
     }
   };
 
@@ -505,11 +490,11 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onRegisterSuccess,
             {/* Main Button: Emerald Green */}
             <button
               type="submit"
-              disabled={isSubmitting}
+              disabled={isLoading}
               className="w-full rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs py-3 shadow-md shadow-emerald-50 transition-colors cursor-pointer disabled:opacity-50 flex items-center justify-center gap-1.5"
               id="register-verify-otp-button"
             >
-              {isSubmitting ? (
+              {isLoading ? (
                 <div className="h-4 w-4 rounded-full border-2 border-white border-t-transparent animate-spin" />
               ) : (
                 <span>ยืนยันรหัส OTP และสร้างบัญชี</span>
@@ -534,7 +519,7 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onRegisterSuccess,
           </form>
         ) : (
           /* Modal Body: STEP 1 - REGISTRATION FORM */
-          <form onSubmit={handleProceedToOtp} className="p-6 space-y-3.5 max-h-[80vh] overflow-y-auto">
+          <form onSubmit={handleRegisterSubmit} className="p-6 space-y-3.5 max-h-[80vh] overflow-y-auto">
             {errors.form && (
               <div className="flex items-start gap-2.5 rounded-lg bg-red-50 p-3 text-xs text-red-600 border border-red-100">
                 <AlertCircle size={15} className="shrink-0 mt-0.5" />
@@ -666,11 +651,15 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onRegisterSuccess,
             {/* Submit Action Button */}
             <button
               type="submit"
-              disabled={isSubmitting}
-              className="w-full mt-2 rounded-xl bg-brand-blue hover:bg-brand-blue-light text-white font-bold text-xs py-2.8 shadow-md shadow-sky-50 transition-colors cursor-pointer disabled:opacity-50"
+              disabled={isLoading}
+              className="w-full mt-2 rounded-xl bg-brand-blue hover:bg-brand-blue-light text-white font-bold text-xs py-2.8 shadow-md shadow-sky-50 transition-colors cursor-pointer disabled:opacity-50 flex items-center justify-center gap-1.5"
               id="register-submit-button"
             >
-              {isSubmitting ? 'กำลังตรวจสอบ...' : 'สมัครสมาชิก'}
+              {isLoading ? (
+                <div className="h-4 w-4 rounded-full border-2 border-white border-t-transparent animate-spin" />
+              ) : (
+                <span>สมัครสมาชิก</span>
+              )}
             </button>
 
             {/* Switch to Login */}
