@@ -245,18 +245,42 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onRegisterSuccess,
   const [password, setPassword] = React.useState('');
   const [confirmPassword, setConfirmPassword] = React.useState('');
   const [otpCode, setOtpCode] = React.useState('');
+  const [generatedOtp, setGeneratedOtp] = React.useState('123456');
 
   const [showPassword, setShowPassword] = React.useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = React.useState(false);
 
   const [errors, setErrors] = React.useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = React.useState(false);
+  const [isSendingOtp, setIsSendingOtp] = React.useState(false);
+
+  // Helper function to send OTP email via server API
+  const sendOtpToEmail = async (userEmail: string, code: string, userName?: string) => {
+    try {
+      const response = await fetch('/api/send-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: userEmail,
+          otpCode: code,
+          name: userName || 'ลูกค้าผู้มีอุปการคุณ',
+        }),
+      });
+      const data = await response.json();
+      console.log('ส่ง OTP สำเร็จ:', data);
+      return data;
+    } catch (error) {
+      console.error('ส่ง OTP ล้มเหลว:', error);
+      return null;
+    }
+  };
 
   // Reset step on modal open/close
   React.useEffect(() => {
     if (isOpen) {
       setStep('form');
       setOtpCode('');
+      setGeneratedOtp('123456');
       setErrors({});
     }
   }, [isOpen]);
@@ -315,6 +339,17 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onRegisterSuccess,
         return;
       }
 
+      // Generate 6-digit OTP code and send via Resend
+      const randomCode = Math.floor(100000 + Math.random() * 900000).toString();
+      setGeneratedOtp(randomCode);
+
+      setIsSendingOtp(true);
+      sendOtpToEmail(email.trim(), randomCode, fullName.trim()).then((res) => {
+        if (res?.success) {
+          triggerToast(`ส่งรหัส OTP ไปยัง ${email.trim()} แล้ว`);
+        }
+      });
+
       setErrors({});
       setStep('otp');
     } catch (err: any) {
@@ -323,6 +358,7 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onRegisterSuccess,
       });
     } finally {
       setIsSubmitting(false);
+      setIsSendingOtp(false);
     }
   };
 
@@ -331,7 +367,7 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onRegisterSuccess,
     const cleanedOtp = otpCode.trim();
 
     if (!cleanedOtp) {
-      setErrors({ otp: 'กรุณากรอกรหัส OTP 6 หลัก (รหัสทดสอบ: 123456)' });
+      setErrors({ otp: `กรุณากรอกรหัส OTP 6 หลัก (หรือรหัสทดสอบ: ${generatedOtp})` });
       return;
     }
 
@@ -340,9 +376,9 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onRegisterSuccess,
       return;
     }
 
-    // Accept demo code 123456 or standard numeric 6 digits
-    if (cleanedOtp !== '123456' && !/^\d{6}$/.test(cleanedOtp)) {
-      setErrors({ otp: 'รหัส OTP ไม่ถูกต้อง กรุณากรอกรหัสสาธิต: 123456' });
+    // Accept generated code or demo code 123456
+    if (cleanedOtp !== generatedOtp && cleanedOtp !== '123456') {
+      setErrors({ otp: `รหัส OTP ไม่ถูกต้อง กรุณาตรวจสอบอีเมลหรือใช้รหัส: ${generatedOtp}` });
       return;
     }
 
