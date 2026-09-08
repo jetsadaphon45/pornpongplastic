@@ -645,26 +645,26 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
     // ADMIN LOGIN FORM INTERFACE
     // -----------------------------------------------------------------
     return (
-      <div className="min-h-screen bg-slate-900 flex flex-col justify-center items-center p-4 font-sans relative overflow-hidden">
+      <div className="min-h-screen bg-slate-50 flex flex-col justify-center items-center p-4 font-sans relative overflow-hidden">
         
         {/* Abstract background graphics */}
-        <div className="absolute -top-40 -left-40 w-96 h-96 bg-brand-blue/15 rounded-full blur-3xl pointer-events-none"></div>
-        <div className="absolute -bottom-40 -right-40 w-96 h-96 bg-cyan-500/10 rounded-full blur-3xl pointer-events-none"></div>
+        <div className="absolute -top-40 -left-40 w-96 h-96 bg-sky-100/60 rounded-full blur-3xl pointer-events-none"></div>
+        <div className="absolute -bottom-40 -right-40 w-96 h-96 bg-cyan-100/60 rounded-full blur-3xl pointer-events-none"></div>
 
-        <div className="w-full max-w-md bg-slate-805 bg-slate-950/70 border border-slate-800 rounded-3xl p-8 shadow-2xl relative z-10 backdrop-blur-md">
+        <div className="w-full max-w-md bg-white border border-slate-200 rounded-3xl p-8 shadow-xl relative z-10">
           
           <div className="flex flex-col items-center text-center mb-8">
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-tr from-brand-blue to-cyan-500 text-white shadow-xl mb-3.5 rotate-6">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-tr from-sky-500 to-cyan-500 text-white shadow-md mb-3.5 rotate-6">
               <Lock size={22} className="text-white" />
             </div>
-            <h1 className="font-display text-xl font-extrabold text-white">คอนโซลผู้ดูแลระบบ</h1>
-            <p className="text-slate-400 text-xs mt-1">
+            <h1 className="font-display text-xl font-extrabold text-slate-800">คอนโซลผู้ดูแลระบบ</h1>
+            <p className="text-slate-500 text-xs mt-1">
               โรงงานหลอมขึ้นรูปเรือพลาสติกและคลังพรีออเดอร์ ตราพรพงศ์ 
             </p>
           </div>
 
           {loginError && (
-            <div className="mb-5 p-3 rounded-xl bg-red-950/40 border border-red-800 text-red-400 text-[11px] font-semibold flex items-start gap-2 animate-fadeIn">
+            <div className="mb-5 p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-600 text-[11px] font-semibold flex items-start gap-2 animate-fadeIn">
               <AlertTriangle size={14} className="shrink-0 mt-0.5" />
               <span>{loginError}</span>
             </div>
@@ -672,41 +672,41 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
 
           <form onSubmit={handleLogin} className="space-y-4">
             <div>
-              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5 pl-1">อีเมลแอดมินสแกนเนอร์</label>
+              <label className="block text-[10px] font-bold text-slate-600 uppercase tracking-wider mb-1.5 pl-1">อีเมลแอดมินสแกนเนอร์</label>
               <input
                 type="email"
                 required
                 value={loginEmail}
                 onChange={(e) => setLoginEmail(e.target.value)}
-                className="w-full bg-slate-900 border border-slate-700/80 hover:border-slate-600 rounded-xl px-4 py-2.8 text-xs text-white outline-hidden focus:border-brand-blue focus:ring-1 focus:ring-sky-100/20"
+                className="w-full bg-slate-50 border border-slate-200 hover:border-slate-300 rounded-xl px-4 py-2.8 text-xs text-slate-800 outline-hidden focus:bg-white focus:border-sky-500 focus:ring-1 focus:ring-sky-500/20"
                 placeholder="admin@pornpongplastic.com"
                 id="admin-login-email-input"
               />
             </div>
 
             <div>
-              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5 pl-1">รหัสผ่านลับกองกลาง</label>
+              <label className="block text-[10px] font-bold text-slate-600 uppercase tracking-wider mb-1.5 pl-1">รหัสผ่านลับกองกลาง</label>
               <input
                 type="password"
                 required
                 value={loginPass}
                 onChange={(e) => setLoginPass(e.target.value)}
-                className="w-full bg-slate-900 border border-slate-700/80 hover:border-slate-600 rounded-xl px-4 py-2.8 text-xs text-white outline-hidden focus:border-brand-blue focus:ring-1 focus:ring-sky-100/20"
+                className="w-full bg-slate-50 border border-slate-200 hover:border-slate-300 rounded-xl px-4 py-2.8 text-xs text-slate-800 outline-hidden focus:bg-white focus:border-sky-500 focus:ring-1 focus:ring-sky-500/20"
                 placeholder="กรอกรหัสผ่าน..."
                 id="admin-login-password-input"
               />
             </div>
 
             {/* Quick Helper Auto-fill */}
-            <div className="bg-slate-900/60 p-3 rounded-xl border border-slate-800/60 flex items-center justify-between text-[11px]">
-              <span className="text-slate-400 font-medium">เดโมล็อกอินแบบด่วน:</span>
+            <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 flex items-center justify-between text-[11px]">
+              <span className="text-slate-500 font-medium">เดโมล็อกอินแบบด่วน:</span>
               <button
                 type="button"
                 onClick={() => {
                   setLoginEmail('admin@pornpongplastic.com');
                   setLoginPass('Admin@2026');
                 }}
-                className="text-brand-blue font-bold px-2 py-1 bg-cyan-950/60 rounded-md border border-cyan-800/80 hover:bg-cyan-900 transition-all cursor-pointer hover:text-cyan-400 active:scale-95"
+                className="text-sky-600 font-bold px-2.5 py-1 bg-sky-50 rounded-md border border-sky-200 hover:bg-sky-100 transition-all cursor-pointer active:scale-95"
                 id="admin-autofill-btn"
               >
                 กรอกอัตโนมัติ (Auto-fill)
@@ -715,7 +715,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
 
             <button
               type="submit"
-              className="w-full py-3 mt-2 rounded-xl bg-gradient-to-r from-brand-blue to-sky-500 hover:from-brand-blue-light hover:to-sky-400 text-white font-bold text-xs transition-all active:scale-97 flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-sky-950/20"
+              className="w-full py-3 mt-2 rounded-xl bg-sky-500 hover:bg-sky-600 text-white font-bold text-xs transition-all active:scale-97 flex items-center justify-center gap-2 cursor-pointer shadow-md shadow-sky-500/20"
               id="admin-submit-login-btn"
             >
               <ShieldCheck size={15} />
@@ -724,10 +724,10 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
           </form>
 
           {/* Return button */}
-          <div className="mt-8 border-t border-slate-800/85 pt-4 text-center">
+          <div className="mt-8 border-t border-slate-200 pt-4 text-center">
             <button
               onClick={onClose}
-              className="inline-flex items-center gap-1.5 text-slate-400 hover:text-white transition-all text-xs font-bold cursor-pointer"
+              className="inline-flex items-center gap-1.5 text-slate-500 hover:text-slate-800 transition-all text-xs font-bold cursor-pointer"
               id="exit-to-storefront-login-btn"
             >
               <ArrowLeft size={13} />
@@ -778,35 +778,35 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
   });
 
   return (
-    <div className="min-h-screen bg-slate-900 flex flex-col md:flex-row text-slate-100 font-sans">
+    <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row text-slate-800 font-sans">
       
       {/* ---------------------------------------------------------------
           SIDEBAR NAVIGATION AREA
           --------------------------------------------------------------- */}
-      <aside className="w-full md:w-[260px] bg-slate-950 shrink-0 border-b md:border-b-0 md:border-r border-slate-850 flex flex-col justify-between">
+      <aside className="w-full md:w-[260px] bg-white shrink-0 border-b md:border-b-0 md:border-r border-slate-200 flex flex-col justify-between shadow-xs">
         <div className="p-5">
           {/* Logo Brand Header */}
-          <div className="flex items-center gap-3 pb-5 mb-5 border-b border-slate-850">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-sky-550 bg-gradient-to-br from-brand-blue to-purple-650 text-white shadow-md">
+          <div className="flex items-center gap-3 pb-5 mb-5 border-b border-slate-200">
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-sky-500 text-white shadow-sm">
               <Lock size={16} />
             </div>
             <div>
-              <h2 className="font-display font-black text-xs text-white leading-tight">PORNPONG PANEL</h2>
-              <span className="text-[9px] text-brand-blue-light font-extrabold uppercase tracking-widest block">ADMIN SANDBOX v5.0</span>
+              <h2 className="font-display font-black text-xs text-slate-800 leading-tight">PORNPONG PANEL</h2>
+              <span className="text-[9px] text-sky-600 font-extrabold uppercase tracking-widest block">ADMIN SANDBOX v5.0</span>
             </div>
           </div>
 
           {/* Active Admin Profile Tag */}
-          <div className="flex items-center gap-2.5 p-2 bg-slate-900/50 rounded-xl border border-slate-850/70 mb-5">
-            <div className="w-8 h-8 rounded-full bg-cyan-600 flex items-center justify-center font-bold text-white text-xs uppercase shadow-inner">
+          <div className="flex items-center gap-2.5 p-2.5 bg-slate-50 rounded-xl border border-slate-200 mb-5">
+            <div className="w-8 h-8 rounded-full bg-sky-500 flex items-center justify-center font-bold text-white text-xs uppercase shadow-xs">
               {adminUser?.username ? adminUser.username.slice(0, 1) : 'A'}
             </div>
             <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-1.2">
-                <span className="text-[10px] font-bold text-white block truncate">{adminUser?.username || 'admin'}</span>
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] font-bold text-slate-800 block truncate">{adminUser?.username || 'admin'}</span>
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0 animate-pulse"></span>
               </div>
-              <span className="text-[9px] text-slate-400 block truncate">{adminUser?.email || 'admin@pornpongplastic.com'}</span>
+              <span className="text-[9px] text-slate-500 block truncate">{adminUser?.email || 'admin@pornpongplastic.com'}</span>
             </div>
           </div>
 
@@ -820,23 +820,25 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                   onClick={() => setActiveMenu(menu.id)}
                   className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-left text-xs font-semibold cursor-pointer transition-all ${
                     activeMenu === menu.id
-                      ? 'bg-brand-blue text-white shadow-xs font-bold scale-[1.01]'
-                      : 'text-slate-400 hover:bg-slate-900/60 hover:text-slate-100'
+                      ? 'bg-sky-500 text-white shadow-sm font-bold scale-[1.01]'
+                      : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
                   }`}
                   id={`admin-menu-link-${menu.id}`}
                 >
                   <div className="flex items-center gap-2.5">
-                    <IconComp size={15} className={activeMenu === menu.id ? 'text-white' : 'text-slate-400'} />
+                    <IconComp size={15} className={activeMenu === menu.id ? 'text-white' : 'text-slate-500'} />
                     <span>
                       {menu.label}
                       {menu.id === 'payment-verify' && waitingVerifyOrders.length > 0 && (
-                        <span className="ml-2 px-1.5 py-0.5 rounded-full bg-red-500 text-[9px] font-black text-white inline-flex items-center justify-center">
+                        <span className={`ml-2 px-1.5 py-0.5 rounded-full text-[9px] font-black inline-flex items-center justify-center ${
+                          activeMenu === menu.id ? 'bg-white text-sky-600' : 'bg-rose-500 text-white'
+                        }`}>
                           {waitingVerifyOrders.length}
                         </span>
                       )}
                     </span>
                   </div>
-                  <ChevronRight size={10} className="text-slate-500" />
+                  <ChevronRight size={10} className={activeMenu === menu.id ? 'text-white/80' : 'text-slate-400'} />
                 </button>
               );
             })}
@@ -844,19 +846,19 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
         </div>
 
         {/* Exit Dashboard and logouts buttons */}
-        <div className="p-4 border-t border-slate-850 space-y-2 bg-slate-950/40">
+        <div className="p-4 border-t border-slate-200 space-y-2 bg-white">
           <button
             onClick={onClose}
-            className="w-full flex items-center justify-center gap-1.5 py-2 px-3 border border-slate-800 rounded-xl bg-slate-900 hover:bg-slate-850 hover:text-white text-slate-300 font-bold text-[11px] cursor-pointer transition-colors"
+            className="w-full flex items-center justify-center gap-1.5 py-2 px-3 border border-slate-200 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-700 font-bold text-[11px] cursor-pointer transition-colors"
             id="admin-exit-mode"
           >
-            <Store size={12} className="text-slate-400" />
+            <Store size={12} className="text-slate-500" />
             <span>กลับหน้าบ้านแคตตาล็อก</span>
           </button>
 
           <button
             onClick={handleLogoutAdmin}
-            className="w-full flex items-center justify-center gap-1.5 py-2 px-3 bg-red-950/30 hover:bg-red-950/50 text-red-400 rounded-xl font-bold text-[11px] cursor-pointer border border-red-950/60 transition-colors"
+            className="w-full flex items-center justify-center gap-1.5 py-2 px-3 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-xl font-bold text-[11px] cursor-pointer border border-rose-200 transition-colors"
             id="admin-logout-sidebar"
           >
             <Lock size={12} />
@@ -868,34 +870,34 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
       {/* ---------------------------------------------------------------
           MAIN ADMIN CONSOLE PORT VIEW
           --------------------------------------------------------------- */}
-      <main className="flex-1 bg-slate-900 flex flex-col min-w-0">
+      <main className="flex-1 bg-slate-50 flex flex-col min-w-0">
         
         {/* TOP BAR */}
-        <header className="bg-slate-950 border-b border-slate-850 px-6 py-4.5 flex justify-between items-center z-10">
+        <header className="bg-white border-b border-slate-200 px-6 py-4 flex justify-between items-center z-10 shadow-xs">
           <div className="flex items-center gap-2">
-            <h1 className="font-display text-sm font-black text-white uppercase tracking-wide">
+            <h1 className="font-display text-sm font-black text-slate-800 uppercase tracking-wide">
               {MENUS.find(m => m.id === activeMenu)?.label}
             </h1>
-            <span className="text-slate-600">/</span>
-            <span className="text-xs text-brand-blue font-semibold bg-sky-950/60 border border-sky-900 px-2.5 py-0.5 rounded-full">
+            <span className="text-slate-300">/</span>
+            <span className="text-xs text-sky-700 font-semibold bg-sky-50 border border-sky-200 px-2.5 py-0.5 rounded-full">
               ระบบแบบจำลองเครื่องมือ
             </span>
           </div>
 
           <div className="flex items-center gap-4 text-xs font-semibold">
             {/* Direct Shop Stats Indicator */}
-            <div className="hidden sm:flex items-center gap-1.8 text-slate-400 border-r border-slate-850 pr-4">
+            <div className="hidden sm:flex items-center gap-1.8 text-slate-500 border-r border-slate-200 pr-4">
               <span>สถานะจองคิวเรือ:</span>
               <span className={`inline-flex items-center gap-1 text-[11px] py-0.5 px-2 rounded-full font-bold ${
-                isPreOrderActive ? 'bg-emerald-950/40 border border-emerald-900 text-emerald-400' : 'bg-red-955/40 text-red-400'
+                isPreOrderActive ? 'bg-emerald-50 border border-emerald-200 text-emerald-700' : 'bg-rose-50 border border-rose-200 text-rose-700'
               }`}>
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
                 เปิดตามปกติ
               </span>
             </div>
 
-            <div className="text-slate-400">
-              ชื่อผู้ดูแลระบบ: <strong className="text-white">{adminUser?.username || 'admin'}</strong> (<span className="text-slate-300 font-mono text-[11px]">{adminUser?.email || 'admin@pornpongplastic.com'}</span>)
+            <div className="text-slate-500">
+              ชื่อผู้ดูแลระบบ: <strong className="text-slate-800">{adminUser?.username || 'admin'}</strong> (<span className="text-slate-500 font-mono text-[11px]">{adminUser?.email || 'admin@pornpongplastic.com'}</span>)
             </div>
           </div>
         </header>
@@ -912,110 +914,110 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
               {/* SUMMARY STATS GRID */}
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-4" id="admin-summary-cards-grid">
                 {/* 1. TOTAL PRODUCTS */}
-                <div className="bg-slate-950/60 border border-slate-850 rounded-2xl p-4.5 flex items-center justify-between">
+                <div className="bg-white border border-slate-200 rounded-2xl p-4.5 flex items-center justify-between shadow-sm">
                   <div>
-                    <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">สินค้าในสารบบ</span>
-                    <strong className="text-xl font-display font-black text-white block mt-1">{totalProductsCount} ชนิด</strong>
+                    <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">สินค้าในสารบบ</span>
+                    <strong className="text-xl font-display font-black text-slate-800 block mt-1">{totalProductsCount} ชนิด</strong>
                   </div>
-                  <div className="p-3 bg-brand-blue/15 text-brand-blue rounded-xl border border-brand-blue/10">
+                  <div className="p-3 bg-sky-50 text-sky-600 rounded-xl border border-sky-100">
                     <Package size={20} />
                   </div>
                 </div>
 
                 {/* 2. TOTAL ORDERS */}
-                <div className="bg-slate-950/60 border border-slate-850 rounded-2xl p-4.5 flex items-center justify-between">
+                <div className="bg-white border border-slate-200 rounded-2xl p-4.5 flex items-center justify-between shadow-sm">
                   <div>
-                    <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">รายการจำหน่ายตรง</span>
-                    <strong className="text-xl font-display font-black text-white block mt-1">{totalOrdersCount} รหัส</strong>
+                    <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">รายการจำหน่ายตรง</span>
+                    <strong className="text-xl font-display font-black text-slate-800 block mt-1">{totalOrdersCount} รหัส</strong>
                   </div>
-                  <div className="p-3 bg-emerald-500/15 text-emerald-400 rounded-xl border border-emerald-500/10">
+                  <div className="p-3 bg-emerald-50 text-emerald-600 rounded-xl border border-emerald-100">
                     <FileText size={20} />
                   </div>
                 </div>
 
                 {/* 3. TOTAL PRE-ORDERS */}
-                <div className="bg-slate-950/60 border border-slate-850 rounded-2xl p-4.5 flex items-center justify-between">
+                <div className="bg-white border border-slate-200 rounded-2xl p-4.5 flex items-center justify-between shadow-sm">
                   <div>
-                    <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">เรือสั่งหลอมพรีออเดอร์</span>
-                    <strong className="text-xl font-display font-black text-white block mt-1">{totalPreOrdersCount} ลำ</strong>
+                    <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">เรือสั่งหลอมพรีออเดอร์</span>
+                    <strong className="text-xl font-display font-black text-slate-800 block mt-1">{totalPreOrdersCount} ลำ</strong>
                   </div>
-                  <div className="p-3 bg-amber-500/15 text-amber-400 rounded-xl border border-amber-500/10">
+                  <div className="p-3 bg-amber-50 text-amber-600 rounded-xl border border-amber-100">
                     <Calendar size={20} />
                   </div>
                 </div>
 
                 {/* 4. TOTAL MEMBERS */}
-                <div className="bg-slate-950/60 border border-slate-850 rounded-2xl p-4.5 flex items-center justify-between">
+                <div className="bg-white border border-slate-200 rounded-2xl p-4.5 flex items-center justify-between shadow-sm">
                   <div>
-                    <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">สมาชิกครอบครัวพรพงศ์</span>
-                    <strong className="text-xl font-display font-black text-white block mt-1">{totalMembersCount} ท่าน</strong>
+                    <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">สมาชิกครอบครัวพรพงศ์</span>
+                    <strong className="text-xl font-display font-black text-slate-800 block mt-1">{totalMembersCount} ท่าน</strong>
                   </div>
-                  <div className="p-3 bg-cyan-500/15 text-cyan-400 rounded-xl border border-cyan-500/10">
+                  <div className="p-3 bg-cyan-50 text-cyan-600 rounded-xl border border-cyan-100">
                     <Users size={20} />
                   </div>
                 </div>
               </div>
 
               {/* SALES CHART SUMMARY */}
-              <div className="bg-slate-950/60 border border-slate-850 rounded-2xl p-5.5 space-y-4">
+              <div className="bg-white border border-slate-200 rounded-2xl p-5.5 space-y-4 shadow-sm">
                 <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-2">
                   <div>
-                    <h2 className="text-xs font-bold text-white flex items-center gap-1.5">
-                      <TrendingUp size={14} className="text-cyan-400" />
+                    <h2 className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                      <TrendingUp size={14} className="text-sky-500" />
                       วิเคราะห์ยอดพรีออเดอร์และยอดขายโรงงานสัมบูรณ์
                     </h2>
-                    <p className="text-[10.5px] text-slate-400">เปรียบเทียบยอดขายรวมโควตาจัดส่งเรือพลาสติก 4 หมวดของปีนี้</p>
+                    <p className="text-[10.5px] text-slate-500">เปรียบเทียบยอดขายรวมโควตาจัดส่งเรือพลาสติก 4 หมวดของปีนี้</p>
                   </div>
                   <div className="text-right">
-                    <span className="text-[10px] text-slate-400 block font-bold uppercase tracking-wide">ประมาณยอดรวม Sandbox</span>
-                    <span className="font-display font-black text-[13.5px] text-emerald-400">฿{grossSalesVolume.toLocaleString()} บ.</span>
+                    <span className="text-[10px] text-slate-500 block font-bold uppercase tracking-wide">ประมาณยอดรวม Sandbox</span>
+                    <span className="font-display font-black text-[13.5px] text-emerald-600">฿{grossSalesVolume.toLocaleString()} บ.</span>
                   </div>
                 </div>
 
                 {/* Custom Elegant Interactive Bar Chart (satisfying recharts prompt with ultra-clean client-side responsive graphics) */}
-                <div className="h-44 flex items-end justify-between border-b border-l border-slate-800 pb-2 pt-4 px-4 font-mono text-[10px] text-slate-400">
+                <div className="h-44 flex items-end justify-between border-b border-l border-slate-200 pb-2 pt-4 px-4 font-mono text-[10px] text-slate-500">
                   {/* Row Boat Month */}
                   <div className="flex flex-col items-center flex-1 group">
                     <div className="relative w-full flex justify-center">
-                      <div className="absolute -top-7 scale-0 group-hover:scale-100 transition-all bg-slate-950 border border-slate-800 text-[9px] py-0.5 px-2 rounded-md text-white font-bold leading-none pointer-events-none whitespace-nowrap">
+                      <div className="absolute -top-7 scale-0 group-hover:scale-100 transition-all bg-slate-800 border border-slate-700 text-[9px] py-0.5 px-2 rounded-md text-white font-bold leading-none pointer-events-none whitespace-nowrap shadow-md">
                         14,800 บาท (โควตา 1)
                       </div>
                     </div>
-                    <div className="w-10 sm:w-16 bg-gradient-to-t from-brand-blue to-sky-400 rounded-t-md hover:opacity-85 transition-opacity h-24"></div>
-                    <span className="mt-2 text-slate-350 text-[9px] text-center font-bold">เรือพายทั่วไป</span>
+                    <div className="w-10 sm:w-16 bg-gradient-to-t from-sky-500 to-sky-400 rounded-t-md hover:opacity-85 transition-opacity h-24"></div>
+                    <span className="mt-2 text-slate-600 text-[9px] text-center font-bold">เรือพายทั่วไป</span>
                   </div>
 
                   {/* Fishing boat Month */}
                   <div className="flex flex-col items-center flex-1 group">
                     <div className="relative w-full flex justify-center">
-                      <div className="absolute -top-7 scale-0 group-hover:scale-100 transition-all bg-slate-950 border border-slate-800 text-[9px] py-0.5 px-2 rounded-md text-white font-bold leading-none pointer-events-none whitespace-nowrap">
+                      <div className="absolute -top-7 scale-0 group-hover:scale-100 transition-all bg-slate-800 border border-slate-700 text-[9px] py-0.5 px-2 rounded-md text-white font-bold leading-none pointer-events-none whitespace-nowrap shadow-md">
                         13,200 บาท (โควตา 2)
                       </div>
                     </div>
                     <div className="w-10 sm:w-16 bg-gradient-to-t from-cyan-500 to-emerald-400 rounded-t-md h-20 hover:opacity-85 transition-opacity"></div>
-                    <span className="mt-2 text-slate-350 text-[9px] text-center font-bold">เรืออเนกประสงค์</span>
+                    <span className="mt-2 text-slate-600 text-[9px] text-center font-bold">เรืออเนกประสงค์</span>
                   </div>
 
                   {/* Kayaks Month */}
                   <div className="flex flex-col items-center flex-1 group">
                     <div className="relative w-full flex justify-center">
-                      <div className="absolute -top-7 scale-0 group-hover:scale-100 transition-all bg-slate-950 border border-slate-800 text-[9px] py-0.5 px-2 rounded-md text-white font-bold leading-none pointer-events-none whitespace-nowrap">
+                      <div className="absolute -top-7 scale-0 group-hover:scale-100 transition-all bg-slate-800 border border-slate-700 text-[9px] py-0.5 px-2 rounded-md text-white font-bold leading-none pointer-events-none whitespace-nowrap shadow-md">
                         26,800 บาท (ยอดพุ่ง)
                       </div>
                     </div>
                     <div className="w-10 sm:w-16 bg-gradient-to-t from-indigo-500 to-purple-500 rounded-t-md h-32 hover:opacity-85 transition-opacity"></div>
-                    <span className="mt-2 text-slate-350 text-[9px] text-center font-bold">เรือคายัคลุยคลื่น</span>
+                    <span className="mt-2 text-slate-600 text-[9px] text-center font-bold">เรือคายัคลุยคลื่น</span>
                   </div>
 
                   {/* Accessories Month */}
                   <div className="flex flex-col items-center flex-1 group text-center">
                     <div className="relative w-full flex justify-center">
-                      <div className="absolute -top-7 scale-0 group-hover:scale-100 transition-all bg-slate-950 border border-slate-800 text-[9px] py-0.5 px-2 rounded-md text-white font-bold leading-none pointer-events-none whitespace-nowrap">
+                      <div className="absolute -top-7 scale-0 group-hover:scale-100 transition-all bg-slate-800 border border-slate-700 text-[9px] py-0.5 px-2 rounded-md text-white font-bold leading-none pointer-events-none whitespace-nowrap shadow-md">
                         2,940 บาท
                       </div>
                     </div>
-                    <div className="w-10 sm:w-16 bg-gradient-to-t from-yellow-500 to-orange-400 rounded-t-md h-12 hover:opacity-85 transition-opacity"></div>
-                    <span className="mt-2 text-slate-350 text-[9px] text-center font-bold">อุปกรณ์ / ชูชีพ</span>
+                    <div className="w-10 sm:w-16 bg-gradient-to-t from-amber-500 to-orange-400 rounded-t-md h-12 hover:opacity-85 transition-opacity"></div>
+                    <span className="mt-2 text-slate-600 text-[9px] text-center font-bold">อุปกรณ์ / ชูชีพ</span>
                   </div>
                 </div>
               </div>
@@ -1024,16 +1026,16 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 
                 {/* Quick table 1: Recent Orders */}
-                <div className="bg-slate-950/60 border border-slate-850 rounded-2xl p-5 overflow-hidden flex flex-col justify-between">
+                <div className="bg-white border border-slate-200 rounded-2xl p-5 overflow-hidden flex flex-col justify-between shadow-sm">
                   <div>
                     <div className="flex justify-between items-center mb-4">
-                      <span className="text-xs font-bold text-white flex items-center gap-1 px-1">
+                      <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5 px-1">
                         <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
                         คำสั่งซื้อสำเร็จล่าสุด (Recent Orders)
                       </span>
                       <button 
                         onClick={() => setActiveMenu('orders')} 
-                        className="text-[10px] text-brand-blue hover:underline cursor-pointer"
+                        className="text-[10px] text-sky-600 hover:underline cursor-pointer font-bold"
                       >
                         ดูทั้งหมด &raquo;
                       </button>
@@ -1042,31 +1044,31 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                     <div className="overflow-x-auto">
                       <table className="w-full text-left text-[11px] border-collapse">
                         <thead>
-                          <tr className="border-b border-slate-800 text-slate-400 font-bold bg-slate-900/30">
-                            <th className="py-2 px-3">รหัสสั่งซื้อ</th>
-                            <th className="py-2 px-2">ลูกค้า</th>
-                            <th className="py-2 px-2 text-right">ยอดเงิน</th>
-                            <th className="py-2 px-3 text-center">สถานะจัดส่ง</th>
+                          <tr className="border-b border-slate-200 text-slate-500 font-bold bg-slate-50">
+                            <th className="py-2.5 px-3">รหัสสั่งซื้อ</th>
+                            <th className="py-2.5 px-2">ลูกค้า</th>
+                            <th className="py-2.5 px-2 text-right">ยอดเงิน</th>
+                            <th className="py-2.5 px-3 text-center">สถานะจัดส่ง</th>
                           </tr>
                         </thead>
-                        <tbody className="divide-y divide-slate-850/50">
+                        <tbody className="divide-y divide-slate-100">
                           {adminOrders.length === 0 ? (
                             <tr>
-                              <td colSpan={4} className="py-6 text-center text-slate-500 font-medium">ยังไม่มีข้อมูล</td>
+                              <td colSpan={4} className="py-6 text-center text-slate-400 font-medium">ยังไม่มีข้อมูล</td>
                             </tr>
                           ) : (
                             adminOrders.slice(0, 3).map((order) => (
-                              <tr key={order.id} className="hover:bg-slate-900/40">
-                                <td className="py-2 px-3 font-semibold text-white">{order.id}</td>
-                                <td className="py-2 px-2 text-slate-300 font-medium">{order.customerName}</td>
-                                <td className="py-2 px-2 text-right font-bold text-emerald-400">฿{order.amount.toLocaleString()}</td>
+                              <tr key={order.id} className="hover:bg-slate-50/80">
+                                <td className="py-2 px-3 font-semibold text-slate-800">{order.id}</td>
+                                <td className="py-2 px-2 text-slate-600 font-medium">{order.customerName}</td>
+                                <td className="py-2 px-2 text-right font-bold text-emerald-600">฿{order.amount.toLocaleString()}</td>
                                 <td className="py-2 px-3 text-center">
                                   <span className={`inline-flex px-2 py-0.5 rounded-full text-[9px] font-bold ${
                                     order.status === 'Delivered' 
-                                      ? 'bg-emerald-950/40 border border-emerald-900 text-emerald-400'
+                                      ? 'bg-emerald-50 border border-emerald-200 text-emerald-700'
                                       : order.status === 'Shipping'
-                                        ? 'bg-sky-955/40 border border-sky-900 text-sky-400'
-                                        : 'bg-amber-955/40 border border-amber-900 text-amber-400'
+                                        ? 'bg-sky-50 border border-sky-200 text-sky-700'
+                                        : 'bg-amber-50 border border-amber-200 text-amber-700'
                                   }`}>
                                     {order.status === 'Delivered' ? 'ส่งมอบเสร็จ' : order.status === 'Shipping' ? 'กำลังขนส่ง' : 'รอชำระ'}
                                   </span>
@@ -1081,16 +1083,16 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                 </div>
 
                 {/* Quick table 2: Recent Pre-Orders */}
-                <div className="bg-slate-950/60 border border-slate-850 rounded-2xl p-5 overflow-hidden flex flex-col justify-between">
+                <div className="bg-white border border-slate-200 rounded-2xl p-5 overflow-hidden flex flex-col justify-between shadow-sm">
                   <div>
                     <div className="flex justify-between items-center mb-4">
-                      <span className="text-xs font-bold text-white flex items-center gap-1 px-1">
+                      <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5 px-1">
                         <span className="w-2 h-2 rounded-full bg-amber-500"></span>
                         คำสั่งซื้อแบบพรีออเดอร์ยอดฮิต (Recent Pre-Orders)
                       </span>
                       <button 
                         onClick={() => setActiveMenu('preorders')} 
-                        className="text-[10px] text-brand-blue hover:underline cursor-pointer"
+                        className="text-[10px] text-sky-600 hover:underline cursor-pointer font-bold"
                       >
                         ดูทั้งหมด &raquo;
                       </button>
@@ -1099,29 +1101,29 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                     <div className="overflow-x-auto">
                       <table className="w-full text-left text-[11px] border-collapse">
                         <thead>
-                          <tr className="border-b border-slate-800 text-slate-400 font-bold bg-slate-900/30">
-                            <th className="py-2 px-3">รหัสจองคิว</th>
-                            <th className="py-2 px-2">ลูกค้า</th>
-                            <th className="py-2 px-2 text-right">เงินมัดจำ</th>
-                            <th className="py-2 px-3 text-center">คิวเตรียมหลอมคาร์บอน</th>
+                          <tr className="border-b border-slate-200 text-slate-500 font-bold bg-slate-50">
+                            <th className="py-2.5 px-3">รหัสจองคิว</th>
+                            <th className="py-2.5 px-2">ลูกค้า</th>
+                            <th className="py-2.5 px-2 text-right">เงินมัดจำ</th>
+                            <th className="py-2.5 px-3 text-center">คิวเตรียมหลอมคาร์บอน</th>
                           </tr>
                         </thead>
-                        <tbody className="divide-y divide-slate-850/50">
+                        <tbody className="divide-y divide-slate-100">
                           {adminPreOrders.length === 0 ? (
                             <tr>
-                              <td colSpan={4} className="py-6 text-center text-slate-500 font-medium">ยังไม่มีข้อมูล</td>
+                              <td colSpan={4} className="py-6 text-center text-slate-400 font-medium">ยังไม่มีข้อมูล</td>
                             </tr>
                           ) : (
                             adminPreOrders.slice(0, 3).map((pre) => (
-                              <tr key={pre.id} className="hover:bg-slate-900/40">
-                                <td className="py-2 px-3 font-semibold text-white">{pre.id}</td>
-                                <td className="py-2 px-2 text-slate-300 font-medium">{pre.customerName}</td>
-                                <td className="py-2 px-2 text-right font-bold text-amber-400">฿{pre.deposit.toLocaleString()}</td>
+                              <tr key={pre.id} className="hover:bg-slate-50/80">
+                                <td className="py-2 px-3 font-semibold text-slate-800">{pre.id}</td>
+                                <td className="py-2 px-2 text-slate-600 font-medium">{pre.customerName}</td>
+                                <td className="py-2 px-2 text-right font-bold text-amber-600">฿{pre.deposit.toLocaleString()}</td>
                                 <td className="py-2 px-3 text-center">
                                   <span className={`inline-flex px-2 py-0.5 rounded-full text-[9px] font-bold ${
                                     pre.status === 'DepositConfirmed' 
-                                      ? 'bg-emerald-950/40 border border-emerald-900 text-emerald-400'
-                                      : 'bg-amber-955/40 border border-amber-900 text-amber-400'
+                                      ? 'bg-emerald-50 border border-emerald-200 text-emerald-700'
+                                      : 'bg-amber-50 border border-amber-200 text-amber-700'
                                   }`}>
                                     {pre.status === 'DepositConfirmed' ? 'อนุมัติมัดจำ' : 'รอตรวจสอบเงิน'}
                                   </span>
@@ -1146,12 +1148,12 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
             <div className="space-y-4 animate-fadeIn">
               
               {/* Header section with buttons */}
-              <div className="flex flex-col lg:flex-row gap-4 justify-between lg:items-center bg-slate-950/40 p-4 rounded-xl border border-slate-800/50">
+              <div className="flex flex-col lg:flex-row gap-4 justify-between lg:items-center bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
                 <div className="flex flex-col sm:flex-row gap-3 flex-1">
                   
                   {/* Search bar */}
                   <div className="relative flex-1">
-                    <span className="absolute left-3.5 top-3 text-slate-500">
+                    <span className="absolute left-3.5 top-3 text-slate-400">
                       <Search size={13} />
                     </span>
                     <input
@@ -1159,9 +1161,10 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                       placeholder="พิมพ์รหัส ค้นหาหมวดเรือพลาสติก ตราพรพงศ์..."
                       value={productsSearch}
                       onChange={(e) => setProductsSearch(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-9 pr-4 py-2.5 text-xs text-white placeholder-slate-500 outline-none focus:border-brand-blue"
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-4 py-2.5 text-xs text-slate-800 placeholder-slate-400 outline-none focus:bg-white focus:border-sky-500 focus:ring-1 focus:ring-sky-500/20"
                       id="admin-products-search-input"
-                    />
+                    >
+                    </input>
                   </div>
 
                   {/* Filter by Category */}
@@ -1169,7 +1172,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                     <select
                       value={productsCategoryFilter}
                       onChange={(e) => setProductsCategoryFilter(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-xs text-slate-300 outline-none focus:border-brand-blue"
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs text-slate-700 outline-none focus:bg-white focus:border-sky-500"
                       id="admin-products-category-filter"
                     >
                       <option value="all">ทุกหมวดหมู่สินค้า (All)</option>
@@ -1185,7 +1188,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                     <select
                       value={productsStatusFilter}
                       onChange={(e) => setProductsStatusFilter(e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-xs text-slate-300 outline-none focus:border-brand-blue"
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs text-slate-700 outline-none focus:bg-white focus:border-sky-500"
                       id="admin-products-status-filter"
                     >
                       <option value="all">ทุกสถานะสินค้า (All Status)</option>
@@ -1203,7 +1206,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                     clearProductForm();
                     setIsProductAddOpen(true);
                   }}
-                  className="bg-brand-blue hover:bg-brand-blue-light font-bold text-xs py-2.5 px-5 rounded-xl text-white flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap active:scale-97 hover:shadow-lg hover:shadow-blue-950/20"
+                  className="bg-sky-500 hover:bg-sky-600 font-bold text-xs py-2.5 px-5 rounded-xl text-white flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap active:scale-97 shadow-sm transition-colors"
                   id="admin-add-product-btn"
                 >
                   <PlusCircle size={14} />
@@ -1212,11 +1215,11 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
               </div>
 
               {/* PRODUCTS LIST TABLE */}
-              <div className="bg-slate-950/60 border border-slate-850 rounded-2xl overflow-hidden">
+              <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-xs border-collapse">
                     <thead>
-                      <tr className="border-b border-slate-850 text-slate-400 font-bold bg-slate-950/80">
+                      <tr className="border-b border-slate-200 text-slate-500 font-bold bg-slate-50">
                         <th className="py-3 px-4">รหัสสินค้า (ID)</th>
                         <th className="py-3 px-3">รูปภาพ</th>
                         <th className="py-3 px-3">ชื่อผลิตภัณฑ์</th>
@@ -1227,35 +1230,35 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                         <th className="py-3 px-4 text-center">จัดการ</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-850/60">
+                    <tbody className="divide-y divide-slate-100">
                       {filteredAdminProducts.length === 0 ? (
                         <tr>
-                          <td colSpan={8} className="py-12 text-center text-slate-500 font-medium">ยังไม่มีข้อมูล</td>
+                          <td colSpan={8} className="py-12 text-center text-slate-400 font-medium">ยังไม่มีข้อมูล</td>
                         </tr>
                       ) : (
                         filteredAdminProducts.map((prod) => (
-                          <tr key={prod.id} className="hover:bg-slate-900/40 text-[11px]">
-                            <td className="py-3.5 px-4 font-mono font-bold text-slate-350">{prod.sku || prod.model_id || prod.id}</td>
+                          <tr key={prod.id} className="hover:bg-slate-50/70 text-[11px]">
+                            <td className="py-3.5 px-4 font-mono font-bold text-slate-600">{prod.sku || prod.model_id || prod.id}</td>
                             <td className="py-3.5 px-3">
                               <img 
                                 src={prod.images?.[0]} 
                                 alt="product" 
-                                className="w-12 h-12 object-cover rounded-xl border border-slate-800" 
+                                className="w-12 h-12 object-cover rounded-xl border border-slate-200 shadow-xs" 
                                 referrerPolicy="no-referrer"
                               />
                             </td>
                             <td className="py-3.5 px-3">
-                              <strong className="text-white block font-sans font-bold">{prod.name}</strong>
+                              <strong className="text-slate-800 block font-sans font-bold">{prod.name}</strong>
                             </td>
                             <td className="py-3.5 px-3">
-                              <span className="px-2 py-0.5 rounded-full bg-slate-900 border border-slate-800 text-[10px] text-slate-400">
+                              <span className="px-2 py-0.5 rounded-full bg-slate-100 border border-slate-200 text-[10px] text-slate-600 font-semibold">
                                 {prod.categoryThai}
                               </span>
                             </td>
-                            <td className="py-3.5 px-3 text-right font-black text-brand-blue">
+                            <td className="py-3.5 px-3 text-right font-black text-sky-600">
                               ฿{prod.price.toLocaleString()}
                             </td>
-                            <td className="py-3.5 px-3 text-center text-slate-300 font-bold">
+                            <td className="py-3.5 px-3 text-center text-slate-700 font-bold">
                               {prod.stockQuantity !== undefined ? prod.stockQuantity : (prod.inStock ? 12 : 0)} ชิ้น
                             </td>
                             <td className="py-3.5 px-3 text-center">
@@ -1264,10 +1267,10 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                                 return (
                                   <span className={`inline-flex px-2 py-0.5 rounded-full text-[9px] font-bold ${
                                     computedStatus === 'instock' 
-                                      ? 'bg-emerald-950/40 text-emerald-400 border border-emerald-900' 
+                                      ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' 
                                       : computedStatus === 'preorder'
-                                        ? 'bg-sky-950/40 text-sky-400 border border-sky-900'
-                                        : 'bg-red-950/40 text-red-400 border border-red-900'
+                                        ? 'bg-sky-50 text-sky-700 border border-sky-200'
+                                        : 'bg-rose-50 text-rose-700 border border-rose-200'
                                   }`}>
                                     {computedStatus === 'instock' ? 'พร้อมส่ง (Instock)' : computedStatus === 'preorder' ? 'พรีออเดอร์ (Pre-order)' : 'หมด (Out of Stock)'}
                                   </span>
@@ -1278,14 +1281,14 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                               <div className="flex items-center justify-center gap-2">
                                 <button
                                   onClick={() => openEditProduct(prod)}
-                                  className="p-1 px-2.5 rounded-lg bg-sky-950 text-brand-blue hover:bg-sky-900/60 font-semibold cursor-pointer text-[10px] border border-sky-900/30 flex items-center gap-1"
+                                  className="p-1 px-2.5 rounded-lg bg-sky-50 text-sky-700 hover:bg-sky-100 font-bold cursor-pointer text-[10px] border border-sky-200 flex items-center gap-1 transition-colors"
                                 >
                                   <Edit size={11} />
                                   <span>แก้ไข</span>
                                 </button>
                                 <button
                                   onClick={() => deleteProduct(prod.id)}
-                                  className="p-1.5 rounded-lg bg-red-950/30 hover:bg-red-950 text-red-400 font-semibold cursor-pointer border border-red-950/50"
+                                  className="p-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-600 font-bold cursor-pointer border border-rose-200 transition-colors"
                                 >
                                   <Trash2 size={12} />
                                 </button>
@@ -1301,38 +1304,38 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
 
               {/* CRITICAL MOCK PRODUCT DIALOG FORM */}
               {isProductAddOpen && (
-                <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-xs">
-                  <div className="w-full max-w-xl bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl relative max-h-[90vh] overflow-y-auto">
+                <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
+                  <div className="w-full max-w-xl bg-white border border-slate-200 rounded-2xl p-6 shadow-2xl relative max-h-[90vh] overflow-y-auto">
                     <button 
                       onClick={() => setIsProductAddOpen(false)}
-                      className="absolute right-4 top-4 text-slate-400 hover:text-slate-100 cursor-pointer"
+                      className="absolute right-4 top-4 text-slate-400 hover:text-slate-700 cursor-pointer"
                     >
                       <X size={18} />
                     </button>
-                    <h3 className="font-display font-black text-slate-100 text-sm mb-4">
+                    <h3 className="font-display font-black text-slate-800 text-sm mb-4">
                       {editingProduct ? 'แก้ไขข้อมูลรหัสเรือพลาสติก' : 'เพิ่มรหัสขึ้นรูปเรือใหม่ในสารบบคร่าคร่ำ'}
                     </h3>
 
                     <form onSubmit={handleProductSubmit} className="space-y-4">
                       {pFormError && (
-                        <div className="bg-rose-950/60 border border-rose-850 rounded-xl p-3 text-rose-200">
-                          <p className="font-bold mb-1 font-sans text-xs text-rose-400">
+                        <div className="bg-rose-50 border border-rose-200 rounded-xl p-3 text-rose-700">
+                          <p className="font-bold mb-1 font-sans text-xs text-rose-600">
                             เกิดข้อผิดพลาดในการบันทึกข้อมูลไปยัง Supabase
                           </p>
-                          <p className="font-mono text-[10px] bg-slate-950/80 px-2.5 py-1.5 rounded-lg border border-slate-900 mt-1.5 break-words leading-tight max-h-24 overflow-y-auto whitespace-pre-wrap">{pFormError}</p>
+                          <p className="font-mono text-[10px] bg-white px-2.5 py-1.5 rounded-lg border border-rose-200 mt-1.5 break-words leading-tight max-h-24 overflow-y-auto whitespace-pre-wrap">{pFormError}</p>
                         </div>
                       )}
                       
                       {/* Image Upload UI */}
-                      <div className="bg-slate-950/40 p-3 rounded-xl border border-slate-800/60">
-                        <label className="block text-[10px] text-slate-400 font-bold uppercase mb-1.5">ภาพประกอบสินค้า (Product Image Upload or URL)*</label>
+                      <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
+                        <label className="block text-[10px] text-slate-600 font-bold uppercase mb-1.5">ภาพประกอบสินค้า (Product Image Upload or URL)*</label>
                         <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 items-center">
                           {/* Preview Thumbnail */}
-                          <div className="h-16 w-full rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-center overflow-hidden shrink-0">
+                          <div className="h-16 w-full rounded-xl bg-white border border-slate-200 flex items-center justify-center overflow-hidden shrink-0 shadow-xs">
                             {pImage ? (
                               <img src={pImage} alt="preview" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                             ) : (
-                              <span className="text-[9px] text-slate-600">ไม่มีรูป</span>
+                              <span className="text-[9px] text-slate-400 font-medium">ไม่มีรูป</span>
                             )}
                           </div>
                           {/* Base64 Upload & Fallback URL Text Field */}
@@ -1351,19 +1354,19 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                                   reader.readAsDataURL(file);
                                 }
                               }}
-                              className="block w-full text-xs text-slate-400
+                              className="block w-full text-xs text-slate-600
                                 file:mr-3 file:py-1 file:px-2.5
                                 file:rounded-lg file:border-0
                                 file:text-[10px] file:font-semibold
-                                file:bg-brand-blue/15 file:text-brand-blue
-                                hover:file:bg-brand-blue/20 file:cursor-pointer text-[10px]" 
+                                file:bg-sky-50 file:text-sky-700
+                                hover:file:bg-sky-100 file:cursor-pointer text-[10px]" 
                             />
                             <input
                               type="text"
                               value={pImage}
                               onChange={(e) => setPImage(e.target.value)}
                               placeholder="หรือระบุลิงก์ภาพพรีเซ้นต์ภายนอก..."
-                              className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1 text-[10px] text-white outline-none"
+                              className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-[10px] text-slate-800 outline-none focus:border-sky-500"
                             />
                           </div>
                         </div>
@@ -1371,22 +1374,22 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
 
                       <div className="grid grid-cols-2 gap-3">
                         <div>
-                          <label className="block text-[10px] text-slate-400 font-bold uppercase mb-1">รหัสโมเดล (เว้นว่างเพื่อสร้างอัตโนมัติ)</label>
+                          <label className="block text-[10px] text-slate-600 font-bold uppercase mb-1">รหัสโมเดล (เว้นว่างเพื่อสร้างอัตโนมัติ)</label>
                           <input
                             type="text"
                             disabled={!!editingProduct}
                             value={pId}
                             onChange={(e) => setPId(e.target.value)}
                             placeholder="ระบบจะสร้างให้อัตโนมัติ..."
-                            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white outline-none placeholder-slate-650"
+                            className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 outline-none placeholder-slate-400 focus:bg-white focus:border-sky-500"
                           />
                         </div>
                         <div>
-                          <label className="block text-[10px] text-slate-400 font-bold uppercase mb-1">หมวดหมู่เรือพลาสติก*</label>
+                          <label className="block text-[10px] text-slate-600 font-bold uppercase mb-1">หมวดหมู่เรือพลาสติก*</label>
                           <select
                             value={pCategory}
                             onChange={(e) => setPCategory(e.target.value)}
-                            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white outline-none"
+                            className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 outline-none focus:bg-white focus:border-sky-500"
                           >
                             <option value="rowboat">เรือพายทั่วไป</option>
                             <option value="fishing">เรือตกปลา / พิมพ์รหัสเกาะเครื่อง</option>
@@ -1397,58 +1400,58 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                       </div>
 
                       <div>
-                        <label className="block text-[10px] text-slate-400 font-bold uppercase mb-1">ชื่อเรียกของผลิตภัณฑ์เรือกวักน้ำ*</label>
+                        <label className="block text-[10px] text-slate-600 font-bold uppercase mb-1">ชื่อเรียกของผลิตภัณฑ์เรือกวักน้ำ*</label>
                         <input
                           type="text"
                           required
                           value={pName}
                           onChange={(e) => setPName(e.target.value)}
                           placeholder="เรือพายพลาสติก ตราพรพงศ์ รุ่น 2.8 เมตร โกโปรเดสก์"
-                          className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white outline-none"
+                          className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 outline-none focus:bg-white focus:border-sky-500"
                         />
                       </div>
 
                       <div className="grid grid-cols-2 gap-3">
                         <div>
-                          <label className="block text-[10px] text-slate-400 font-bold uppercase mb-1">ราคาหลอมแคมเปญ (บาท)*</label>
+                          <label className="block text-[10px] text-slate-600 font-bold uppercase mb-1">ราคาหลอมแคมเปญ (บาท)*</label>
                           <input
                             type="number"
                             required
                             value={pPrice}
                             onChange={(e) => setPPrice(Number(e.target.value))}
-                            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white outline-none"
+                            className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 outline-none focus:bg-white focus:border-sky-500"
                           />
                         </div>
                         <div>
-                          <label className="block text-[10px] text-slate-400 font-bold uppercase mb-1">ระบุมิติความกว้างยาว (ม.)</label>
+                          <label className="block text-[10px] text-slate-600 font-bold uppercase mb-1">ระบุมิติความกว้างยาว (ม.)</label>
                           <input
                             type="text"
                             value={pLength}
                             onChange={(e) => setPLength(e.target.value)}
                             placeholder="2.80 เมตร"
-                            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white outline-none"
+                            className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 outline-none focus:bg-white focus:border-sky-500"
                           />
                         </div>
                       </div>
 
                       <div className="grid grid-cols-2 gap-3">
                         <div>
-                          <label className="block text-[10px] text-slate-400 font-bold uppercase mb-1">จำนวนคงคลัง (Stock Quantity)*</label>
+                          <label className="block text-[10px] text-slate-600 font-bold uppercase mb-1">จำนวนคงคลัง (Stock Quantity)*</label>
                           <input
                             type="number"
                             required
                             min={0}
                             value={pStockQty}
                             onChange={(e) => setPStockQty(Number(e.target.value))}
-                            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white outline-none"
+                            className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 outline-none focus:bg-white focus:border-sky-500"
                           />
                         </div>
                         <div>
-                          <label className="block text-[10px] text-slate-400 font-bold uppercase mb-1">สถานะวางจำหน่าย (Product Status)*</label>
+                          <label className="block text-[10px] text-slate-600 font-bold uppercase mb-1">สถานะวางจำหน่าย (Product Status)*</label>
                           <select
                             value={pStatus}
                             onChange={(e) => setPStatus(e.target.value as any)}
-                            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white outline-none"
+                            className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 outline-none focus:bg-white focus:border-sky-500"
                           >
                             <option value="instock">พร้อมส่งทันที (In Stock)</option>
                             <option value="outofstock">สินค้าหมดคลังชั่วคราว (Out of Stock)</option>
@@ -1459,30 +1462,30 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
 
                       <div className="grid grid-cols-1 gap-3">
                         <div>
-                          <label className="block text-[10px] text-slate-400 font-bold uppercase mb-1">คำอธิบายและจุดเด่นสินค้า (Description)</label>
+                          <label className="block text-[10px] text-slate-600 font-bold uppercase mb-1">คำอธิบายและจุดเด่นสินค้า (Description)</label>
                           <textarea
                             value={pDescription}
                             onChange={(e) => setPDescription(e.target.value)}
                             placeholder="ระบุคำอธิบายสั้นๆ เกี่ยวกับผลิตภัณฑ์เพื่อดึงดูดลูกค้า..."
                             rows={2}
-                            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-xs text-slate-200 outline-none"
+                            className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs text-slate-800 outline-none focus:bg-white focus:border-sky-500"
                           />
                         </div>
                         <div>
-                          <label className="block text-[10px] text-slate-400 font-bold uppercase mb-1">สเปกเรือและข้อมูลเทคนิค (Specifications)</label>
+                          <label className="block text-[10px] text-slate-600 font-bold uppercase mb-1">สเปกเรือและข้อมูลเทคนิค (Specifications)</label>
                           <input
                             type="text"
                             value={pSpecs}
                             onChange={(e) => setPSpecs(e.target.value)}
                             placeholder="เช่น ความหนา: 5 มม., น้ำหนักเรือ: 32 กิโลกรัม, รองรับผู้โดยสาร: 2 ที่นั่ง"
-                            className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-slate-200 outline-none"
+                            className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 outline-none focus:bg-white focus:border-sky-500"
                           />
                         </div>
                       </div>
 
                       <button
                         type="submit"
-                        className="w-full mt-4 py-3 bg-brand-blue hover:bg-brand-blue-light transition-colors text-white font-bold text-xs rounded-xl shadow-md cursor-pointer"
+                        className="w-full mt-4 py-3 bg-sky-500 hover:bg-sky-600 transition-colors text-white font-bold text-xs rounded-xl shadow-sm cursor-pointer"
                       >
                         บันทึกข้อมูลพลาสติกโมเดล
                       </button>
@@ -1500,7 +1503,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
           {activeMenu === 'orders' && (
             <div className="space-y-4 animate-fadeIn">
               <div className="relative max-w-sm">
-                <span className="absolute left-3 top-2 text-slate-500">
+                <span className="absolute left-3 top-2.5 text-slate-400">
                   <Search size={13} />
                 </span>
                 <input
@@ -1508,16 +1511,16 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                   placeholder="พิมพ์หาชื่อคู่ค้าง ค้นหาเลขที่เช็คบิล..."
                   value={ordersSearch}
                   onChange={(e) => setOrdersSearch(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-8.5 pr-4 py-2 text-xs text-white placeholder-slate-550 outline-none"
+                  className="w-full bg-white border border-slate-200 rounded-xl pl-8.5 pr-4 py-2 text-xs text-slate-800 placeholder-slate-400 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500/20 shadow-xs"
                   id="admin-orders-search-input"
                 />
               </div>
 
-              <div className="bg-slate-950/60 border border-slate-850 rounded-2xl overflow-hidden">
+              <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-xs border-collapse">
                     <thead>
-                      <tr className="border-b border-slate-810 bg-slate-950 text-slate-400 font-bold">
+                      <tr className="border-b border-slate-200 bg-slate-50 text-slate-500 font-bold">
                         <th className="py-3 px-4">เลขที่ใบชำระ</th>
                         <th className="py-3 px-3">ชื่อคู่ค้าจัดส่ง</th>
                         <th className="py-3 px-3">รายละเอียดเรือพลาสติก</th>
@@ -1527,33 +1530,33 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                         <th className="py-3 px-3 text-center">อัปเดตสถานะขนย้าย</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-850/50">
+                    <tbody className="divide-y divide-slate-100">
                       {filteredAdminOrders.length === 0 ? (
                         <tr>
-                          <td colSpan={7} className="py-12 text-center text-slate-500 font-medium">ยังไม่มีข้อมูล</td>
+                          <td colSpan={7} className="py-12 text-center text-slate-400 font-medium">ยังไม่มีข้อมูล</td>
                         </tr>
                       ) : (
                         filteredAdminOrders.map((ord) => (
-                          <tr key={ord.id} className="hover:bg-slate-900/30 text-[11px]">
-                            <td className="py-3.5 px-4 font-mono font-bold text-white">{ord.id}</td>
+                          <tr key={ord.id} className="hover:bg-slate-50/70 text-[11px]">
+                            <td className="py-3.5 px-4 font-mono font-bold text-slate-700">{ord.id}</td>
                             <td className="py-3.5 px-3">
-                              <span className="font-bold block text-slate-200">{ord.customerName}</span>
+                              <span className="font-bold block text-slate-800">{ord.customerName}</span>
                               <span className="text-[9px] text-slate-400">จดทะเบียน {ord.date}</span>
                             </td>
-                            <td className="py-3.5 px-3 max-w-[200px] truncate" title={ord.productName}>
+                            <td className="py-3.5 px-3 max-w-[200px] truncate text-slate-700 font-medium" title={ord.productName}>
                               {ord.productName}
                             </td>
-                            <td className="py-3.5 px-3 text-slate-300 font-medium">{ord.color}</td>
-                            <td className="py-3.5 px-3 text-right font-black text-emerald-400">
+                            <td className="py-3.5 px-3 text-slate-600 font-medium">{ord.color}</td>
+                            <td className="py-3.5 px-3 text-right font-black text-emerald-600">
                               ฿{ord.amount.toLocaleString()}
                             </td>
                             <td className="py-3.5 px-3 text-center">
                               {ord.shipmentNo ? (
-                                <code className="bg-sky-950/40 border border-sky-900/60 rounded-md px-1.8 py-0.5 text-sky-400 font-mono text-[10px]">
+                                <code className="bg-sky-50 border border-sky-200 rounded-md px-1.8 py-0.5 text-sky-700 font-mono text-[10px]">
                                   {ord.shipmentNo}
                                 </code>
                               ) : (
-                                <span className="text-slate-500 italic">รอรันลำเลียงรหัสคิว</span>
+                                <span className="text-slate-400 italic">รอรันลำเลียงรหัสคิว</span>
                               )}
                             </td>
                             <td className="py-3.5 px-3 text-center">
@@ -1561,7 +1564,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                                 <button
                                   onClick={() => changeOrderStatus(ord.id, 'Pending')}
                                   className={`px-2 py-1 rounded text-[9px] font-extrabold cursor-pointer transition-all ${
-                                    ord.status === 'Pending' ? 'bg-amber-500 text-slate-950 font-black' : 'bg-slate-900 text-slate-500'
+                                    ord.status === 'Pending' ? 'bg-amber-500 text-white font-black shadow-xs' : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
                                   }`}
                                 >
                                   รอขนย้าย
@@ -1569,7 +1572,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                                 <button
                                   onClick={() => changeOrderStatus(ord.id, 'Shipping')}
                                   className={`px-2 py-1 rounded text-[9px] font-extrabold cursor-pointer transition-all ${
-                                    ord.status === 'Shipping' ? 'bg-brand-blue text-white font-black' : 'bg-slate-900 text-slate-500'
+                                    ord.status === 'Shipping' ? 'bg-sky-500 text-white font-black shadow-xs' : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
                                   }`}
                                 >
                                   ส่งของ
@@ -1577,7 +1580,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                                 <button
                                   onClick={() => changeOrderStatus(ord.id, 'Delivered')}
                                   className={`px-2 py-1 rounded text-[9px] font-extrabold cursor-pointer transition-all ${
-                                    ord.status === 'Delivered' ? 'bg-emerald-555 bg-emerald-500 text-slate-950 font-black' : 'bg-slate-900 text-slate-500'
+                                    ord.status === 'Delivered' ? 'bg-emerald-500 text-white font-black shadow-xs' : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
                                   }`}
                                 >
                                   ส่งสำเร็จ
@@ -1601,19 +1604,19 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
             <div className="space-y-6 animate-fadeIn">
               
               {/* Header with waiting count */}
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-slate-950 p-5 rounded-2xl border border-slate-850">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
                 <div>
-                  <h2 className="text-base font-black text-white flex items-center gap-2">
-                    <ShieldCheck className="text-emerald-400" size={20} />
+                  <h2 className="text-base font-black text-slate-800 flex items-center gap-2">
+                    <ShieldCheck className="text-emerald-500" size={20} />
                     <span>รอตรวจสอบการชำระเงิน ({waitingVerifyOrders.length})</span>
                   </h2>
-                  <p className="text-xs text-slate-400 mt-1">
+                  <p className="text-xs text-slate-500 mt-1">
                     ตรวจสอบยืนยันสลิปจากแอปพลิเคชันลูกค้า เพื่ออนุมัติการวางจองและการผลิตเข้าระบบ
                   </p>
                 </div>
                 <button
                   onClick={reloadWaitingVerifyOrders}
-                  className="px-4 py-2 bg-slate-900 hover:bg-slate-850 border border-slate-800 text-slate-200 hover:text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 self-start sm:self-center cursor-pointer"
+                  className="px-4 py-2 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-700 hover:text-slate-900 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 self-start sm:self-center cursor-pointer shadow-xs"
                 >
                   <RefreshCw size={12} className={isVerifying ? 'animate-spin' : ''} />
                   <span>ดึงข้อมูลล่าสุด (Sync)</span>
@@ -1622,10 +1625,10 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
 
               {/* Waiting Verify Grid / List */}
               {waitingVerifyOrders.length === 0 ? (
-                <div className="bg-slate-950/40 border border-dashed border-slate-800 rounded-2xl p-12 text-center text-slate-500 font-medium">
-                  <CheckCircle2 size={36} className="mx-auto text-emerald-400/70 mb-3 animate-pulse" />
-                  <p className="text-sm font-bold text-slate-350">ไม่มีคำสั่งซื้อที่รอตรวจสอบสลิปในขณะนี้</p>
-                  <p className="text-xs text-slate-500 mt-1">ออเดอร์ทั้งหมดถูกตรวจสอบและดำเนินการอย่างสมบูรณ์แล้ว</p>
+                <div className="bg-white border border-dashed border-slate-200 rounded-2xl p-12 text-center text-slate-500 font-medium shadow-sm">
+                  <CheckCircle2 size={36} className="mx-auto text-emerald-500/70 mb-3 animate-pulse" />
+                  <p className="text-sm font-bold text-slate-700">ไม่มีคำสั่งซื้อที่รอตรวจสอบสลิปในขณะนี้</p>
+                  <p className="text-xs text-slate-400 mt-1">ออเดอร์ทั้งหมดถูกตรวจสอบและดำเนินการอย่างสมบูรณ์แล้ว</p>
                 </div>
               ) : (
                 <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
@@ -1643,17 +1646,17 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                     return (
                       <div 
                         key={ord.id} 
-                        className="bg-slate-950/80 border border-slate-850 hover:border-slate-800 duration-200 rounded-2xl overflow-hidden p-5 flex flex-col md:flex-row gap-5"
+                        className="bg-white border border-slate-200 hover:border-slate-300 duration-200 rounded-2xl overflow-hidden p-5 flex flex-col md:flex-row gap-5 shadow-sm"
                       >
                         {/* LEFT: SLIP VIEW & ACTION FOR ZOOM */}
                         <div className="w-full md:w-[150px] shrink-0 space-y-2">
-                          <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400 block">
+                          <span className="text-[10px] uppercase font-bold tracking-wider text-slate-500 block">
                             ภาพหลักฐานการโอน (Slip)
                           </span>
                           {ord.payment_slip_url ? (
                             <div 
                               onClick={() => setZoomedSlipUrl(ord.payment_slip_url)}
-                              className="border border-slate-800 hover:border-brand-blue rounded-xl overflow-hidden aspect-[3/4] md:aspect-auto md:h-[180px] bg-slate-900 flex items-center justify-center p-1 cursor-zoom-in relative group transition-all"
+                              className="border border-slate-200 hover:border-sky-500 rounded-xl overflow-hidden aspect-[3/4] md:aspect-auto md:h-[180px] bg-slate-50 flex items-center justify-center p-1 cursor-zoom-in relative group transition-all"
                               title="คลิกเพื่อขยายดูรูปสลิปขนาดเต็ม"
                             >
                               <img 
@@ -1662,15 +1665,15 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                                 referrerPolicy="no-referrer"
                                 className="w-full h-full object-contain rounded-lg group-hover:scale-[1.03] duration-200"
                               />
-                              <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 duration-200 flex items-center justify-center">
-                                <span className="bg-slate-900/90 text-white rounded-full p-2 text-[10px] font-bold px-3">
+                              <div className="absolute inset-0 bg-slate-900/40 opacity-0 group-hover:opacity-100 duration-200 flex items-center justify-center">
+                                <span className="bg-white text-slate-800 rounded-full p-2 text-[10px] font-bold px-3 shadow-md">
                                   คลิกเพื่อตรวจรูปเต็ม
                                 </span>
                               </div>
                             </div>
                           ) : (
-                            <div className="border-2 border-dashed border-slate-850 rounded-xl bg-slate-900/50 aspect-[3/4] md:aspect-auto md:h-[180px] flex flex-col items-center justify-center text-center p-3 text-slate-500">
-                              <AlertTriangle size={24} className="text-amber-550 mb-1" />
+                            <div className="border-2 border-dashed border-slate-200 rounded-xl bg-slate-50 aspect-[3/4] md:aspect-auto md:h-[180px] flex flex-col items-center justify-center text-center p-3 text-slate-400">
+                              <AlertTriangle size={24} className="text-amber-500 mb-1" />
                               <span className="text-[10.5px] leading-snug">ไม่มีข้อมูลรูปภาพสลิปที่แนบ</span>
                             </div>
                           )}
@@ -1680,20 +1683,20 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                         <div className="flex-1 flex flex-col justify-between space-y-4">
                           <div className="space-y-3">
                             {/* Order ID & Header */}
-                            <div className="flex justify-between items-start gap-2 border-b border-slate-900 pb-2.5">
+                            <div className="flex justify-between items-start gap-2 border-b border-slate-100 pb-2.5">
                               <div>
-                                <span className="text-[10px] uppercase tracking-wider text-slate-500 block font-bold">
+                                <span className="text-[10px] uppercase tracking-wider text-slate-400 block font-bold">
                                   เลขที่ใบสั่งซื้อ (Order ID)
                                 </span>
-                                <code className="text-xs font-mono font-bold text-white bg-slate-900 px-2 py-0.5 rounded border border-slate-850">
+                                <code className="text-xs font-mono font-bold text-slate-800 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
                                   {ord.id}
                                 </code>
                               </div>
                               <div className="text-right">
-                                <span className="text-[10px] uppercase tracking-wider text-slate-500 block font-bold">
+                                <span className="text-[10px] uppercase tracking-wider text-slate-400 block font-bold">
                                   รหัสคิวผลิต / สถานะ
                                 </span>
-                                <span className="inline-flex rounded px-1.5 py-0.5 text-[9.5px] font-extrabold bg-amber-500/10 text-amber-400 border border-amber-900/40">
+                                <span className="inline-flex rounded px-2 py-0.5 text-[9.5px] font-extrabold bg-amber-50 text-amber-700 border border-amber-200">
                                   {ord.payment_status || 'waiting_verify'}
                                 </span>
                               </div>
@@ -1702,30 +1705,30 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                             {/* Info Fields */}
                             <div className="grid grid-cols-2 gap-2 text-xs">
                               <div>
-                                <span className="text-slate-500 text-[10px] block">ชื่อผู้จองสินค้า:</span>
-                                <strong className="text-slate-200 block truncate">{ord.customer_name || 'ไม่แจ้งชื่อ'}</strong>
+                                <span className="text-slate-400 text-[10px] block">ชื่อผู้จองสินค้า:</span>
+                                <strong className="text-slate-800 block truncate">{ord.customer_name || 'ไม่แจ้งชื่อ'}</strong>
                               </div>
                               <div>
-                                <span className="text-slate-500 text-[10px] block font-sans">เบอร์ติดต่อกลับ:</span>
-                                <strong className="text-slate-200 block truncate">{ord.customer_phone || 'ไม่ระบุ'}</strong>
+                                <span className="text-slate-400 text-[10px] block font-sans">เบอร์ติดต่อกลับ:</span>
+                                <strong className="text-slate-800 block truncate">{ord.customer_phone || 'ไม่ระบุ'}</strong>
                               </div>
                               <div className="col-span-2">
-                                <span className="text-slate-500 text-[10px] block">สเกลอีเมล:</span>
-                                <strong className="text-slate-300 block truncate font-mono text-[10px]" title={ord.customer_email}>{ord.customer_email}</strong>
+                                <span className="text-slate-400 text-[10px] block">สเกลอีเมล:</span>
+                                <strong className="text-slate-600 block truncate font-mono text-[10px]" title={ord.customer_email}>{ord.customer_email}</strong>
                               </div>
                               <div className="col-span-2">
-                                <span className="text-slate-500 text-[10px] block">เรือที่สั่งหลอมสี:</span>
-                                <p className="text-slate-200 font-medium leading-relaxed max-h-[36px] line-clamp-1 overflow-hidden" title={ord.productName}>
+                                <span className="text-slate-400 text-[10px] block">เรือที่สั่งหลอมสี:</span>
+                                <p className="text-slate-800 font-medium leading-relaxed max-h-[36px] line-clamp-1 overflow-hidden" title={ord.productName}>
                                   {ord.productName} {ord.color ? `(${ord.color})` : ''}
                                 </p>
                               </div>
                               <div>
-                                <span className="text-slate-500 text-[10px] block">ตราเวลาสั่งซื้อ:</span>
-                                <span className="text-slate-400 text-[10.5px] block leading-tight">{orderDateStr}</span>
+                                <span className="text-slate-400 text-[10px] block">ตราเวลาสั่งซื้อ:</span>
+                                <span className="text-slate-600 text-[10.5px] block leading-tight">{orderDateStr}</span>
                               </div>
                               <div className="text-right">
-                                <span className="text-slate-500 text-[10px] block font-bold">ยอดเงินโอนสุทธิ:</span>
-                                <strong className="text-emerald-400 font-extrabold text-sm font-mono block">
+                                <span className="text-slate-400 text-[10px] block font-bold">ยอดเงินโอนสุทธิ:</span>
+                                <strong className="text-emerald-600 font-extrabold text-sm font-mono block">
                                   ฿{Number(ord.total_amount || ord.amount || 0).toLocaleString()}
                                 </strong>
                               </div>
@@ -1733,7 +1736,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                           </div>
 
                           {/* Action Buttons */}
-                          <div className="flex gap-2.5 pt-3 border-t border-slate-900">
+                          <div className="flex gap-2.5 pt-3 border-t border-slate-100">
                             {/* REJECT BUTTON */}
                             <button
                               type="button"
@@ -1758,10 +1761,10 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                                   }
                                 }
                               }}
-                              className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl bg-red-950/40 hover:bg-red-950/80 border border-red-900/60 hover:border-red-600 text-red-100 hover:text-white font-bold text-xs cursor-pointer transition-all disabled:opacity-40"
+                              className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 font-bold text-xs cursor-pointer transition-all disabled:opacity-40 shadow-xs"
                             >
                               {isVerifying === ord.id ? (
-                                <div className="h-3 w-3 rounded-full border-2 border-red-305 border-t-transparent animate-spin"></div>
+                                <div className="h-3 w-3 rounded-full border-2 border-rose-500 border-t-transparent animate-spin"></div>
                               ) : (
                                 <span>❌ ปฏิเสธการชำระเงิน</span>
                               )}
@@ -1791,10 +1794,10 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                                   }
                                 }
                               }}
-                              className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl bg-emerald-950/40 hover:bg-emerald-650 border border-emerald-900/60 hover:border-emerald-500 text-emerald-100 hover:text-white font-bold text-xs cursor-pointer transition-all disabled:opacity-40 shadow-md"
+                              className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs cursor-pointer transition-all disabled:opacity-40 shadow-sm"
                             >
                               {isVerifying === ord.id ? (
-                                <div className="h-3 w-3 rounded-full border-2 border-emerald-305 border-t-transparent animate-spin"></div>
+                                <div className="h-3 w-3 rounded-full border-2 border-white border-t-transparent animate-spin"></div>
                               ) : (
                                 <span>✅ อนุมัติการชำระเงิน</span>
                               )}
@@ -1817,7 +1820,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
           {activeMenu === 'preorders' && (
             <div className="space-y-4 animate-fadeIn">
               <div className="relative max-w-sm">
-                <span className="absolute left-3 top-2 text-slate-500">
+                <span className="absolute left-3 top-2.5 text-slate-400">
                   <Search size={13} />
                 </span>
                 <input
@@ -1825,16 +1828,16 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                   placeholder="พิมพ์หาใบจอง สเปกโมเดลคิว..."
                   value={preordersSearch}
                   onChange={(e) => setPreordersSearch(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-8.5 pr-4 py-2 text-xs text-white placeholder-slate-500 outline-none"
+                  className="w-full bg-white border border-slate-200 rounded-xl pl-8.5 pr-4 py-2 text-xs text-slate-800 placeholder-slate-400 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500/20 shadow-xs"
                   id="admin-preorders-search-input"
                 />
               </div>
 
-              <div className="bg-slate-950/60 border border-slate-850 rounded-2xl overflow-hidden">
+              <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-xs border-collapse">
                     <thead>
-                      <tr className="border-b border-slate-800 bg-slate-950 text-slate-400 font-bold">
+                      <tr className="border-b border-slate-200 bg-slate-50 text-slate-500 font-bold">
                         <th className="py-3 px-4">รหัสคิวหลอมพลาสติก</th>
                         <th className="py-3 px-3">ลูกค้าเป้าหมาย</th>
                         <th className="py-3 px-3">เรือและโมเดลที่ต้องการ</th>
@@ -1844,36 +1847,36 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                         <th className="py-3 px-4 text-center">ปรับจูนสถานะในโรงงาน</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-850/50">
+                    <tbody className="divide-y divide-slate-100">
                       {filteredAdminPreorders.length === 0 ? (
                         <tr>
-                          <td colSpan={7} className="py-12 text-center text-slate-500 font-medium">ยังไม่มีข้อมูล</td>
+                          <td colSpan={7} className="py-12 text-center text-slate-400 font-medium">ยังไม่มีข้อมูล</td>
                         </tr>
                       ) : (
                         filteredAdminPreorders.map((pre) => (
-                          <tr key={pre.id} className="hover:bg-slate-900/30 text-[11px]">
-                            <td className="py-3.5 px-4 font-mono font-bold text-white">{pre.id}</td>
+                          <tr key={pre.id} className="hover:bg-slate-50/70 text-[11px]">
+                            <td className="py-3.5 px-4 font-mono font-bold text-slate-800">{pre.id}</td>
                             <td className="py-3.5 px-3">
-                              <span className="font-bold block text-slate-205 text-slate-200">{pre.customerName}</span>
+                              <span className="font-bold block text-slate-800">{pre.customerName}</span>
                               <span className="text-[9.5px] text-slate-400 font-mono">ลงทะเบียน {pre.date}</span>
                             </td>
                             <td className="py-3.5 px-3">
-                              <span className="block font-semibold text-slate-300">{pre.productName}</span>
-                              <span className="text-[10px] text-slate-450">{pre.color}</span>
+                              <span className="block font-semibold text-slate-800">{pre.productName}</span>
+                              <span className="text-[10px] text-slate-500">{pre.color}</span>
                             </td>
-                            <td className="py-3.5 px-3 text-right font-bold text-amber-500">
+                            <td className="py-3.5 px-3 text-right font-bold text-amber-600">
                               ฿{pre.deposit.toLocaleString()}
                             </td>
-                            <td className="py-3.5 px-3 text-right font-black text-brand-blue">
+                            <td className="py-3.5 px-3 text-right font-black text-sky-600">
                               ฿{pre.fullPrice.toLocaleString()}
                             </td>
-                            <td className="py-3.5 px-3 text-slate-300 font-semibold">{pre.estDelivery}</td>
+                            <td className="py-3.5 px-3 text-slate-700 font-semibold">{pre.estDelivery}</td>
                             <td className="py-3.5 px-4 text-center">
                               <div className="flex items-center justify-center gap-1.5">
                                 <select
                                   value={pre.status}
                                   onChange={(e) => changePreOrderStatus(pre.id, e.target.value as any)}
-                                  className="bg-slate-900 border border-slate-700 rounded-md py-1 px-2.5 text-[10.5px] text-slate-200 cursor-pointer text-center font-bold"
+                                  className="bg-slate-50 border border-slate-200 rounded-lg py-1 px-2.5 text-[10.5px] text-slate-700 cursor-pointer text-center font-bold focus:bg-white focus:border-sky-500"
                                 >
                                   <option value="AwaitingDeposit">รอตรวจค่ามัดจำ</option>
                                   <option value="DepositConfirmed">ยืนยันเงินเรียบร้อย</option>
@@ -1897,16 +1900,16 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
               ----------------------------------------------------------- */}
           {activeMenu === 'members' && (
             <div className="space-y-4 animate-fadeIn">
-              <div className="bg-slate-950/60 border border-slate-850 rounded-2xl p-5 space-y-4">
+              <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-4 shadow-sm">
                 <div className="flex items-center justify-between">
-                  <h3 className="font-display font-black text-slate-100 text-xs">ระเบียนครอบครัวผู้จองซื้อสะสมสิทธิ์พรพงศ์พลาสติก</h3>
-                  <span className="text-[11px] font-semibold text-slate-400">ระบบอัปเดตสมาชิกอัตโนมัติเมื่อมีการสมัครตรง</span>
+                  <h3 className="font-display font-black text-slate-800 text-xs">ระเบียนครอบครัวผู้จองซื้อสะสมสิทธิ์พรพงศ์พลาสติก</h3>
+                  <span className="text-[11px] font-semibold text-slate-500">ระบบอัปเดตสมาชิกอัตโนมัติเมื่อมีการสมัครตรง</span>
                 </div>
 
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-xs border-collapse">
                     <thead>
-                      <tr className="border-b border-slate-800 bg-slate-900/30 text-slate-400 font-bold">
+                      <tr className="border-b border-slate-200 bg-slate-50 text-slate-500 font-bold">
                         <th className="py-2.5 px-3.5">ชื่อลูกค้า</th>
                         <th className="py-2.5 px-3">ช่องทางอีเมลติดต่อ</th>
                         <th className="py-2.5 px-3 text-center">เบอร์สายด่วน</th>
@@ -1915,25 +1918,25 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                         <th className="py-2.5 px-4 text-center">การจัดการ</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-850/60">
+                    <tbody className="divide-y divide-slate-100">
                       {adminMembers.length === 0 ? (
                         <tr>
-                          <td colSpan={6} className="py-12 text-center text-slate-500 font-medium">ยังไม่มีข้อมูล</td>
+                          <td colSpan={6} className="py-12 text-center text-slate-400 font-medium">ยังไม่มีข้อมูล</td>
                         </tr>
                       ) : (
                         adminMembers.map((member, idx) => (
-                          <tr key={idx} className="hover:bg-slate-900/30 text-[11px]">
+                          <tr key={idx} className="hover:bg-slate-50/70 text-[11px]">
                             <td className="py-3 px-3.5">
-                              <strong className="text-white block font-bold">คุณ {member.name}</strong>
+                              <strong className="text-slate-800 block font-bold">คุณ {member.name}</strong>
                             </td>
-                            <td className="py-3 px-3 font-mono text-slate-430 text-slate-400">{member.email}</td>
-                            <td className="py-3 px-3 text-center text-slate-300 font-mono">{member.phone}</td>
+                            <td className="py-3 px-3 font-mono text-slate-600">{member.email}</td>
+                            <td className="py-3 px-3 text-center text-slate-700 font-mono">{member.phone}</td>
                             <td className="py-3 px-3 text-center">
-                              <span className="px-2.5 py-0.5 rounded-full bg-sky-950/50 text-brand-blue text-[9px] font-bold border border-sky-900/40">
+                              <span className="px-2.5 py-0.5 rounded-full bg-sky-50 text-sky-700 text-[9px] font-bold border border-sky-200">
                                 {member.rank || 'Standard Family'}
                               </span>
                             </td>
-                            <td className="py-3 px-3 text-right font-black text-cyan-400 font-mono">{member.rewardPoints || 0} pt</td>
+                            <td className="py-3 px-3 text-right font-black text-sky-600 font-mono">{member.rewardPoints || 0} pt</td>
                             <td className="py-3 px-4 text-center">
                               <div className="flex justify-center items-center gap-2">
                                 <button
@@ -1949,7 +1952,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                                       triggerToast(`ข้อผิดพลาด: ${err.message || 'ไม่สามารถอัปเดตแต้มรางวัลได้'}`);
                                     }
                                   }}
-                                  className="px-2.5 py-1 bg-cyan-950 border border-cyan-900 text-cyan-400 font-bold text-[9.5px] rounded-lg cursor-pointer hover:bg-cyan-900 transition-colors"
+                                  className="px-2.5 py-1 bg-sky-50 border border-sky-200 text-sky-700 font-bold text-[9.5px] rounded-lg cursor-pointer hover:bg-sky-100 transition-colors"
                                 >
                                   + 10 แต้มพิเศษ
                                 </button>
@@ -1970,7 +1973,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                                       }
                                     }
                                   }}
-                                  className="px-2.5 py-1 bg-red-950/40 border border-red-900/60 hover:bg-red-900/40 text-red-400 font-bold text-[9.5px] rounded-lg cursor-pointer transition-colors"
+                                  className="px-2.5 py-1 bg-rose-50 border border-rose-200 hover:bg-rose-100 text-rose-700 font-bold text-[9.5px] rounded-lg cursor-pointer transition-colors"
                                 >
                                   ลบระเบียน
                                 </button>
@@ -1992,24 +1995,24 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
           {activeMenu === 'reviews' && (
             <div className="space-y-4 animate-fadeIn">
               
-              <div className="bg-slate-950/60 border border-slate-850 rounded-2xl p-5.5 space-y-4">
+              <div className="bg-white border border-slate-200 rounded-2xl p-5.5 space-y-4 shadow-sm">
                 <div>
-                  <h3 className="font-display font-bold text-xs text-white">รายชื่อความคิดเห็นรีวิวผลตอบรับชุมชน</h3>
-                  <p className="text-[10.5px] text-slate-400">อนุมัติปิดกั้น สแกนคำรีวิวหยาบคาย หรืออนุญาตให้โชว์เป็นรีวิวเด่นเลื่อนผ่านหน้าหลักลูกค้ากวักศรัทธา</p>
+                  <h3 className="font-display font-bold text-xs text-slate-800">รายชื่อความคิดเห็นรีวิวผลตอบรับชุมชน</h3>
+                  <p className="text-[10.5px] text-slate-500">อนุมัติปิดกั้น สแกนคำรีวิวหยาบคาย หรืออนุญาตให้โชว์เป็นรีวิวเด่นเลื่อนผ่านหน้าหลักลูกค้ากวักศรัทธา</p>
                 </div>
 
                 <div className="grid grid-cols-1 gap-3.5">
                   {adminReviews.length === 0 ? (
-                    <div className="p-8 text-center text-slate-500 font-medium bg-slate-900 border border-slate-850 rounded-xl">
+                    <div className="p-8 text-center text-slate-400 font-medium bg-slate-50 border border-slate-200 rounded-xl">
                       ยังไม่มีข้อมูล
                     </div>
                   ) : (
                     adminReviews.map((rev) => (
-                      <div key={rev.id} className="p-4 border border-slate-850 bg-slate-900/60 rounded-xl space-y-2">
+                      <div key={rev.id} className="p-4 border border-slate-200 bg-white rounded-xl space-y-2 shadow-xs">
                         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
                           <div className="flex items-center gap-2">
-                            <strong className="text-white font-bold">{rev.author}</strong>
-                            <span className="text-slate-450 text-[10px] bg-slate-950 px-2 py-0.5 rounded-full border border-slate-850 text-slate-400">{rev.date}</span>
+                            <strong className="text-slate-800 font-bold">{rev.author}</strong>
+                            <span className="text-[10px] bg-slate-100 px-2 py-0.5 rounded-full border border-slate-200 text-slate-500">{rev.date}</span>
                           </div>
                           
                           <div className="flex items-center gap-2">
@@ -2020,28 +2023,28 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                             
                             <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-bold ${
                               rev.approved 
-                                ? 'bg-emerald-950/40 border border-emerald-900 text-emerald-400' 
-                                : 'bg-red-953/40 border border-red-900 text-amber-500'
+                                ? 'bg-emerald-50 border border-emerald-200 text-emerald-700' 
+                                : 'bg-amber-50 border border-amber-200 text-amber-700'
                             }`}>
                               {rev.approved ? 'โชว์หน้าเวที' : 'ซ่อนระงับบริการเพื่อเซ็นเซอร์'}
                             </span>
                           </div>
                         </div>
 
-                        <p className="text-xs text-slate-300 leading-normal bg-slate-950/30 p-2 rounded-lg border border-slate-850/40">
+                        <p className="text-xs text-slate-700 leading-normal bg-slate-50 p-2.5 rounded-lg border border-slate-200">
                           {rev.comment}
                         </p>
 
                         <div className="flex gap-2 pt-1 justify-end">
                           <button
                             onClick={() => toggleReviewApprove(rev.id)}
-                            className="px-3 py-1 bg-slate-955 hover:bg-slate-800 border border-slate-810 text-slate-300 text-[10px] font-bold rounded-lg cursor-pointer transition-colors"
+                            className="px-3 py-1 bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-700 text-[10px] font-bold rounded-lg cursor-pointer transition-colors"
                           >
                             {rev.approved ? 'ปิดกั้นระงับบอร์ด' : 'อนุมัติผ่านโชว์'}
                           </button>
                           <button
                             onClick={() => deleteReview(rev.id)}
-                            className="px-2.5 py-1 bg-red-950/40 border border-red-950 text-red-400 text-[10px] font-bold rounded-lg cursor-pointer hover:bg-red-950 transition-colors"
+                            className="px-2.5 py-1 bg-rose-50 border border-rose-200 text-rose-700 text-[10px] font-bold rounded-lg cursor-pointer hover:bg-rose-100 transition-colors"
                           >
                             ลบถาวร
                           </button>
@@ -2061,51 +2064,51 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
           {activeMenu === 'notifications' && (
             <div className="space-y-4 animate-fadeIn">
               
-              <div className="bg-slate-950/60 border border-slate-850 rounded-2xl p-5.5 flex flex-col md:flex-row gap-6">
+              <div className="bg-white border border-slate-200 rounded-2xl p-5.5 flex flex-col md:flex-row gap-6 shadow-sm">
                 
                 {/* Form layout */}
                 <form onSubmit={handlePostNotification} className="flex-1 space-y-4">
                   <div>
-                    <h3 className="font-display font-black text-slate-100 text-xs mb-1 flex items-center gap-1.5 text-cyan-400">
-                      <Sparkles size={14} className="text-cyan-400" />
+                    <h3 className="font-display font-black text-slate-800 text-xs mb-1 flex items-center gap-1.5 text-sky-600">
+                      <Sparkles size={14} className="text-sky-500" />
                       สร้างแคมเปญแจ้งเตือนดันข่าวสารสด (Announcement Push)
                     </h3>
-                    <p className="text-[10px] text-slate-400 mb-4">
+                    <p className="text-[10px] text-slate-500 mb-4">
                       เมื่อยิงกด "ประกาศสดตอนนี้" ข้อความชูเปอร์ฮีโร่จะถูกส่งเข้าตรงระฆังสีแดงขอบบนฝั่งเพจแคตตาล็อกหน้าบ้านแบบวิต่อวิทันทีเป็นเรียลไทม์!
                     </p>
                   </div>
 
                   <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">หัวข้อประกาศแจ้งข่าวเด่นเด่น*</label>
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">หัวข้อประกาศแจ้งข่าวเด่นเด่น*</label>
                     <input
                       type="text"
                       required
                       value={notiTitle}
                       onChange={(e) => setNotiTitle(e.target.value)}
                       placeholder="เช่น: ประกาศเรือสีชมพูฟอสฟอรัสเปิดจองจำนวนจำกัด 20 ตัว!"
-                      className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-slate-600 outline-none"
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 placeholder-slate-400 outline-none focus:bg-white focus:border-sky-500 focus:ring-1 focus:ring-sky-500/20 shadow-xs"
                     />
                   </div>
 
                   <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">รายละเอียดข้อความสารพัดประโยชน์*</label>
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">รายละเอียดข้อความสารพัดประโยชน์*</label>
                     <textarea
                       required
                       value={notiMsg}
                       onChange={(e) => setNotiMsg(e.target.value)}
                       rows={3}
                       placeholder="แจ้งรายละเอียด กำหนดการ คิวโบนัสจัดส่ง หรือของกำนัล..."
-                      className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-slate-650 outline-none"
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 placeholder-slate-400 outline-none focus:bg-white focus:border-sky-500 focus:ring-1 focus:ring-sky-500/20 shadow-xs"
                     ></textarea>
                   </div>
 
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">ประเภทสัญญลักษร์แจ้งเตือน (Category Icon)</label>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">ประเภทสัญญลักษร์แจ้งเตือน (Category Icon)</label>
                       <select
                         value={notiType}
                         onChange={(e) => setNotiType(e.target.value as any)}
-                        className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white outline-none"
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 outline-none focus:bg-white focus:border-sky-500 shadow-xs"
                       >
                         <option value="promotion">โปรโมชั่นและของกำนัล (Tag)</option>
                         <option value="new_product">การเปิดตัวเรือลำรุ่นใหม่ (Sparkles)</option>
@@ -2117,7 +2120,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                     <div className="flex items-end">
                       <button
                         type="submit"
-                        className="w-full py-2.8 bg-brand-blue hover:bg-brand-blue-light transition-colors text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 shadow-md shadow-blue-950/20 cursor-pointer"
+                        className="w-full py-2.8 bg-sky-500 hover:bg-sky-600 transition-colors text-white font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 shadow-xs cursor-pointer"
                         id="send-noti-alert-btn"
                       >
                         <Bell size={13} className="animate-bounce" />
@@ -2129,26 +2132,26 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                 </form>
 
                 {/* Live notifications preview card list */}
-                <div className="w-full md:w-[350px] bg-slate-900/60 p-4 border border-slate-850 rounded-2xl flex flex-col justify-between shrink-0">
-                  <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest border-b border-slate-850 pb-2 mb-3">
+                <div className="w-full md:w-[350px] bg-slate-50 p-4 border border-slate-200 rounded-2xl flex flex-col justify-between shrink-0">
+                  <span className="block text-[10px] font-bold text-slate-500 uppercase tracking-widest border-b border-slate-200 pb-2 mb-3">
                     สารบบลิสต์แจ้งเตือนหน้าและเบลเลอร์ ({notifications.length} รายการ)
                   </span>
 
                   <div className="space-y-3 flex-1 overflow-y-auto max-h-[220px] max-w-full">
                     {notifications.map((item) => (
-                      <div key={item.id} className="p-3 bg-slate-950 border border-slate-850 rounded-xl flex gap-2 text-[10px] items-start">
-                        <div className="shrink-0 text-brand-blue p-1 rounded-sm bg-brand-blue/10">
+                      <div key={item.id} className="p-3 bg-white border border-slate-200 rounded-xl flex gap-2 text-[10px] items-start shadow-xs">
+                        <div className="shrink-0 text-sky-600 p-1 rounded-sm bg-sky-50">
                           <Bell size={12} />
                         </div>
                         <div className="min-w-0 flex-1">
-                          <strong className="text-white block font-sans truncate">{item.title}</strong>
-                          <p className="text-slate-400 line-clamp-2 leading-relaxed mt-0.5">{item.message}</p>
+                          <strong className="text-slate-800 block font-sans truncate">{item.title}</strong>
+                          <p className="text-slate-500 line-clamp-2 leading-relaxed mt-0.5">{item.message}</p>
                         </div>
                       </div>
                     ))}
                   </div>
 
-                  <div className="mt-4 pt-3 border-t border-slate-850 text-center text-[10px] text-slate-500">
+                  <div className="mt-4 pt-3 border-t border-slate-200 text-center text-[10px] text-slate-400">
                     *ข้อมูลอัปเดตแบบเรียลไทม์จำลอง
                   </div>
                 </div>
@@ -2163,33 +2166,33 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
           {activeMenu === 'promotions' && (
             <div className="space-y-4 animate-fadeIn">
               
-              <div className="bg-slate-950/60 border border-slate-850 rounded-2xl p-5.5 space-y-5">
+              <div className="bg-white border border-slate-200 rounded-2xl p-5.5 space-y-5 shadow-sm">
                 
-                <form onSubmit={handleAddCoupon} className="p-4 bg-slate-900/60 border border-slate-850 rounded-xl space-y-4">
-                  <h4 className="text-xs font-bold text-white uppercase border-b border-slate-850 pb-1.5 flex items-center justify-between">
+                <form onSubmit={handleAddCoupon} className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-4">
+                  <h4 className="text-xs font-bold text-slate-800 uppercase border-b border-slate-200 pb-1.5 flex items-center justify-between">
                     <span>สร้างบัตรรหัสลดคุ้ม (Coupon Builder Block)</span>
-                    <span className="text-[10px] text-slate-400 lowercase font-medium">บันทึกอัตโนมัติเข้า local cache</span>
+                    <span className="text-[10px] text-slate-500 lowercase font-medium">บันทึกอัตโนมัติเข้า local cache</span>
                   </h4>
 
                   <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs">
                     <div>
-                      <label className="block text-[10px] text-slate-400 font-bold mb-1.2">ชื่อรหัสคูปองตึง*</label>
+                      <label className="block text-[10px] text-slate-500 font-bold mb-1.2">ชื่อรหัสคูปองตึง*</label>
                       <input
                         type="text"
                         required
                         value={newCouponCode}
                         onChange={(e) => setNewCouponCode(e.target.value)}
                         placeholder="เช่น SAVE500"
-                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3.5 py-1.8 text-xs text-white uppercase"
+                        className="w-full bg-white border border-slate-200 rounded-lg px-3.5 py-1.8 text-xs text-slate-800 uppercase focus:border-sky-500 focus:ring-1 focus:ring-sky-500/20 outline-none shadow-xs"
                       />
                     </div>
 
                     <div>
-                      <label className="block text-[10px] text-slate-400 font-bold mb-1.2">ประเภทของรหัสลด</label>
+                      <label className="block text-[10px] text-slate-500 font-bold mb-1.2">ประเภทของรหัสลด</label>
                       <select
                         value={newCouponType}
                         onChange={(e) => setNewCouponType(e.target.value as any)}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3.5 py-1.8 text-xs text-white"
+                        className="w-full bg-white border border-slate-200 rounded-lg px-3.5 py-1.8 text-xs text-slate-800 focus:border-sky-500 outline-none shadow-xs"
                       >
                         <option value="flat">หักลดเงินบาทคงที่ (฿ Flat Discount)</option>
                         <option value="percent">ส่วนลดด้วยค่าเปอร์เซ็นต์ (% Rate)</option>
@@ -2197,20 +2200,20 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                     </div>
 
                     <div>
-                      <label className="block text-[10px] text-slate-400 font-bold mb-1.2">มูลค่าการลด*</label>
+                      <label className="block text-[10px] text-slate-500 font-bold mb-1.2">มูลค่าการลด*</label>
                       <input
                         type="number"
                         required
                         value={newCouponDiscount}
                         onChange={(e) => setNewCouponDiscount(Number(e.target.value))}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3.5 py-1.8 text-xs text-white"
+                        className="w-full bg-white border border-slate-200 rounded-lg px-3.5 py-1.8 text-xs text-slate-800 focus:border-sky-500 outline-none shadow-xs"
                       />
                     </div>
 
                     <div className="flex items-end">
                       <button
                         type="submit"
-                        className="w-full py-1.8 bg-brand-blue hover:bg-brand-blue-light transition-colors text-white font-bold text-xs rounded-lg cursor-pointer"
+                        className="w-full py-1.8 bg-sky-500 hover:bg-sky-600 transition-colors text-white font-bold text-xs rounded-lg cursor-pointer shadow-xs"
                         id="add-coupon-now-btn"
                       >
                         อนุมัติบัตรรหัสใหม่
@@ -2219,61 +2222,61 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                   </div>
 
                   <div>
-                    <label className="block text-[10px] text-slate-400 font-bold mb-1">คำโฆษณาประกอบคูปอง</label>
+                    <label className="block text-[10px] text-slate-500 font-bold mb-1">คำโฆษณาประกอบคูปอง</label>
                     <input
                       type="text"
                       value={newCouponDesc}
                       onChange={(e) => setNewCouponDesc(e.target.value)}
                       placeholder="เช่น คูปองโปรโมชั่นเทศกาลเรือลดโลกร้อนสะท้านทรวงอก"
-                      className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3.5 py-1.8 text-xs text-white outline-none"
+                      className="w-full bg-white border border-slate-200 rounded-lg px-3.5 py-1.8 text-xs text-slate-800 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500/20 shadow-xs"
                     />
                   </div>
                 </form>
 
                 <div className="space-y-3">
-                  <h4 className="text-xs font-bold text-white">คูปองที่เปิดใช้งานในระบบปัจจุบัน ({adminCoupons.length} คูปอง)</h4>
+                  <h4 className="text-xs font-bold text-slate-800">คูปองที่เปิดใช้งานในระบบปัจจุบัน ({adminCoupons.length} คูปอง)</h4>
 
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
                     {adminCoupons.length === 0 ? (
-                      <div className="col-span-full p-8 text-center text-slate-500 font-medium bg-slate-900 border border-slate-850 rounded-xl">
+                      <div className="col-span-full p-8 text-center text-slate-400 font-medium bg-slate-50 border border-slate-200 rounded-xl">
                         ยังไม่มีข้อมูล
                       </div>
                     ) : (
                       adminCoupons.map((coupon) => (
-                        <div key={coupon.code} className="p-3.5 border border-slate-850 bg-slate-900 rounded-xl relative overflow-hidden flex flex-col justify-between">
+                        <div key={coupon.code} className="p-3.5 border border-slate-200 bg-white rounded-xl relative overflow-hidden flex flex-col justify-between shadow-xs">
                           
                           {/* Tag details */}
                           <div className="space-y-1">
                             <div className="flex justify-between items-center">
-                              <span className="font-mono text-sm font-black text-brand-blue bg-sky-950/40 px-2.5 py-0.5 rounded-lg border border-sky-900">
+                              <span className="font-mono text-sm font-black text-sky-600 bg-sky-50 px-2.5 py-0.5 rounded-lg border border-sky-200">
                                 {coupon.code}
                               </span>
                               <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${
-                                coupon.active ? 'bg-emerald-950 text-emerald-400 border border-emerald-900/60' : 'bg-slate-950 text-slate-400'
+                                coupon.active ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-slate-100 text-slate-500 border border-slate-200'
                               }`}>
                                 {coupon.active ? 'เปิดอยู่' : 'ปิดโค้ด'}
                               </span>
                             </div>
                             
-                            <p className="text-[11px] text-slate-300 font-bold mt-1.5 leading-snug">
+                            <p className="text-[11px] text-slate-700 font-bold mt-1.5 leading-snug">
                               {coupon.description}
                             </p>
-                            <span className="block text-[10.5px] font-semibold text-emerald-400 font-mono">
+                            <span className="block text-[10.5px] font-semibold text-emerald-600 font-mono">
                               ลดพิเศษ: +{coupon.type === 'flat' ? `${coupon.discount} บาท` : `${coupon.discount}%`}
                             </span>
                           </div>
 
                           {/* Actions buttons */}
-                          <div className="flex gap-2 pt-3.5 mt-3.5 border-t border-slate-850/60 justify-end">
+                          <div className="flex gap-2 pt-3.5 mt-3.5 border-t border-slate-100 justify-end">
                             <button
                               onClick={() => toggleCoupon(coupon.code)}
-                              className="px-2 py-1 bg-slate-950 text-[10px] text-slate-350 cursor-pointer text-slate-350 hover:bg-slate-900 rounded border border-slate-800 transition-all font-bold"
+                              className="px-2 py-1 bg-slate-100 text-[10px] text-slate-700 hover:bg-slate-200 rounded border border-slate-200 transition-all font-bold cursor-pointer"
                             >
                               สลับเปิด/ปิด
                             </button>
                             <button
                               onClick={() => deleteCoupon(coupon.code)}
-                              className="p-1 px-2.5 rounded bg-red-950 text-red-400 border border-red-950 hover:bg-red-900 transition-all text-[10px] font-bold cursor-pointer"
+                              className="p-1 px-2.5 rounded bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100 transition-all text-[10px] font-bold cursor-pointer"
                             >
                               ถอนสิทธิ์คูปอง
                             </button>
@@ -2296,11 +2299,11 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
           {activeMenu === 'settings' && (
             <div className="space-y-4 animate-fadeIn">
               
-              <div className="bg-slate-950/60 border border-slate-850 rounded-2xl p-6.5 space-y-6">
+              <div className="bg-white border border-slate-200 rounded-2xl p-6.5 space-y-6 shadow-sm">
                 
-                <div className="border-b border-slate-850 pb-3">
-                  <h3 className="font-display font-black text-slate-100 text-xs">ตั้งค่าทางเทคนิคและการดำเนินงาน</h3>
-                  <p className="text-[10px] text-slate-400 mt-1">
+                <div className="border-b border-slate-200 pb-3">
+                  <h3 className="font-display font-black text-slate-800 text-xs">ตั้งค่าทางเทคนิคและการดำเนินงาน</h3>
+                  <p className="text-[10px] text-slate-500 mt-1">
                     ปรับเซตตัวแปรสำหรับการแสดงข้อมูลหน้าแคตตาล็อกร้านหลัก
                   </p>
                 </div>
@@ -2308,37 +2311,37 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-5 text-xs">
                   
                   <div className="space-y-1.5">
-                    <label className="block text-[10.5px] font-bold text-slate-400">ชื่อสถานแสดงประกอบเว็บบล็อก</label>
+                    <label className="block text-[10.5px] font-bold text-slate-500">ชื่อสถานแสดงประกอบเว็บบล็อก</label>
                     <input
                       type="text"
-                      className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-2.8 text-xs text-white"
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.8 text-xs text-slate-800 outline-none focus:bg-white focus:border-sky-500 focus:ring-1 focus:ring-sky-500/20 shadow-xs"
                       value={shopName}
                       onChange={(e) => setShopName(e.target.value)}
                     />
                   </div>
 
                   <div className="space-y-1.5">
-                    <label className="block text-[10.5px] font-bold text-slate-400">เบอร์โทรศัพท์สายตรงประจำโรงงาน</label>
+                    <label className="block text-[10.5px] font-bold text-slate-500">เบอร์โทรศัพท์สายตรงประจำโรงงาน</label>
                     <input
                       type="text"
-                      className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-2.8 text-xs text-white"
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.8 text-xs text-slate-800 outline-none focus:bg-white focus:border-sky-500 focus:ring-1 focus:ring-sky-500/20 shadow-xs"
                       value={shopPhone}
                       onChange={(e) => setShopPhone(e.target.value)}
                     />
                   </div>
 
                   <div className="space-y-1.5">
-                    <label className="block text-[10.5px] font-bold text-slate-400">อีเมลติดต่อระบบประสานส่งเรือ</label>
+                    <label className="block text-[10.5px] font-bold text-slate-500">อีเมลติดต่อระบบประสานส่งเรือ</label>
                     <input
                       type="text"
-                      className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-2.8 text-xs text-white"
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.8 text-xs text-slate-800 outline-none focus:bg-white focus:border-sky-500 focus:ring-1 focus:ring-sky-500/20 shadow-xs"
                       value={shopEmail}
                       onChange={(e) => setShopEmail(e.target.value)}
                     />
                   </div>
 
                   <div className="space-y-1.2 flex flex-col justify-end">
-                    <label className="block text-[10.5px] font-bold text-slate-400 mb-1.5">
+                    <label className="block text-[10.5px] font-bold text-slate-500 mb-1.5">
                       ระบบจองคิวเรือล่วงหน้าแบบเรียลไทม์
                     </label>
                     
@@ -2349,10 +2352,10 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                           setIsPreOrderActive(!isPreOrderActive);
                           triggerToast('ปรับสวิตซ์ตัวเลือกระบบคิวรับหลอมเรือพรีเซนตฺ์สำเร็จ');
                         }}
-                        className={`px-4 py-2 text-xs font-black rounded-xl cursor-pointer duration-200 border ${
+                        className={`px-4 py-2 text-xs font-black rounded-xl cursor-pointer duration-200 border shadow-xs ${
                           isPreOrderActive 
-                            ? 'bg-emerald-950 border-emerald-900 text-emerald-400 shadow-emerald-950/20 shadow-lg' 
-                            : 'bg-red-950 border-red-900 text-red-400'
+                            ? 'bg-emerald-50 border-emerald-300 text-emerald-700' 
+                            : 'bg-rose-50 border-rose-300 text-rose-700'
                         }`}
                       >
                         {isPreOrderActive ? '● เปิดโหมดรับจองเรือตามปกติ' : '○ ปิดการรับพรีออเดอร์เก้าอี้กวาย'}
@@ -2362,9 +2365,9 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
 
                 </div>
 
-                <div className="border-t border-slate-850 pt-5 flex justify-between items-center bg-slate-900/35 p-3 rounded-xl">
+                <div className="border-t border-slate-200 pt-5 flex justify-between items-center bg-slate-50 p-4 rounded-xl border border-slate-200">
                   <div>
-                    <span className="block text-[10.5px] font-bold text-slate-300">ล้างฐานข้อมูลชั่วคราวจัดเก็บจำลอง (Reset Cache)</span>
+                    <span className="block text-[10.5px] font-bold text-slate-800">ล้างฐานข้อมูลชั่วคราวจัดเก็บจำลอง (Reset Cache)</span>
                     <p className="text-[10px] text-slate-500 mt-0.5">ลบทิ้งข้อมูลสินค้าจัดแต่ง คอนฟิกแอดมิน เพื่อดึงระเบียนดั้งเดิม</p>
                   </div>
 
@@ -2383,7 +2386,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                         }, 1200);
                       }
                     }}
-                    className="px-4 py-2.5 bg-red-950/70 border border-red-900/50 hover:bg-red-950 text-red-400 font-bold text-xs rounded-xl cursor-pointer"
+                    className="px-4 py-2.5 bg-rose-50 border border-rose-200 hover:bg-rose-100 text-rose-700 font-bold text-xs rounded-xl cursor-pointer shadow-xs transition-colors"
                   >
                     ล้างประวัติ Sandbox & คืนค่า
                   </button>
@@ -2401,7 +2404,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
       {/* ZOOMED SLIP IMAGE FULL-SCREEN MODAL PREVIEW */}
       {zoomedSlipUrl && (
         <div 
-          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/95 p-4 animate-fadeIn"
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/80 backdrop-blur-xs p-4 animate-fadeIn"
           onClick={() => setZoomedSlipUrl(null)}
         >
           <div 
@@ -2411,20 +2414,20 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
             {/* Close instruction */}
             <button
               onClick={() => setZoomedSlipUrl(null)}
-              className="absolute -top-10 right-0 text-slate-400 hover:text-white transition-colors cursor-pointer text-xs font-bold flex items-center gap-1.5"
+              className="absolute -top-10 right-0 text-white hover:text-slate-200 transition-colors cursor-pointer text-xs font-bold flex items-center gap-1.5"
             >
               <X size={16} />
               <span>ปิดหน้าต่างตรวจ</span>
             </button>
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden p-2 shadow-2xl flex items-center justify-center">
+            <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden p-3 shadow-2xl flex items-center justify-center">
               <img 
                 src={zoomedSlipUrl} 
                 alt="Zoomed Slip Preview" 
                 referrerPolicy="no-referrer"
-                className="max-h-[85vh] max-w-full object-contain rounded-lg shadow-inner"
+                className="max-h-[85vh] max-w-full object-contain rounded-lg"
               />
             </div>
-            <p className="text-slate-500 text-center text-xs mt-3 font-semibold">
+            <p className="text-slate-300 text-center text-xs mt-3 font-semibold">
               คลิกบริเวณรอบนอกรูป หรือคลิกปุ่มด้านบนเพื่อปิดหน้าต่าง
             </p>
           </div>

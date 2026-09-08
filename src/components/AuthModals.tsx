@@ -245,7 +245,6 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onRegisterSuccess,
   const [password, setPassword] = React.useState('');
   const [confirmPassword, setConfirmPassword] = React.useState('');
   const [otpCode, setOtpCode] = React.useState('');
-  const [generatedOtp, setGeneratedOtp] = React.useState('123456');
 
   const [showPassword, setShowPassword] = React.useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = React.useState(false);
@@ -258,7 +257,6 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onRegisterSuccess,
     if (isOpen) {
       setStep('form');
       setOtpCode('');
-      setGeneratedOtp('123456');
       setErrors({});
     }
   }, [isOpen]);
@@ -311,22 +309,24 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onRegisterSuccess,
     setIsLoading(true);
 
     try {
-      if (supabase) {
-        const { data, error } = await supabase.auth.signUp({
-          email: email.trim(),
-          password: password,
-          options: {
-            data: {
-              full_name: fullName.trim(),
-              phone: phone.trim(),
-            }
-          }
-        });
-
-        if (error) throw error;
+      if (!supabase) {
+        throw new Error('Supabase client ยังไม่ได้ถูกกำหนดค่า');
       }
 
-      setStep('otp');
+      const { data, error } = await supabase.auth.signUp({
+        email: email.trim(),
+        password: password,
+        options: {
+          data: {
+            full_name: fullName.trim(),
+            phone: phone.trim(),
+          }
+        }
+      });
+
+      if (error) throw error;
+
+      setStep('otp'); // สลับไปหน้ากรอก OTP
       setErrors({});
       triggerToast(`ส่งรหัส OTP ไปยัง ${email.trim()} เรียบร้อยแล้ว`);
     } catch (err: any) {
@@ -338,7 +338,7 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onRegisterSuccess,
     }
   };
 
-  // 2. ฟังก์ชันยืนยัน OTP
+  // 2. ฟังก์ชันยืนยัน OTP ผ่าน Supabase Auth
   const handleVerifyOtpAndCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     const cleanedOtp = otpCode.trim();
@@ -356,17 +356,19 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onRegisterSuccess,
     try {
       setIsLoading(true);
 
-      // Verify OTP via Supabase Auth if configured
-      if (supabase && cleanedOtp !== '123456') {
-        const { data: verifyData, error: verifyError } = await supabase.auth.verifyOtp({
-          email: email.trim(),
-          token: cleanedOtp,
-          type: 'signup'
-        });
+      if (!supabase) {
+        throw new Error('Supabase client ยังไม่ได้ถูกกำหนดค่า');
+      }
 
-        if (verifyError) {
-          throw verifyError;
-        }
+      // Verify OTP via Supabase Auth
+      const { data: verifyData, error: verifyError } = await supabase.auth.verifyOtp({
+        email: email.trim(),
+        token: cleanedOtp,
+        type: 'signup'
+      });
+
+      if (verifyError) {
+        throw verifyError;
       }
 
       // Save customer profile in database
@@ -448,14 +450,14 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onRegisterSuccess,
               </div>
             )}
 
-            {/* Info Box showing Demo Code */}
+            {/* Info Box */}
             <div className="rounded-xl border border-sky-200/80 bg-sky-50/80 p-3.5 flex items-center gap-2.5 text-xs text-slate-700 shadow-xs">
               <div className="h-7 w-7 rounded-lg bg-brand-blue/10 flex items-center justify-center shrink-0 text-brand-blue">
                 <KeyRound size={15} />
               </div>
               <div className="flex-1">
-                <span className="font-bold text-brand-blue block text-[11px]">รหัสทดสอบสาธิต: 123456</span>
-                <span className="text-[10px] text-slate-500">ระบบจำลองการส่ง SMS / Email OTP เพื่อความสะดวกรวดเร็วในการทดสอบ</span>
+                <span className="font-bold text-brand-blue block text-[11px]">รหัสยืนยัน OTP ถูกส่งไปยังอีเมลของคุณแล้ว</span>
+                <span className="text-[10px] text-slate-500">กรุณาตรวจสอบกล่องข้อความหรือโฟลเดอร์ Junk/Spam ในอีเมลของคุณเพื่อนำรหัส 6 หลักมายืนยัน</span>
               </div>
             </div>
 
