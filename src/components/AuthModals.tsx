@@ -313,10 +313,10 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onRegisterSuccess,
         throw new Error('Supabase client ยังไม่ได้ถูกกำหนดค่า');
       }
 
-      const { data, error } = await supabase.auth.signUp({
+      const { data, error } = await supabase.auth.signInWithOtp({
         email: email.trim(),
-        password: password,
         options: {
+          shouldCreateUser: true, // อนุญาตให้สร้างบัญชีใหม่ถ้ายังไม่มีในระบบ
           data: {
             full_name: fullName.trim(),
             phone: phone.trim(),
@@ -360,15 +360,26 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onRegisterSuccess,
         throw new Error('Supabase client ยังไม่ได้ถูกกำหนดค่า');
       }
 
-      // Verify OTP via Supabase Auth
-      const { data: verifyData, error: verifyError } = await supabase.auth.verifyOtp({
+      // Verify OTP via Supabase Auth (รองรับทั้ง type: 'email' จาก signInWithOtp และ 'signup')
+      let verifyResult = await supabase.auth.verifyOtp({
         email: email.trim(),
         token: cleanedOtp,
-        type: 'signup'
+        type: 'email'
       });
 
-      if (verifyError) {
-        throw verifyError;
+      if (verifyResult.error) {
+        const fallbackResult = await supabase.auth.verifyOtp({
+          email: email.trim(),
+          token: cleanedOtp,
+          type: 'signup'
+        });
+        if (!fallbackResult.error) {
+          verifyResult = fallbackResult;
+        }
+      }
+
+      if (verifyResult.error) {
+        throw verifyResult.error;
       }
 
       // Save customer profile in database
