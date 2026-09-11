@@ -1,7 +1,24 @@
 import React from 'react';
-import { X, Trash2, ShieldCheck, HeartHandshake, Phone, ArrowRight, Sparkles, CheckCircle, MapPin, BookmarkCheck, Loader2 } from 'lucide-react';
-import { CartItem, User } from '../types';
-import { supabase, supabaseProfiles } from '../lib/supabase';
+import { 
+  X, 
+  Trash2, 
+  ShieldCheck, 
+  HeartHandshake, 
+  Phone, 
+  ArrowRight, 
+  Sparkles, 
+  CheckCircle, 
+  MapPin, 
+  BookmarkCheck, 
+  Loader2,
+  Plus,
+  Home,
+  Anchor,
+  Building,
+  Check
+} from 'lucide-react';
+import { CartItem, User, UserAddress } from '../types';
+import { supabase, supabaseProfiles, supabaseUserAddresses } from '../lib/supabase';
 
 interface CartDrawerProps {
   isOpen: boolean;
@@ -33,7 +50,14 @@ export default function CartDrawer({
   const [savedAddressSource, setSavedAddressSource] = React.useState<'supabase' | 'local' | null>(null);
   const [isSubmitting, setIsSubmitting] = React.useState(false);
 
-  // Auto fill details & fetch saved delivery address from Supabase (profiles table)
+  // Saved addresses states for user_addresses
+  const [savedAddresses, setSavedAddresses] = React.useState<UserAddress[]>([]);
+  const [selectedAddressId, setSelectedAddressId] = React.useState<string>('new');
+  const [isLoadingAddresses, setIsLoadingAddresses] = React.useState(false);
+  const [newAddressTitle, setNewAddressTitle] = React.useState('บ้าน');
+  const [saveNewAddressForFuture, setSaveNewAddressForFuture] = React.useState(true);
+
+  // Auto fill details & fetch saved delivery addresses from Supabase (user_addresses & profiles tables)
   React.useEffect(() => {
     let isMounted = true;
 
@@ -56,58 +80,72 @@ export default function CartDrawer({
         }
       }
 
-      // If user is logged in (has userId, userEmail, or currentUser)
-      if (userId || userEmail || currentUser) {
-        setIsLoadingProfile(true);
-        try {
-          // Query Supabase profiles table
-          const profile = await supabaseProfiles.getProfile(userId, userEmail);
+      setIsLoadingAddresses(true);
+      setIsLoadingProfile(true);
 
-          if (!isMounted) return;
+      try {
+        // A. Load addresses from Supabase user_addresses table
+        const addressesFromDb = await supabaseUserAddresses.listByUser(userId, userEmail);
 
-          if (profile) {
-            const fetchedName = profile.full_name || profile.name || currentUser?.fullName || currentUser?.name || '';
-            const fetchedPhone = profile.phone || profile.phone_number || profile.telephone || currentUser?.phone || '';
-            const fetchedAddress = profile.address || profile.delivery_address || profile.shipping_address || currentUser?.address || '';
-
-            if (fetchedName) setFullName(fetchedName);
-            if (fetchedPhone) setPhone(fetchedPhone);
-            if (fetchedAddress) {
-              setAddress(fetchedAddress);
-              setSavedAddressSource('supabase');
-            }
-          } else {
-            // Fallback to local profile/cache if not yet in Supabase
-            const name = currentUser?.fullName || currentUser?.name || '';
-            const ph = currentUser?.phone || '';
-            const localKey = `pornpong_saved_address_${userEmail || userId || 'default'}`;
-            const addr = currentUser?.address || localStorage.getItem(localKey) || '';
-
-            if (name) setFullName(name);
-            if (ph) setPhone(ph);
-            if (addr) {
-              setAddress(addr);
-              setSavedAddressSource('local');
-            }
-          }
-        } catch (err) {
-          console.warn('Could not load profile from Supabase profiles table:', err);
-          if (currentUser) {
-            setFullName(currentUser.fullName || currentUser.name || '');
-            setPhone(currentUser.phone || '');
-            if (currentUser.address) {
-              setAddress(currentUser.address);
-              setSavedAddressSource('local');
-            }
-          }
-        } finally {
-          if (isMounted) setIsLoadingProfile(false);
+        // B. Load user profile details from Supabase profiles table
+        let profile = null;
+        if (userId || userEmail) {
+          profile = await supabaseProfiles.getProfile(userId, userEmail);
         }
-      } else if (isOpen) {
-        setFullName('');
-        setPhone('');
-        setAddress('');
-        setSavedAddressSource(null);
+
+        if (!isMounted) return;
+
+        // Auto-fill recipient name and phone if empty
+        const initialName = profile?.full_name || profile?.name || currentUser?.fullName || currentUser?.name || '';
+        const initialPhone = profile?.phone || profile?.phone_number || profile?.telephone || currentUser?.phone || '';
+        if (initialName && !fullName) setFullName(initialName);
+        if (initialPhone && !phone) setPhone(initialPhone);
+
+        // Prepare combined address list
+        const list: UserAddress[] = [...addressesFromDb];
+
+        // Also check if user has an address in profile or local cache that isn't yet in user_addresses
+        const profileAddr = profile?.address || profile?.delivery_address || profile?.shipping_address || currentUser?.address;
+        if (profileAddr && profileAddr.trim().length > 0) {
+          const exists = list.some(
+            (a) => a.address.trim().toLowerCase() === profileAddr.trim().toLowerCase()
+          );
+          if (!exists) {
+            list.unshift({
+              id: 'profile_default',
+              user_id: userId || 'user',
+              title: 'ที่อยู่หลัก (จากโปรไฟล์)',
+              recipient_name: initialName,
+              phone: initialPhone,
+              address: profileAddr.trim(),
+              is_default: true,
+              created_at: new Date().toISOString()
+            });
+          }
+        }
+
+        setSavedAddresses(list);
+
+        if (list.length > 0) {
+          // Select default or first address
+          const defaultItem = list.find((a) => a.is_default) || list[0];
+          setSelectedAddressId(defaultItem.id);
+          setAddress(defaultItem.address);
+          if (defaultItem.recipient_name && !fullName) setFullName(defaultItem.recipient_name);
+          if (defaultItem.phone && !phone) setPhone(defaultItem.phone);
+          setSavedAddressSource('supabase');
+        } else {
+          setSelectedAddressId('new');
+          setSavedAddressSource(null);
+        }
+      } catch (err) {
+        console.warn('Could not load addresses from Supabase:', err);
+        setSelectedAddressId('new');
+      } finally {
+        if (isMounted) {
+          setIsLoadingAddresses(false);
+          setIsLoadingProfile(false);
+        }
       }
     }
 
@@ -117,6 +155,35 @@ export default function CartDrawer({
       isMounted = false;
     };
   }, [currentUser, isOpen, checkoutStep]);
+
+  const handleSelectAddress = (addr: UserAddress) => {
+    setSelectedAddressId(addr.id);
+    setAddress(addr.address);
+    if (addr.recipient_name) setFullName(addr.recipient_name);
+    if (addr.phone) setPhone(addr.phone);
+    setSavedAddressSource('supabase');
+  };
+
+  const handleSelectNewAddress = () => {
+    setSelectedAddressId('new');
+    setAddress('');
+    setSavedAddressSource(null);
+  };
+
+  const handleDeleteAddress = async (addrId: string) => {
+    let userId = currentUser?.id;
+    let userEmail = currentUser?.email;
+    await supabaseUserAddresses.delete(addrId, userId, userEmail);
+    const remaining = savedAddresses.filter((a) => a.id !== addrId);
+    setSavedAddresses(remaining);
+    if (selectedAddressId === addrId) {
+      if (remaining.length > 0) {
+        handleSelectAddress(remaining[0]);
+      } else {
+        handleSelectNewAddress();
+      }
+    }
+  };
 
   if (!isOpen) return null;
 
@@ -148,9 +215,29 @@ export default function CartDrawer({
         }
       }
 
-      // Upsert profile in Supabase profiles table using User ID
       const effectiveUserId = userId || (userEmail ? `user_${userEmail.replace(/[^a-zA-Z0-9]/g, '_')}` : (currentUser?.id || 'guest-user'));
 
+      // Check if this is a new address
+      const isNew = selectedAddressId === 'new' || !savedAddresses.some((a) => a.id === selectedAddressId);
+
+      // If user typed a new address, save into user_addresses table linked with user_id
+      if (effectiveUserId && isNew && saveNewAddressForFuture) {
+        try {
+          await supabaseUserAddresses.create({
+            user_id: effectiveUserId,
+            title: newAddressTitle.trim() || 'ที่อยู่จัดส่ง',
+            recipient_name: fullName.trim(),
+            phone: phone.trim(),
+            address: address.trim(),
+            is_default: savedAddresses.length === 0,
+            email: userEmail
+          });
+        } catch (addrErr) {
+          console.warn('Error saving to user_addresses on Supabase:', addrErr);
+        }
+      }
+
+      // Upsert profile in Supabase profiles table using User ID
       if (effectiveUserId) {
         try {
           await supabaseProfiles.upsertProfile({
@@ -384,39 +471,231 @@ export default function CartDrawer({
                 />
               </div>
 
-              {/* Input: Address with saved delivery address indicator */}
-              <div className="space-y-1.5">
+              {/* SECTION: Delivery Address Selector & Input */}
+              <div className="space-y-2.5">
                 <div className="flex items-center justify-between">
-                  <label className="text-xs font-bold text-slate-700 block">ที่อยู่จัดส่งสินค้าเรือโดยละเอียด *</label>
-                  {savedAddressSource && (
-                    <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-700 bg-emerald-50 border border-emerald-200/80 rounded-full px-2 py-0.5">
-                      <BookmarkCheck size={12} className="text-emerald-500" />
-                      {savedAddressSource === 'supabase' ? 'ดึงจากตาราง Profiles บน Supabase' : 'ดึงที่อยู่จัดส่งเดิม'}
-                    </span>
-                  )}
-                  {isLoadingProfile && (
+                  <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                    <MapPin size={14} className="text-brand-blue" />
+                    <span>ที่อยู่จัดส่งสินค้าเรือโดยละเอียด *</span>
+                  </label>
+                  {isLoadingAddresses && (
                     <span className="inline-flex items-center gap-1 text-[11px] text-slate-400">
                       <Loader2 size={11} className="animate-spin" />
                       กำลังค้นหาที่อยู่...
                     </span>
                   )}
                 </div>
-                <textarea
-                  required
-                  rows={3}
-                  placeholder="หมู่บ้าน ซอย ถนน แขวง อำเภอ จังหวัด รหัสไปรษณีย์ และจุดสังเกต"
-                  value={address}
-                  onChange={(e) => {
-                    setAddress(e.target.value);
-                    if (savedAddressSource) setSavedAddressSource(null);
-                  }}
-                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 placeholder-slate-400 focus:border-brand-blue outline-none resize-none"
-                  id="checkout-address-input"
-                />
-                <p className="text-[10px] text-slate-500 flex items-center gap-1">
-                  <MapPin size={11} className="text-sky-500 shrink-0" />
-                  <span>ระบบจะบันทึกและอัปเดตที่อยู่นี้ลงในโปรไฟล์ของคุณ (ตาราง profiles บน Supabase) ให้อัตโนมัติ</span>
-                </p>
+
+                {/* Case 1: If user has saved addresses from user_addresses / profile */}
+                {savedAddresses.length > 0 && (
+                  <div className="space-y-2 bg-slate-50/80 p-3 rounded-xl border border-slate-200/80">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-bold text-slate-600 flex items-center gap-1">
+                        <BookmarkCheck size={13} className="text-brand-blue" />
+                        <span>เลือกจากที่อยู่ที่บันทึกไว้ ({savedAddresses.length})</span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={handleSelectNewAddress}
+                        className={`text-[11px] font-bold inline-flex items-center gap-1 px-2 py-0.5 rounded-md transition-all cursor-pointer ${
+                          selectedAddressId === 'new'
+                            ? 'bg-brand-blue text-white shadow-xs'
+                            : 'text-brand-blue bg-sky-50 hover:bg-sky-100'
+                        }`}
+                        id="btn-use-new-address"
+                      >
+                        <Plus size={12} />
+                        <span>ใช้ที่อยู่ใหม่</span>
+                      </button>
+                    </div>
+
+                    {/* Radio Cards of saved addresses */}
+                    <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                      {savedAddresses.map((addr) => {
+                        const isSelected = selectedAddressId === addr.id;
+                        return (
+                          <div
+                            key={addr.id}
+                            onClick={() => handleSelectAddress(addr)}
+                            className={`group relative rounded-xl p-2.5 border transition-all cursor-pointer text-left ${
+                              isSelected
+                                ? 'border-brand-blue bg-sky-50/80 ring-1 ring-brand-blue/30 shadow-xs'
+                                : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50/60'
+                            }`}
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="flex items-start gap-2.5 flex-1 min-w-0">
+                                {/* Radio Indicator */}
+                                <div className="mt-0.5 shrink-0">
+                                  <div
+                                    className={`w-4 h-4 rounded-full border flex items-center justify-center transition-colors ${
+                                      isSelected
+                                        ? 'border-brand-blue bg-brand-blue'
+                                        : 'border-slate-300 bg-white group-hover:border-slate-400'
+                                    }`}
+                                  >
+                                    {isSelected && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                                  </div>
+                                </div>
+
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <span className="text-xs font-bold text-slate-800">
+                                      {addr.title || 'ที่อยู่จัดส่ง'}
+                                    </span>
+                                    {addr.is_default && (
+                                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-sm bg-sky-100 text-sky-800">
+                                        ค่าเริ่มต้น
+                                      </span>
+                                    )}
+                                    {addr.recipient_name && (
+                                      <span className="text-[11px] text-slate-500 font-medium">
+                                        • {addr.recipient_name}
+                                      </span>
+                                    )}
+                                    {addr.phone && (
+                                      <span className="text-[11px] text-slate-500 font-medium">
+                                        ({addr.phone})
+                                      </span>
+                                    )}
+                                  </div>
+                                  <p className="text-xs text-slate-600 mt-1 leading-relaxed line-clamp-2">
+                                    {addr.address}
+                                  </p>
+                                </div>
+                              </div>
+
+                              {/* Delete address button if not profile default */}
+                              {addr.id !== 'profile_default' && (
+                                <button
+                                  type="button"
+                                  title="ลบที่อยู่นี้"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleDeleteAddress(addr.id);
+                                  }}
+                                  className="text-slate-300 hover:text-rose-500 p-1 rounded-md transition-colors shrink-0"
+                                >
+                                  <Trash2 size={12} />
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+
+                      {/* Explicit "ใช้ที่อยู่ใหม่" Radio Card Option */}
+                      <div
+                        onClick={handleSelectNewAddress}
+                        className={`rounded-xl p-2.5 border border-dashed transition-all cursor-pointer text-left flex items-center gap-2.5 ${
+                          selectedAddressId === 'new'
+                            ? 'border-brand-blue bg-sky-50/80 ring-1 ring-brand-blue/30'
+                            : 'border-slate-300 bg-white/70 hover:border-brand-blue/60 hover:bg-white'
+                        }`}
+                      >
+                        <div
+                          className={`w-4 h-4 rounded-full border flex items-center justify-center shrink-0 transition-colors ${
+                            selectedAddressId === 'new'
+                              ? 'border-brand-blue bg-brand-blue'
+                              : 'border-slate-300 bg-white'
+                          }`}
+                        >
+                          {selectedAddressId === 'new' && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                        </div>
+                        <div className="flex items-center gap-1.5 text-xs font-bold text-slate-700">
+                          <Plus size={14} className="text-brand-blue" />
+                          <span>ใช้ที่อยู่ใหม่ / กรอกที่อยู่จัดส่งอื่น</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Form fields for address when "new" is selected or when no saved addresses exist */}
+                {(selectedAddressId === 'new' || savedAddresses.length === 0) && (
+                  <div className="space-y-2 bg-slate-50/50 p-3 rounded-xl border border-slate-200">
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between">
+                        <label className="text-[11px] font-bold text-slate-600 block">
+                          ป้ายกำกับที่อยู่ใหม่ (Label)
+                        </label>
+                        <span className="text-[10px] text-slate-400">เลือกด่วนหรือคลิกตั้งชื่อ</span>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {[
+                          { label: 'บ้าน', icon: '🏠' },
+                          { label: 'ท่าเรือ/จุดจอดเรือ', icon: '⚓' },
+                          { label: 'ที่ทำงาน', icon: '🏢' },
+                          { label: 'อู่ต่อเรือ', icon: '🛠️' }
+                        ].map((preset) => {
+                          const isChipSelected = newAddressTitle === preset.label;
+                          return (
+                            <button
+                              key={preset.label}
+                              type="button"
+                              onClick={() => setNewAddressTitle(preset.label)}
+                              className={`text-[11px] px-2.5 py-1 rounded-lg border transition-all cursor-pointer inline-flex items-center gap-1 ${
+                                isChipSelected
+                                  ? 'border-brand-blue bg-brand-blue text-white font-bold shadow-2xs'
+                                  : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
+                              }`}
+                            >
+                              <span>{preset.icon}</span>
+                              <span>{preset.label}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[11px] font-bold text-slate-600 block">
+                        รายละเอียดที่อยู่จัดส่งใหม่ *
+                      </label>
+                      <textarea
+                        required
+                        rows={3}
+                        placeholder="กรอกที่อยู่จัดส่งใหม่: หมู่บ้าน ซอย ถนน แขวง/ตำบล เขต/อำเภอ จังหวัด รหัสไปรษณีย์ และจุดสังเกตเรือ..."
+                        value={address}
+                        onChange={(e) => setAddress(e.target.value)}
+                        className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 placeholder-slate-400 focus:border-brand-blue outline-none resize-none"
+                        id="checkout-address-input"
+                      />
+                    </div>
+
+                    <label className="flex items-center gap-2 cursor-pointer pt-0.5 select-none">
+                      <input
+                        type="checkbox"
+                        checked={saveNewAddressForFuture}
+                        onChange={(e) => setSaveNewAddressForFuture(e.target.checked)}
+                        className="rounded border-slate-300 text-brand-blue focus:ring-brand-blue h-4 w-4 cursor-pointer"
+                        id="save-new-address-checkbox"
+                      />
+                      <span className="text-[11px] text-slate-600 font-medium">
+                        บันทึกที่อยู่นี้ลงในตาราง <strong className="text-slate-800">user_addresses</strong> บน Supabase
+                      </span>
+                    </label>
+                  </div>
+                )}
+
+                {/* If an existing address is selected, display quick verification banner */}
+                {selectedAddressId !== 'new' && savedAddresses.length > 0 && (
+                  <div className="p-2.5 bg-emerald-50 border border-emerald-200/90 rounded-xl text-xs flex items-center justify-between text-emerald-800">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <BookmarkCheck size={16} className="text-emerald-600 shrink-0" />
+                      <span className="font-medium truncate">
+                        จัดส่งไปยัง: <strong className="text-emerald-950 font-bold">{savedAddresses.find(a => a.id === selectedAddressId)?.title || 'ที่อยู่ที่บันทึกไว้'}</strong>
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleSelectNewAddress}
+                      className="text-[11px] text-emerald-700 underline font-bold hover:text-emerald-900 cursor-pointer shrink-0 ml-2"
+                    >
+                      เปลี่ยน / กรอกที่อยู่ใหม่
+                    </button>
+                  </div>
+                )}
               </div>
 
               {/* Input: Notes */}

@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
-import { Product } from '../types';
+import { Product, UserAddress } from '../types';
 
 const supabaseUrl =
   import.meta.env.VITE_SUPABASE_URL ||
@@ -502,6 +502,203 @@ export const supabaseProfiles = {
     } catch (e: any) {
       console.error('Failed to upsert profile in Supabase:', e);
       return { success: false, error: e.message || String(e) };
+    }
+  }
+};
+
+export const supabaseUserAddresses = {
+  async listByUser(userId?: string, userEmail?: string): Promise<UserAddress[]> {
+    const localKey = `pornpong_addresses_${userId || userEmail || 'guest'}`;
+    let cached: UserAddress[] = [];
+    try {
+      const raw = localStorage.getItem(localKey);
+      if (raw) cached = JSON.parse(raw);
+    } catch {
+      // ignore
+    }
+
+    if (!supabase || (!userId && !userEmail)) {
+      return cached;
+    }
+
+    try {
+      // 1. Fetch from user_addresses table by user_id
+      let dbRows: any[] | null = null;
+      if (userId) {
+        const { data, error } = await supabase
+          .from('user_addresses')
+          .select('*')
+          .eq('user_id', userId)
+          .order('is_default', { ascending: false })
+          .order('created_at', { ascending: false });
+
+        if (!error && data) {
+          dbRows = data;
+        }
+      }
+
+      // 2. If no data yet and userEmail exists, try email column
+      if ((!dbRows || dbRows.length === 0) && userEmail) {
+        const { data: byEmail, error: emailErr } = await supabase
+          .from('user_addresses')
+          .select('*')
+          .eq('email', userEmail.toLowerCase().trim())
+          .order('is_default', { ascending: false });
+
+        if (!emailErr && byEmail && byEmail.length > 0) {
+          dbRows = byEmail;
+        }
+      }
+
+      if (dbRows && dbRows.length > 0) {
+        const mapped: UserAddress[] = dbRows.map((r: any) => ({
+          id: String(r.id),
+          user_id: r.user_id || userId || '',
+          title: r.title || r.label || 'ที่อยู่จัดส่ง',
+          recipient_name: r.recipient_name || r.name || r.full_name || '',
+          phone: r.phone || r.phone_number || r.telephone || '',
+          address: r.address || r.delivery_address || '',
+          is_default: !!r.is_default,
+          created_at: r.created_at,
+          updated_at: r.updated_at
+        })).filter(a => a.address && a.address.trim().length > 0);
+
+        // Merge with local cache to preserve any offline or newly added addresses
+        const combined = [...mapped];
+        for (const c of cached) {
+          if (!combined.some(item => item.id === c.id || item.address.trim() === c.address.trim())) {
+            combined.push(c);
+          }
+        }
+        try {
+          localStorage.setItem(localKey, JSON.stringify(combined));
+        } catch {
+          // ignore
+        }
+        return combined;
+      }
+
+      return cached;
+    } catch (e) {
+      console.warn('Could not load user_addresses from Supabase:', e);
+      return cached;
+    }
+  },
+
+  async create(addressData: {
+    user_id: string;
+    title?: string;
+    recipient_name?: string;
+    phone?: string;
+    address: string;
+    is_default?: boolean;
+    email?: string;
+  }): Promise<{ success: boolean; data?: UserAddress; error?: any }> {
+    const newId = (typeof crypto !== 'undefined' && crypto.randomUUID)
+      ? crypto.randomUUID()
+      : `addr_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+
+    const newAddress: UserAddress = {
+      id: newId,
+      user_id: addressData.user_id,
+      title: addressData.title?.trim() || 'ที่อยู่จัดส่ง',
+      recipient_name: addressData.recipient_name?.trim() || '',
+      phone: addressData.phone?.trim() || '',
+      address: addressData.address.trim(),
+      is_default: addressData.is_default ?? false,
+      created_at: new Date().toISOString()
+    };
+
+    // Save to local cache first for instant UI response and resilient backup
+    const localKey = `pornpong_addresses_${addressData.user_id}`;
+    try {
+      const raw = localStorage.getItem(localKey);
+      const list: UserAddress[] = raw ? JSON.parse(raw) : [];
+      if (newAddress.is_default) {
+        list.forEach(item => { item.is_default = false; });
+      }
+      list.unshift(newAddress);
+      localStorage.setItem(localKey, JSON.stringify(list));
+      if (addressData.email) {
+        localStorage.setItem(`pornpong_addresses_${addressData.email}`, JSON.stringify(list));
+      }
+    } catch (err) {
+      console.warn('Local address cache error:', err);
+    }
+
+    if (!supabase) {
+      return { success: true, data: newAddress };
+    }
+
+    try {
+      const payload: any = {
+        id: newId,
+        user_id: addressData.user_id,
+        title: newAddress.title,
+        recipient_name: newAddress.recipient_name,
+        name: newAddress.recipient_name,
+        phone: newAddress.phone,
+        address: newAddress.address,
+        is_default: newAddress.is_default,
+        created_at: newAddress.created_at
+      };
+      if (addressData.email) {
+        payload.email = addressData.email.toLowerCase().trim();
+      }
+
+      const { data, error } = await supabase
+        .from('user_addresses')
+        .insert([payload])
+        .select();
+
+      if (error) {
+        console.warn('Failed insert into user_addresses with full payload, trying minimal payload:', error.message);
+        // Fallback with minimal standard columns if table has different column naming
+        const minimalPayload: any = {
+          user_id: addressData.user_id,
+          address: newAddress.address,
+          recipient_name: newAddress.recipient_name,
+          phone: newAddress.phone
+        };
+        const { data: minData, error: minErr } = await supabase
+          .from('user_addresses')
+          .insert([minimalPayload])
+          .select();
+
+        if (minErr) {
+          console.warn('Could not insert to user_addresses table in Supabase:', minErr.message);
+          return { success: true, data: newAddress, error: minErr.message };
+        }
+        return { success: true, data: (minData && minData[0]) ? { ...newAddress, ...minData[0] } : newAddress };
+      }
+
+      return { success: true, data: (data && data[0]) ? { ...newAddress, ...data[0] } : newAddress };
+    } catch (e: any) {
+      console.warn('Error saving to user_addresses in Supabase:', e);
+      return { success: true, data: newAddress, error: e.message || String(e) };
+    }
+  },
+
+  async delete(addressId: string, userId?: string, userEmail?: string): Promise<boolean> {
+    const localKey = `pornpong_addresses_${userId || userEmail || 'guest'}`;
+    try {
+      const raw = localStorage.getItem(localKey);
+      if (raw) {
+        const list: UserAddress[] = JSON.parse(raw);
+        const filtered = list.filter(item => item.id !== addressId);
+        localStorage.setItem(localKey, JSON.stringify(filtered));
+      }
+    } catch {
+      // ignore
+    }
+
+    if (!supabase) return true;
+    try {
+      await supabase.from('user_addresses').delete().eq('id', addressId);
+      return true;
+    } catch (err) {
+      console.warn('Could not delete address from Supabase:', err);
+      return false;
     }
   }
 };

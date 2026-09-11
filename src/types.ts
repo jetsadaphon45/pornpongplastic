@@ -56,3 +56,15 @@ export interface User {
   phone: string;
   address?: string;
 }
+
+export interface UserAddress {
+  id: string;
+  user_id: string;
+  title?: string;
+  recipient_name?: string;
+  phone?: string;
+  address: string;
+  is_default?: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
