@@ -3,9 +3,11 @@ import { X, Mail, Lock, User, Phone, Eye, EyeOff, CheckCircle2, AlertCircle, Key
 import { supabase, supabaseCustomers } from '../lib/supabase';
 
 interface UserData {
+  id?: string;
   name: string;
   email: string;
   phone: string;
+  address?: string;
 }
 
 interface LoginModalProps {
@@ -66,6 +68,7 @@ export function LoginModal({ isOpen, onClose, onOpenRegister, onLoginSuccess, tr
       let matchedUser: any = null;
       if (email.trim().toLowerCase() === 'admin@pornpong.com' && password === 'password123') {
         matchedUser = {
+          id: 'admin-001',
           name: 'สมชาย พรพงศ์',
           email: 'admin@pornpong.com',
           phone: '0812345678'
@@ -74,6 +77,7 @@ export function LoginModal({ isOpen, onClose, onOpenRegister, onLoginSuccess, tr
         const dbUser = await supabaseCustomers.validateUser(email, password);
         if (dbUser) {
           matchedUser = {
+            id: dbUser.id || `customer_${dbUser.email.replace(/[^a-zA-Z0-9]/g, '_')}`,
             name: dbUser.name,
             email: dbUser.email,
             phone: dbUser.phone
@@ -84,6 +88,7 @@ export function LoginModal({ isOpen, onClose, onOpenRegister, onLoginSuccess, tr
       if (matchedUser) {
         setErrors({});
         onLoginSuccess({
+          id: matchedUser.id,
           name: matchedUser.name,
           email: matchedUser.email,
           phone: matchedUser.phone
@@ -392,7 +397,8 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onRegisterSuccess,
         points: 0
       };
 
-      await supabaseCustomers.create(newAccount);
+      const createdCustomer = await supabaseCustomers.create(newAccount);
+      const registeredUserId = (verifyResult as any)?.data?.user?.id || createdCustomer?.id || `customer_${email.trim().replace(/[^a-zA-Z0-9]/g, '_')}`;
 
       // Clear state
       setFullName('');
@@ -406,6 +412,7 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onRegisterSuccess,
 
       triggerToast('ยืนยันรหัส OTP และสมัครสมาชิกสำเร็จ!');
       onRegisterSuccess({
+        id: registeredUserId,
         name: newAccount.name,
         email: newAccount.email,
         phone: newAccount.phone

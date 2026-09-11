@@ -1,6 +1,7 @@
 import React from 'react';
-import { X, Trash2, ShieldCheck, HeartHandshake, Phone, ArrowRight, Sparkles, CheckCircle } from 'lucide-react';
+import { X, Trash2, ShieldCheck, HeartHandshake, Phone, ArrowRight, Sparkles, CheckCircle, MapPin, BookmarkCheck, Loader2 } from 'lucide-react';
 import { CartItem, User } from '../types';
+import { supabase, supabaseProfiles } from '../lib/supabase';
 
 interface CartDrawerProps {
   isOpen: boolean;
@@ -28,17 +29,94 @@ export default function CartDrawer({
   const [phone, setPhone] = React.useState('');
   const [address, setAddress] = React.useState('');
   const [notes, setNotes] = React.useState('');
+  const [isLoadingProfile, setIsLoadingProfile] = React.useState(false);
+  const [savedAddressSource, setSavedAddressSource] = React.useState<'supabase' | 'local' | null>(null);
+  const [isSubmitting, setIsSubmitting] = React.useState(false);
 
-  // Auto fill details if user is logged in
+  // Auto fill details & fetch saved delivery address from Supabase (profiles table)
   React.useEffect(() => {
-    if (isOpen && currentUser) {
-      setFullName(currentUser.fullName || currentUser.name || '');
-      setPhone(currentUser.phone);
-    } else if (isOpen) {
-      setFullName('');
-      setPhone('');
+    let isMounted = true;
+
+    async function loadSavedDeliveryAddress() {
+      if (!isOpen) return;
+
+      // 1. Resolve User ID and Email
+      let userId = currentUser?.id;
+      let userEmail = currentUser?.email;
+
+      if (supabase) {
+        try {
+          const { data: authData } = await supabase.auth.getUser();
+          if (authData?.user) {
+            userId = authData.user.id || userId;
+            userEmail = authData.user.email || userEmail;
+          }
+        } catch {
+          // ignore auth fetch error
+        }
+      }
+
+      // If user is logged in (has userId, userEmail, or currentUser)
+      if (userId || userEmail || currentUser) {
+        setIsLoadingProfile(true);
+        try {
+          // Query Supabase profiles table
+          const profile = await supabaseProfiles.getProfile(userId, userEmail);
+
+          if (!isMounted) return;
+
+          if (profile) {
+            const fetchedName = profile.full_name || profile.name || currentUser?.fullName || currentUser?.name || '';
+            const fetchedPhone = profile.phone || profile.phone_number || profile.telephone || currentUser?.phone || '';
+            const fetchedAddress = profile.address || profile.delivery_address || profile.shipping_address || currentUser?.address || '';
+
+            if (fetchedName) setFullName(fetchedName);
+            if (fetchedPhone) setPhone(fetchedPhone);
+            if (fetchedAddress) {
+              setAddress(fetchedAddress);
+              setSavedAddressSource('supabase');
+            }
+          } else {
+            // Fallback to local profile/cache if not yet in Supabase
+            const name = currentUser?.fullName || currentUser?.name || '';
+            const ph = currentUser?.phone || '';
+            const localKey = `pornpong_saved_address_${userEmail || userId || 'default'}`;
+            const addr = currentUser?.address || localStorage.getItem(localKey) || '';
+
+            if (name) setFullName(name);
+            if (ph) setPhone(ph);
+            if (addr) {
+              setAddress(addr);
+              setSavedAddressSource('local');
+            }
+          }
+        } catch (err) {
+          console.warn('Could not load profile from Supabase profiles table:', err);
+          if (currentUser) {
+            setFullName(currentUser.fullName || currentUser.name || '');
+            setPhone(currentUser.phone || '');
+            if (currentUser.address) {
+              setAddress(currentUser.address);
+              setSavedAddressSource('local');
+            }
+          }
+        } finally {
+          if (isMounted) setIsLoadingProfile(false);
+        }
+      } else if (isOpen) {
+        setFullName('');
+        setPhone('');
+        setAddress('');
+        setSavedAddressSource(null);
+      }
     }
-  }, [currentUser, isOpen]);
+
+    loadSavedDeliveryAddress();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [currentUser, isOpen, checkoutStep]);
 
   if (!isOpen) return null;
 
@@ -48,16 +126,74 @@ export default function CartDrawer({
     return val.toLocaleString('th-TH') + ' ฿';
   };
 
-  const handeSubmitOrder = (e: React.FormEvent) => {
+  const handeSubmitOrder = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (fullName && phone && address) {
-      onSubmitOrder({ fullName, phone, address, notes });
+    if (!fullName.trim() || !phone.trim() || !address.trim()) return;
+
+    setIsSubmitting(true);
+    try {
+      // 1. Resolve User ID
+      let userId = currentUser?.id;
+      let userEmail = currentUser?.email;
+
+      if (supabase) {
+        try {
+          const { data: authData } = await supabase.auth.getUser();
+          if (authData?.user) {
+            userId = authData.user.id || userId;
+            userEmail = authData.user.email || userEmail;
+          }
+        } catch {
+          // ignore
+        }
+      }
+
+      // Upsert profile in Supabase profiles table using User ID
+      const effectiveUserId = userId || (userEmail ? `user_${userEmail.replace(/[^a-zA-Z0-9]/g, '_')}` : (currentUser?.id || 'guest-user'));
+
+      if (effectiveUserId) {
+        try {
+          await supabaseProfiles.upsertProfile({
+            id: effectiveUserId,
+            fullName: fullName.trim(),
+            phone: phone.trim(),
+            address: address.trim(),
+            email: userEmail
+          });
+        } catch (profileErr) {
+          console.warn('Error saving delivery address to Supabase profiles:', profileErr);
+        }
+
+        // Cache locally for instant retrieval
+        const localKey = `pornpong_saved_address_${userEmail || userId || effectiveUserId}`;
+        localStorage.setItem(localKey, address.trim());
+
+        if (currentUser) {
+          const updatedUser: User = {
+            ...currentUser,
+            id: effectiveUserId,
+            name: fullName.trim(),
+            fullName: fullName.trim(),
+            phone: phone.trim(),
+            address: address.trim()
+          };
+          localStorage.setItem('pornpong_current_user', JSON.stringify(updatedUser));
+        }
+      }
+
+      // Complete order
+      await onSubmitOrder({ fullName, phone, address, notes });
       setCheckoutStep('cart');
       setFullName('');
       setPhone('');
       setAddress('');
       setNotes('');
+      setSavedAddressSource(null);
       onClose();
+    } catch (err) {
+      console.error('Submit order error:', err);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -248,18 +384,39 @@ export default function CartDrawer({
                 />
               </div>
 
-              {/* Input: Address */}
+              {/* Input: Address with saved delivery address indicator */}
               <div className="space-y-1.5">
-                <label className="text-xs font-bold text-slate-700 block">ที่อยู่จัดส่งสินค้าเรือโดยละเอียด *</label>
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-slate-700 block">ที่อยู่จัดส่งสินค้าเรือโดยละเอียด *</label>
+                  {savedAddressSource && (
+                    <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-700 bg-emerald-50 border border-emerald-200/80 rounded-full px-2 py-0.5">
+                      <BookmarkCheck size={12} className="text-emerald-500" />
+                      {savedAddressSource === 'supabase' ? 'ดึงจากตาราง Profiles บน Supabase' : 'ดึงที่อยู่จัดส่งเดิม'}
+                    </span>
+                  )}
+                  {isLoadingProfile && (
+                    <span className="inline-flex items-center gap-1 text-[11px] text-slate-400">
+                      <Loader2 size={11} className="animate-spin" />
+                      กำลังค้นหาที่อยู่...
+                    </span>
+                  )}
+                </div>
                 <textarea
                   required
                   rows={3}
                   placeholder="หมู่บ้าน ซอย ถนน แขวง อำเภอ จังหวัด รหัสไปรษณีย์ และจุดสังเกต"
                   value={address}
-                  onChange={(e) => setAddress(e.target.value)}
+                  onChange={(e) => {
+                    setAddress(e.target.value);
+                    if (savedAddressSource) setSavedAddressSource(null);
+                  }}
                   className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 placeholder-slate-400 focus:border-brand-blue outline-none resize-none"
                   id="checkout-address-input"
                 />
+                <p className="text-[10px] text-slate-500 flex items-center gap-1">
+                  <MapPin size={11} className="text-sky-500 shrink-0" />
+                  <span>ระบบจะบันทึกและอัปเดตที่อยู่นี้ลงในโปรไฟล์ของคุณ (ตาราง profiles บน Supabase) ให้อัตโนมัติ</span>
+                </p>
               </div>
 
               {/* Input: Notes */}
@@ -281,16 +438,25 @@ export default function CartDrawer({
               <button
                 type="button"
                 onClick={() => setCheckoutStep('cart')}
-                className="flex-1 rounded-xl border border-slate-200 hover:bg-white text-slate-500 hover:text-slate-800 text-xs font-bold py-3 cursor-pointer"
+                disabled={isSubmitting}
+                className="flex-1 rounded-xl border border-slate-200 hover:bg-white text-slate-500 hover:text-slate-800 text-xs font-bold py-3 cursor-pointer disabled:opacity-50"
               >
                 ย้อนกลับ
               </button>
               <button
                 type="submit"
-                className="flex-[2] rounded-xl bg-brand-blue hover:bg-brand-blue-light text-white font-display font-bold text-xs py-3 cursor-pointer shadow-md"
+                disabled={isSubmitting}
+                className="flex-[2] rounded-xl bg-brand-blue hover:bg-brand-blue-light text-white font-display font-bold text-xs py-3 cursor-pointer shadow-md disabled:opacity-60 flex items-center justify-center gap-2"
                 id="submit-simulated-order"
               >
-                ยืนยันการเพื่อรับข้อเสนอจำลอง
+                {isSubmitting ? (
+                  <>
+                    <Loader2 size={15} className="animate-spin" />
+                    <span>กำลังบันทึกที่อยู่และส่งข้อมูล...</span>
+                  </>
+                ) : (
+                  <span>ยืนยันการเพื่อรับข้อเสนอจำลอง</span>
+                )}
               </button>
             </div>
           </form>

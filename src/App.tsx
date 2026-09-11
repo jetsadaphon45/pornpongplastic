@@ -13,8 +13,8 @@ import {
   ChevronRight
 } from 'lucide-react';
 
-import { Product, CartItem } from './types';
-import { supabaseProducts, supabaseCustomers, supabaseOrders } from './lib/supabase';
+import { Product, CartItem, User } from './types';
+import { supabaseProducts, supabaseCustomers, supabaseOrders, supabaseProfiles } from './lib/supabase';
 
 import Header from './components/Header';
 import Footer from './components/Footer';
@@ -102,7 +102,7 @@ export default function App() {
   const [currentOrder, setCurrentOrder] = React.useState<any>(null);
 
   // User Authentication state
-  const [currentUser, setCurrentUser] = React.useState<{ name: string; email: string; phone: string } | null>(() => {
+  const [currentUser, setCurrentUser] = React.useState<User | null>(() => {
     try {
       const savedUser = localStorage.getItem('pornpong_current_user');
       return savedUser ? JSON.parse(savedUser) : null;
@@ -313,6 +313,39 @@ export default function App() {
 
       const finalOrder = createdOrder || fallbackOrder;
       setCurrentOrder(finalOrder);
+
+      // Save/Upsert delivery address and profile details to Supabase profiles table
+      const profileUserId = currentUser?.id || (customerEmail !== 'guest@example.com' ? `user_${customerEmail.replace(/[^a-zA-Z0-9]/g, '_')}` : null);
+      if (profileUserId) {
+        try {
+          await supabaseProfiles.upsertProfile({
+            id: profileUserId,
+            fullName: orderDetails.fullName,
+            phone: orderDetails.phone,
+            address: orderDetails.address,
+            email: customerEmail !== 'guest@example.com' ? customerEmail : undefined
+          });
+        } catch (profileErr) {
+          console.warn('Could not upsert profile in App.tsx:', profileErr);
+        }
+      }
+
+      // Update currentUser state and localStorage with saved delivery address
+      if (currentUser) {
+        const updatedUser: User = {
+          ...currentUser,
+          id: profileUserId || currentUser.id,
+          name: orderDetails.fullName,
+          fullName: orderDetails.fullName,
+          phone: orderDetails.phone,
+          address: orderDetails.address
+        };
+        setCurrentUser(updatedUser);
+        localStorage.setItem('pornpong_current_user', JSON.stringify(updatedUser));
+      }
+      if (customerEmail && customerEmail !== 'guest@example.com') {
+        localStorage.setItem(`pornpong_saved_address_${customerEmail}`, orderDetails.address);
+      }
 
       // Keep local notifications for UI reactivity
       const randomId = 'noti-' + Math.floor(Math.random() * 1000000);
@@ -647,9 +680,23 @@ export default function App() {
           setIsLoginOpen(false);
           setIsRegisterOpen(true);
         }}
-        onLoginSuccess={(user) => {
-          setCurrentUser(user);
-          localStorage.setItem('pornpong_current_user', JSON.stringify(user));
+        onLoginSuccess={async (user) => {
+          let enrichedUser = { ...user };
+          try {
+            const profile = await supabaseProfiles.getProfile(user.id, user.email);
+            if (profile) {
+              enrichedUser = {
+                ...enrichedUser,
+                name: profile.full_name || profile.name || enrichedUser.name,
+                phone: profile.phone || enrichedUser.phone,
+                address: profile.address || profile.delivery_address || enrichedUser.address
+              };
+            }
+          } catch {
+            // ignore
+          }
+          setCurrentUser(enrichedUser);
+          localStorage.setItem('pornpong_current_user', JSON.stringify(enrichedUser));
         }}
         triggerToast={triggerToast}
       />
@@ -661,9 +708,23 @@ export default function App() {
           setIsRegisterOpen(false);
           setIsLoginOpen(true);
         }}
-        onRegisterSuccess={(user) => {
-          setCurrentUser(user);
-          localStorage.setItem('pornpong_current_user', JSON.stringify(user));
+        onRegisterSuccess={async (user) => {
+          let enrichedUser = { ...user };
+          try {
+            const profile = await supabaseProfiles.getProfile(user.id, user.email);
+            if (profile) {
+              enrichedUser = {
+                ...enrichedUser,
+                name: profile.full_name || profile.name || enrichedUser.name,
+                phone: profile.phone || enrichedUser.phone,
+                address: profile.address || profile.delivery_address || enrichedUser.address
+              };
+            }
+          } catch {
+            // ignore
+          }
+          setCurrentUser(enrichedUser);
+          localStorage.setItem('pornpong_current_user', JSON.stringify(enrichedUser));
         }}
         triggerToast={triggerToast}
       />
@@ -678,6 +739,15 @@ export default function App() {
           
           try {
             await supabaseCustomers.updateProfile(updatedUser.email, updatedUser.name, updatedUser.phone);
+            if (updatedUser.id || updatedUser.email) {
+              await supabaseProfiles.upsertProfile({
+                id: updatedUser.id || `user_${updatedUser.email.replace(/[^a-zA-Z0-9]/g, '_')}`,
+                fullName: updatedUser.name,
+                phone: updatedUser.phone,
+                address: updatedUser.address || '',
+                email: updatedUser.email
+              });
+            }
             window.dispatchEvent(new Event('customer-registered'));
           } catch (err) {
             console.error("Error keeping Supabase customers in sync", err);

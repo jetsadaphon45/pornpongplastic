@@ -1,8 +1,16 @@
 import { createClient } from '@supabase/supabase-js';
 import { Product } from '../types';
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+const supabaseUrl =
+  import.meta.env.VITE_SUPABASE_URL ||
+  (import.meta.env as any).NEXT_PUBLIC_SUPABASE_URL ||
+  (typeof process !== 'undefined' && process.env ? process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.VITE_SUPABASE_URL : '') ||
+  '';
+const supabaseAnonKey =
+  import.meta.env.VITE_SUPABASE_ANON_KEY ||
+  (import.meta.env as any).NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+  (typeof process !== 'undefined' && process.env ? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY : '') ||
+  '';
 
 export const isSupabaseConfigured = !!(supabaseUrl && supabaseAnonKey);
 
@@ -368,6 +376,133 @@ export const supabaseCustomers = {
       return null;
     }
     return data[0];
+  }
+};
+
+export interface DbProfile {
+  id?: string;
+  user_id?: string;
+  full_name?: string;
+  name?: string;
+  phone?: string;
+  phone_number?: string;
+  telephone?: string;
+  address?: string;
+  delivery_address?: string;
+  shipping_address?: string;
+  email?: string;
+  updated_at?: string;
+}
+
+export const supabaseProfiles = {
+  async getProfile(userId?: string, email?: string): Promise<DbProfile | null> {
+    if (!supabase) return null;
+    try {
+      // 1. Try querying by id (Supabase auth user UUID)
+      if (userId) {
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', userId)
+          .maybeSingle();
+
+        if (!error && data) {
+          return data;
+        }
+
+        // 2. Try querying by user_id column
+        const { data: byUserId, error: errUserId } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('user_id', userId)
+          .maybeSingle();
+
+        if (!errUserId && byUserId) {
+          return byUserId;
+        }
+      }
+
+      // 3. Try querying by email
+      if (email) {
+        const { data: byEmail, error: errEmail } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('email', email.toLowerCase().trim())
+          .maybeSingle();
+
+        if (!errEmail && byEmail) {
+          return byEmail;
+        }
+      }
+
+      return null;
+    } catch (e) {
+      console.warn('Could not fetch from profiles table in Supabase:', e);
+      return null;
+    }
+  },
+
+  async upsertProfile(profile: {
+    id: string;
+    fullName: string;
+    phone: string;
+    address: string;
+    email?: string;
+  }): Promise<{ success: boolean; data?: any; error?: any }> {
+    if (!supabase) {
+      return { success: false, error: 'Supabase client not initialized' };
+    }
+    try {
+      const payload: any = {
+        id: profile.id,
+        full_name: profile.fullName.trim(),
+        name: profile.fullName.trim(),
+        phone: profile.phone.trim(),
+        address: profile.address.trim(),
+        updated_at: new Date().toISOString()
+      };
+      if (profile.email) {
+        payload.email = profile.email.toLowerCase().trim();
+      }
+
+      // Try upsert onConflict: 'id'
+      const { data, error } = await supabase
+        .from('profiles')
+        .upsert(payload, { onConflict: 'id' })
+        .select();
+
+      if (error) {
+        console.warn('Upsert onConflict id failed, attempting onConflict user_id:', error.message);
+        // Fallback: try onConflict: 'user_id'
+        const userPayload: any = {
+          user_id: profile.id,
+          full_name: profile.fullName.trim(),
+          name: profile.fullName.trim(),
+          phone: profile.phone.trim(),
+          address: profile.address.trim(),
+          updated_at: new Date().toISOString()
+        };
+        if (profile.email) {
+          userPayload.email = profile.email.toLowerCase().trim();
+        }
+
+        const { data: dataUserId, error: errUserId } = await supabase
+          .from('profiles')
+          .upsert(userPayload, { onConflict: 'user_id' })
+          .select();
+
+        if (errUserId) {
+          console.warn('Upsert fallback on user_id error:', errUserId.message);
+          return { success: false, error: errUserId.message };
+        }
+        return { success: true, data: dataUserId };
+      }
+
+      return { success: true, data };
+    } catch (e: any) {
+      console.error('Failed to upsert profile in Supabase:', e);
+      return { success: false, error: e.message || String(e) };
+    }
   }
 };
 

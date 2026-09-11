@@ -1,10 +1,12 @@
 import React from 'react';
-import { X, User, Phone, Mail, Edit, Save, ShoppingBag, Calendar, LogOut, Check, AlertCircle, Sparkles } from 'lucide-react';
+import { X, User, Phone, Mail, Edit, Save, ShoppingBag, Calendar, LogOut, Check, AlertCircle, Sparkles, MapPin } from 'lucide-react';
 
 interface UserData {
+  id?: string;
   name: string;
   email: string;
   phone: string;
+  address?: string;
 }
 
 interface ProfileModalProps {
@@ -56,6 +58,7 @@ export function ProfileModal({ isOpen, onClose, currentUser, onUpdateProfile, on
   const [editName, setEditName] = React.useState('');
   const [editPhone, setEditPhone] = React.useState('');
   const [editEmail, setEditEmail] = React.useState('');
+  const [editAddress, setEditAddress] = React.useState('');
   const [errors, setErrors] = React.useState<Record<string, string>>({});
 
   // Sync state with current user profile details when modal is triggered or user details change
@@ -64,6 +67,7 @@ export function ProfileModal({ isOpen, onClose, currentUser, onUpdateProfile, on
       setEditName(currentUser.name);
       setEditPhone(currentUser.phone);
       setEditEmail(currentUser.email);
+      setEditAddress(currentUser.address || '');
     }
     setErrors({});
     setIsEditing(false);
@@ -90,9 +94,11 @@ export function ProfileModal({ isOpen, onClose, currentUser, onUpdateProfile, on
     }
 
     onUpdateProfile({
+      id: currentUser.id,
       name: editName.trim(),
       phone: editPhone.trim(),
       email: editEmail.trim(), // Keep email as-is or let them edit as-is
+      address: editAddress.trim(),
     });
 
     setIsEditing(false);
@@ -178,6 +184,18 @@ export function ProfileModal({ isOpen, onClose, currentUser, onUpdateProfile, on
                   />
                 </div>
 
+                <div className="space-y-1">
+                  <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide">ที่อยู่จัดส่งสินค้า (บันทึกอัตโนมัติ)</label>
+                  <textarea
+                    rows={2}
+                    placeholder="ที่อยู่จัดส่งสินค้าสำหรับการสั่งซื้อ..."
+                    value={editAddress}
+                    onChange={(e) => setEditAddress(e.target.value)}
+                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-1.8 text-xs outline-hidden focus:border-brand-blue focus:ring-1 focus:ring-sky-100 resize-none"
+                    id="edit-profile-address"
+                  />
+                </div>
+
                 <div className="flex gap-2 pt-2">
                   <button
                     type="submit"
@@ -195,6 +213,7 @@ export function ProfileModal({ isOpen, onClose, currentUser, onUpdateProfile, on
                       if (currentUser) {
                         setEditName(currentUser.name);
                         setEditPhone(currentUser.phone);
+                        setEditAddress(currentUser.address || '');
                       }
                     }}
                     className="flex-1 border border-slate-200 bg-white hover:bg-slate-50 text-slate-500 text-xs font-bold py-2 rounded-lg cursor-pointer"
@@ -233,6 +252,18 @@ export function ProfileModal({ isOpen, onClose, currentUser, onUpdateProfile, on
                   <div>
                     <span className="block text-[10px] text-slate-400 font-bold uppercase tracking-wider">อีเมลล็อกอิน</span>
                     <span className="text-xs text-slate-700 font-medium">{currentUser.email}</span>
+                  </div>
+                </div>
+
+                <div className="flex items-start gap-2.5">
+                  <div className="text-sky-500 mt-0.5 shrink-0">
+                    <MapPin size={14} />
+                  </div>
+                  <div>
+                    <span className="block text-[10px] text-slate-400 font-bold uppercase tracking-wider">ที่อยู่จัดส่งที่บันทึกไว้</span>
+                    <span className="text-xs text-slate-700 font-medium line-clamp-2">
+                      {currentUser.address || 'ยังไม่ได้ระบุ (ระบบจะบันทึกให้อัตโนมัติเมื่อสั่งซื้อ)'}
+                    </span>
                   </div>
                 </div>
 
