@@ -1,5 +1,5 @@
 import React from 'react';
-import { X, Mail, Lock, User, Phone, Eye, EyeOff, CheckCircle2, AlertCircle, KeyRound, ArrowLeft, ShieldCheck, RefreshCw } from 'lucide-react';
+import { X, Mail, Lock, User, Phone, Eye, EyeOff, CheckCircle2, AlertCircle, KeyRound, ArrowLeft, ShieldCheck, RefreshCw, LogIn } from 'lucide-react';
 import { supabase, supabaseCustomers, supabaseProfiles } from '../lib/supabase';
 
 interface UserData {
@@ -14,6 +14,32 @@ interface UserData {
 const validateEmail = (emailStr: string) => {
   const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   return re.test(emailStr);
+};
+
+// ข้อความแจ้งเตือนสีแดงกรณีอีเมลซ้ำในระบบสมัครสมาชิกตามข้อกำหนด
+export const DUPLICATE_EMAIL_ERROR_MSG = "อีเมลนี้ถูกใช้งานแล้ว กรุณาใช้อีเมลอื่น หรือกด 'ลืมรหัสผ่าน' เพื่อเข้าสู่ระบบ";
+
+// ตรวจสอบข้อผิดพลาดอีเมลซ้ำ หรือ Rate limit จาก Supabase Auth
+export const isDuplicateEmailError = (error: any): boolean => {
+  if (!error) return false;
+  const raw = typeof error === 'string'
+    ? error
+    : (error?.message || error?.error_description || error?.code || error?.msg || error?.error || '');
+  const lower = String(raw).toLowerCase();
+  return (
+    lower.includes('already registered') ||
+    lower.includes('already exists') ||
+    lower.includes('already in use') ||
+    lower.includes('rate limit exceeded') ||
+    lower.includes('email rate limit') ||
+    lower.includes('rate_limit') ||
+    lower.includes('over_email_send_rate_limit') ||
+    lower.includes('duplicate key') ||
+    lower.includes('users_email_partial_key') ||
+    lower.includes('user_already_exists') ||
+    lower.includes('email_exists') ||
+    lower.includes('อีเมลนี้ถูกใช้งานแล้ว')
+  );
 };
 
 // ตรวจสอบข้อผิดพลาดรหัสผ่านซ้ำกับของเดิม (Password History / Same Password)
@@ -44,6 +70,11 @@ export const handleSupabaseAuthError = (error: any): string => {
     const fallback = 'เกิดข้อผิดพลาดในการเชื่อมต่อกับ Supabase';
     alert(fallback);
     return fallback;
+  }
+
+  // หากเป็นข้อผิดพลาดกรณีอีเมลซ้ำในระบบ
+  if (isDuplicateEmailError(error)) {
+    return DUPLICATE_EMAIL_ERROR_MSG;
   }
 
   // หากเป็นข้อผิดพลาดกรณีตั้งรหัสผ่านซ้ำกับรหัสผ่านเดิม
@@ -132,13 +163,23 @@ interface LoginModalProps {
   onOpenForgotPassword?: (initialEmail?: string) => void;
   onLoginSuccess: (user: UserData) => void;
   triggerToast: (msg: string) => void;
+  initialEmail?: string;
 }
 
-export function LoginModal({ isOpen, onClose, onOpenRegister, onOpenForgotPassword, onLoginSuccess, triggerToast }: LoginModalProps) {
-  const [email, setEmail] = React.useState('');
+export function LoginModal({ isOpen, onClose, onOpenRegister, onOpenForgotPassword, onLoginSuccess, triggerToast, initialEmail }: LoginModalProps) {
+  const [email, setEmail] = React.useState(initialEmail || '');
   const [password, setPassword] = React.useState('');
   const [showPassword, setShowPassword] = React.useState(false);
   const [errors, setErrors] = React.useState<Record<string, string>>({});
+
+  React.useEffect(() => {
+    if (isOpen) {
+      if (initialEmail) {
+        setEmail(initialEmail);
+      }
+      setErrors({});
+    }
+  }, [isOpen, initialEmail]);
 
   if (!isOpen) return null;
 
@@ -352,12 +393,13 @@ export function LoginModal({ isOpen, onClose, onOpenRegister, onOpenForgotPasswo
 interface RegisterModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onOpenLogin: () => void;
+  onOpenLogin: (initialEmail?: string) => void;
+  onOpenForgotPassword?: (initialEmail?: string) => void;
   onRegisterSuccess: (user: UserData) => void;
   triggerToast: (msg: string) => void;
 }
 
-export function RegisterModal({ isOpen, onClose, onOpenLogin, onRegisterSuccess, triggerToast }: RegisterModalProps) {
+export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPassword, onRegisterSuccess, triggerToast }: RegisterModalProps) {
   const [step, setStep] = React.useState<'form' | 'otp'>('form');
   const [fullName, setFullName] = React.useState('');
   const [phone, setPhone] = React.useState('');
@@ -365,6 +407,7 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onRegisterSuccess,
   const [password, setPassword] = React.useState('');
   const [confirmPassword, setConfirmPassword] = React.useState('');
   const [otpCode, setOtpCode] = React.useState('');
+  const [isDuplicateEmail, setIsDuplicateEmail] = React.useState(false);
 
   const [showPassword, setShowPassword] = React.useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = React.useState(false);
@@ -378,6 +421,7 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onRegisterSuccess,
       setStep('form');
       setOtpCode('');
       setErrors({});
+      setIsDuplicateEmail(false);
     }
   }, [isOpen]);
 
@@ -392,7 +436,7 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onRegisterSuccess,
     return cleaned;
   };
 
-  // 1. ฟังก์ชันสั่งส่ง OTP ผ่าน Supabase Auth
+  // 1. ฟังก์ชันสั่งส่ง OTP ผ่าน Supabase Auth พร้อมตรวจสอบอีเมลซ้ำในระบบ
   const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const newErrors: Record<string, string> = {};
@@ -436,16 +480,36 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onRegisterSuccess,
     }
 
     setIsLoading(true);
+    setIsDuplicateEmail(false);
 
     try {
-      if (!supabase) {
-        throw new Error('Supabase client ยังไม่ได้ถูกกำหนดค่า');
+      const cleanEmail = email.trim().toLowerCase();
+
+      // ตรวจสอบอีเมลซ้ำในระบบ (ตาราง customers, profiles และ local cache)
+      const isTaken = await supabaseCustomers.checkEmailExists(cleanEmail);
+      if (isTaken) {
+        setErrors({
+          form: DUPLICATE_EMAIL_ERROR_MSG,
+          email: DUPLICATE_EMAIL_ERROR_MSG
+        });
+        setIsDuplicateEmail(true);
+        setIsLoading(false);
+        return;
       }
 
-      const { data, error } = await supabase.auth.signInWithOtp({
-        email: email.trim(),
+      if (!supabase) {
+        // กรณีไม่มี Supabase ให้จำลองส่ง OTP
+        setStep('otp');
+        setErrors({});
+        triggerToast(`ส่งรหัส OTP จำลองไปยัง ${email.trim()} เรียบร้อยแล้ว`);
+        return;
+      }
+
+      // ตรวจสอบผ่าน Supabase Auth ด้วย signUp เพื่อดัก Error เช่น "User already registered" หรือ "Email rate limit exceeded"
+      const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+        email: cleanEmail,
+        password: password,
         options: {
-          shouldCreateUser: true, // อนุญาตให้สร้างบัญชีใหม่ถ้ายังไม่มีในระบบ
           data: {
             full_name: fullName.trim(),
             phone: cleanedPhone,
@@ -453,8 +517,52 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onRegisterSuccess,
         }
       });
 
-      if (error) {
-        const errorMsg = handleSupabaseAuthError(error);
+      if (signUpError) {
+        if (isDuplicateEmailError(signUpError)) {
+          setErrors({
+            form: DUPLICATE_EMAIL_ERROR_MSG,
+            email: DUPLICATE_EMAIL_ERROR_MSG
+          });
+          setIsDuplicateEmail(true);
+          return;
+        }
+        const errorMsg = handleSupabaseAuthError(signUpError);
+        setErrors({ form: errorMsg });
+        return;
+      }
+
+      // Supabase Auth อาจคืนค่า identities: [] หากอีเมลมีอยู่ในระบบแล้ว (เมื่อเปิด email confirmation)
+      if (signUpData?.user && Array.isArray(signUpData.user.identities) && signUpData.user.identities.length === 0) {
+        setErrors({
+          form: DUPLICATE_EMAIL_ERROR_MSG,
+          email: DUPLICATE_EMAIL_ERROR_MSG
+        });
+        setIsDuplicateEmail(true);
+        return;
+      }
+
+      // สั่งส่ง OTP สำหรับยืนยันอีเมล
+      const { error: otpError } = await supabase.auth.signInWithOtp({
+        email: cleanEmail,
+        options: {
+          shouldCreateUser: true,
+          data: {
+            full_name: fullName.trim(),
+            phone: cleanedPhone,
+          }
+        }
+      });
+
+      if (otpError) {
+        if (isDuplicateEmailError(otpError)) {
+          setErrors({
+            form: DUPLICATE_EMAIL_ERROR_MSG,
+            email: DUPLICATE_EMAIL_ERROR_MSG
+          });
+          setIsDuplicateEmail(true);
+          return;
+        }
+        const errorMsg = handleSupabaseAuthError(otpError);
         setErrors({ form: errorMsg });
         return;
       }
@@ -463,6 +571,14 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onRegisterSuccess,
       setErrors({});
       triggerToast(`ส่งรหัส OTP ไปยัง ${email.trim()} เรียบร้อยแล้ว`);
     } catch (err: any) {
+      if (isDuplicateEmailError(err)) {
+        setErrors({
+          form: DUPLICATE_EMAIL_ERROR_MSG,
+          email: DUPLICATE_EMAIL_ERROR_MSG
+        });
+        setIsDuplicateEmail(true);
+        return;
+      }
       const errorMsg = handleSupabaseAuthError(err);
       setErrors({ form: errorMsg });
     } finally {
@@ -490,6 +606,15 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onRegisterSuccess,
       });
 
       if (error) {
+        if (isDuplicateEmailError(error)) {
+          setStep('form');
+          setIsDuplicateEmail(true);
+          setErrors({
+            form: DUPLICATE_EMAIL_ERROR_MSG,
+            email: DUPLICATE_EMAIL_ERROR_MSG
+          });
+          return;
+        }
         const errorMsg = handleSupabaseAuthError(error);
         setErrors({ otp: errorMsg });
         return;
@@ -498,6 +623,15 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onRegisterSuccess,
       setErrors({});
       triggerToast(`ส่งรหัส OTP ใหม่ไปยัง ${email.trim()} เรียบร้อยแล้ว`);
     } catch (err: any) {
+      if (isDuplicateEmailError(err)) {
+        setStep('form');
+        setIsDuplicateEmail(true);
+        setErrors({
+          form: DUPLICATE_EMAIL_ERROR_MSG,
+          email: DUPLICATE_EMAIL_ERROR_MSG
+        });
+        return;
+      }
       const errorMsg = handleSupabaseAuthError(err);
       setErrors({ otp: errorMsg });
     } finally {
@@ -546,6 +680,15 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onRegisterSuccess,
       }
 
       if (verifyResult.error) {
+        if (isDuplicateEmailError(verifyResult.error)) {
+          setStep('form');
+          setIsDuplicateEmail(true);
+          setErrors({
+            form: DUPLICATE_EMAIL_ERROR_MSG,
+            email: DUPLICATE_EMAIL_ERROR_MSG
+          });
+          return;
+        }
         const errorMsg = handleSupabaseAuthError(verifyResult.error);
         setErrors({ otp: errorMsg });
         return;
@@ -589,6 +732,15 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onRegisterSuccess,
 
       onClose();
     } catch (err: any) {
+      if (isDuplicateEmailError(err)) {
+        setStep('form');
+        setIsDuplicateEmail(true);
+        setErrors({
+          form: DUPLICATE_EMAIL_ERROR_MSG,
+          email: DUPLICATE_EMAIL_ERROR_MSG
+        });
+        return;
+      }
       const errorMsg = handleSupabaseAuthError(err);
       setErrors({ otp: errorMsg });
     } finally {
@@ -715,9 +867,51 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onRegisterSuccess,
           /* Modal Body: STEP 1 - REGISTRATION FORM */
           <form onSubmit={handleRegisterSubmit} className="p-6 space-y-3.5 max-h-[80vh] overflow-y-auto">
             {errors.form && (
-              <div className="flex items-start gap-2.5 rounded-lg bg-red-50 p-3 text-xs text-red-600 border border-red-100">
-                <AlertCircle size={15} className="shrink-0 mt-0.5" />
-                <span>{errors.form}</span>
+              <div 
+                className={`rounded-xl p-3.5 text-xs border shadow-xs animate-fadeIn space-y-2.5 ${
+                  isDuplicateEmail || isDuplicateEmailError(errors.form)
+                    ? 'bg-red-50 border-red-200 text-red-700'
+                    : 'bg-red-50 border-red-100 text-red-600'
+                }`}
+                id="register-error-banner"
+              >
+                <div className="flex items-start gap-2.5">
+                  <AlertCircle size={16} className="shrink-0 mt-0.5 text-red-600" />
+                  <span className="font-medium leading-relaxed">{errors.form}</span>
+                </div>
+
+                {/* UX Improvement: ปุ่มทางลัด เข้าสู่ระบบ หรือ ลืมรหัสผ่าน? แสดงขึ้นมาในกล่องแจ้งเตือน */}
+                {(isDuplicateEmail || isDuplicateEmailError(errors.form)) && (
+                  <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-red-200/60" id="duplicate-email-shortcuts">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onClose();
+                        onOpenLogin(email.trim());
+                      }}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white font-bold text-[11px] transition-colors shadow-xs cursor-pointer"
+                      id="duplicate-error-login-btn"
+                    >
+                      <LogIn size={13} />
+                      <span>เข้าสู่ระบบ</span>
+                    </button>
+
+                    {onOpenForgotPassword && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onClose();
+                          onOpenForgotPassword(email.trim());
+                        }}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white hover:bg-red-100/70 border border-red-300 text-red-700 font-bold text-[11px] transition-colors shadow-xs cursor-pointer"
+                        id="duplicate-error-forgot-password-btn"
+                      >
+                        <KeyRound size={13} />
+                        <span>ลืมรหัสผ่าน?</span>
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
             )}
             
@@ -801,10 +995,14 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onRegisterSuccess,
                   onChange={(e) => {
                     const val = e.target.value;
                     setEmail(val);
-                    if (errors.email && val.trim()) {
+                    setIsDuplicateEmail(false);
+                    if (errors.email) {
                       setErrors((prev) => {
                         const next = { ...prev };
                         delete next.email;
+                        if (next.form === DUPLICATE_EMAIL_ERROR_MSG) {
+                          delete next.form;
+                        }
                         return next;
                       });
                     }

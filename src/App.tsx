@@ -143,6 +143,7 @@ export default function App() {
   });
 
   const [isLoginOpen, setIsLoginOpen] = React.useState<boolean>(false);
+  const [loginEmail, setLoginEmail] = React.useState<string>('');
   const [isRegisterOpen, setIsRegisterOpen] = React.useState<boolean>(false);
   const [isForgotPasswordOpen, setIsForgotPasswordOpen] = React.useState<boolean>(false);
   const [forgotPasswordEmail, setForgotPasswordEmail] = React.useState<string>('');
@@ -746,7 +747,11 @@ export default function App() {
       {/* 7. SECURE MOCK AUTHENTICATION MODALS */}
       <LoginModal
         isOpen={isLoginOpen}
-        onClose={() => setIsLoginOpen(false)}
+        initialEmail={loginEmail}
+        onClose={() => {
+          setIsLoginOpen(false);
+          setLoginEmail('');
+        }}
         onOpenRegister={() => {
           setIsLoginOpen(false);
           setIsRegisterOpen(true);
@@ -824,9 +829,15 @@ export default function App() {
       <RegisterModal
         isOpen={isRegisterOpen}
         onClose={() => setIsRegisterOpen(false)}
-        onOpenLogin={() => {
+        onOpenLogin={(prefillEmail) => {
+          if (prefillEmail) setLoginEmail(prefillEmail);
           setIsRegisterOpen(false);
           setIsLoginOpen(true);
+        }}
+        onOpenForgotPassword={(currentEmail) => {
+          setForgotPasswordEmail(currentEmail || '');
+          setIsRegisterOpen(false);
+          setIsForgotPasswordOpen(true);
         }}
         onRegisterSuccess={async (user) => {
           let enrichedUser = { ...user };

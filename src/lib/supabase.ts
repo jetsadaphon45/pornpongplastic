@@ -594,16 +594,53 @@ export const supabaseCustomers = {
   },
 
   async checkEmailExists(email: string): Promise<boolean> {
-    if (!isSupabaseConfigured || !supabase) {
-      return false;
+    const cleanEmail = email.toLowerCase().trim();
+    if (!cleanEmail) return false;
+
+    if (isSupabaseConfigured && supabase) {
+      try {
+        // 1. ตรวจสอบในตาราง customers
+        const { data: custData, error: custErr } = await supabase
+          .from('customers')
+          .select('id, email')
+          .ilike('email', cleanEmail)
+          .limit(1);
+        
+        if (!custErr && custData && custData.length > 0) {
+          return true;
+        }
+
+        // 2. ตรวจสอบในตาราง profiles
+        const { data: profData, error: profErr } = await supabase
+          .from('profiles')
+          .select('id, email')
+          .ilike('email', cleanEmail)
+          .limit(1);
+
+        if (!profErr && profData && profData.length > 0) {
+          return true;
+        }
+      } catch (err) {
+        console.warn('Notice checking email exists in Supabase:', err);
+      }
     }
-    const { data, error } = await supabase
-      .from('customers')
-      .select('email')
-      .eq('email', email.toLowerCase().trim());
-    
-    if (error) return false;
-    return (data && data.length > 0);
+
+    // 3. ตรวจสอบใน Local Storage Cache
+    if (typeof window !== 'undefined') {
+      try {
+        const raw = localStorage.getItem('pornpong_customers_cache');
+        if (raw) {
+          const list = JSON.parse(raw);
+          if (Array.isArray(list) && list.some((c: any) => String(c.email || '').toLowerCase().trim() === cleanEmail)) {
+            return true;
+          }
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    return false;
   },
 
   async validateUser(email: string, passwordStr: string): Promise<DbCustomer | null> {
