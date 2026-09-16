@@ -29,7 +29,17 @@ import {
   ShieldCheck,
   Sparkles,
   SearchIcon,
-  X
+  X,
+  Eye,
+  EyeOff,
+  History,
+  Copy,
+  ShoppingBag,
+  Key,
+  MapPin,
+  User,
+  ExternalLink,
+  Mail
 } from 'lucide-react';
 import { Product } from '../types';
 import { 
@@ -43,6 +53,8 @@ import {
   supabasePromotions
 } from '../lib/supabase';
 import { AppNotification } from './NotificationDropdown';
+import { CustomerOrderHistoryModal } from './CustomerOrderHistoryModal';
+import { CustomerDetailModal } from './CustomerDetailModal';
 
 interface AdminDashboardProps {
   onClose: () => void; // Exit admin mode and return to shofront
@@ -147,9 +159,37 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
   // Member & Preorder detail states
   const [selectedMember, setSelectedMember] = React.useState<any | null>(null);
   const [isMemberDetailOpen, setIsMemberDetailOpen] = React.useState<boolean>(false);
+  const [memberForOrderHistory, setMemberForOrderHistory] = React.useState<any | null>(null);
+  const [isMemberOrderHistoryOpen, setIsMemberOrderHistoryOpen] = React.useState<boolean>(false);
+  const [customerSearch, setCustomerSearch] = React.useState<string>('');
+  const [visiblePasswords, setVisiblePasswords] = React.useState<Record<string, boolean>>({});
+  const [copiedCustCode, setCopiedCustCode] = React.useState<string | null>(null);
   
   const [selectedPreorder, setSelectedPreorder] = React.useState<any | null>(null);
   const [isPreorderDetailOpen, setIsPreorderDetailOpen] = React.useState<boolean>(false);
+
+  // Customer Management Handlers
+  const handleOpenCustomerDetail = (member: any) => {
+    setSelectedMember(member);
+    setIsMemberDetailOpen(true);
+  };
+
+  const handleOpenCustomerOrderHistory = (member: any) => {
+    setMemberForOrderHistory(member);
+    setIsMemberOrderHistoryOpen(true);
+  };
+
+  const handleCustomerUpdated = (updatedCust: any) => {
+    setAdminMembers(prev => prev.map(m => m.id === updatedCust.id ? { ...m, ...updatedCust } : m));
+    setSelectedMember(updatedCust);
+  };
+
+  const togglePasswordVisibility = (id: string) => {
+    setVisiblePasswords(prev => ({
+      ...prev,
+      [id]: !prev[id]
+    }));
+  };
 
   // Handle Logins
   const handleLogin = (e: React.FormEvent) => {
@@ -265,9 +305,11 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
         name: db.name,
         email: db.email,
         phone: db.phone || 'ไม่ระบุ',
+        password: db.password || '',
         rewardPoints: db.points || 0,
         rank: db.membership_level || 'Standard',
         registerDate: db.created_at ? new Date(db.created_at).toISOString().split('T')[0] : '2026-05-01',
+        createdAtFull: db.created_at || '',
         orderHistory: [],
         preorderHistory: [],
         status: "Active"
@@ -776,6 +818,21 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
       (o.customerName && o.customerName.toLowerCase().includes(term))
     );
   });
+
+  const filteredAdminMembers = React.useMemo(() => {
+    const term = customerSearch.toLowerCase().trim();
+    if (!term) return adminMembers;
+    return adminMembers.filter(m => {
+      const custCode = m.id ? `CUST-${m.id.substring(0, 8)}`.toLowerCase() : '';
+      return (
+        (m.name && m.name.toLowerCase().includes(term)) ||
+        (m.email && m.email.toLowerCase().includes(term)) ||
+        (m.phone && m.phone.toLowerCase().includes(term)) ||
+        (m.id && String(m.id).toLowerCase().includes(term)) ||
+        custCode.includes(term)
+      );
+    });
+  }, [adminMembers, customerSearch]);
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row text-slate-800 font-sans">
@@ -1901,86 +1958,237 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
           {activeMenu === 'members' && (
             <div className="space-y-4 animate-fadeIn">
               <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-4 shadow-sm">
-                <div className="flex items-center justify-between">
-                  <h3 className="font-display font-black text-slate-800 text-xs">ระเบียนครอบครัวผู้จองซื้อสะสมสิทธิ์พรพงศ์พลาสติก</h3>
-                  <span className="text-[11px] font-semibold text-slate-500">ระบบอัปเดตสมาชิกอัตโนมัติเมื่อมีการสมัครตรง</span>
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 rounded-xl bg-sky-600 text-white flex items-center justify-center font-bold shadow-2xs">
+                        <Users size={16} />
+                      </div>
+                      <h3 className="font-display font-black text-slate-800 text-sm">
+                        ระบบระเบียนฐานข้อมูลลูกค้า (Customer Database Panel)
+                      </h3>
+                      <span className="px-2.5 py-0.5 rounded-full bg-sky-50 text-sky-700 text-[10px] font-bold border border-sky-200">
+                        {filteredAdminMembers.length} / {adminMembers.length} บัญชี
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 mt-1">
+                      ดูรายชื่อลูกค้า, รหัสประจำตัว, รหัสผ่านผู้ใช้งาน, ประวัติคำสั่งซื้อทั้งหมด และที่อยู่จัดส่ง เชื่อมต่อ Supabase
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    {/* Search bar */}
+                    <div className="relative w-full sm:w-64">
+                      <Search size={14} className="absolute left-3 top-2.5 text-slate-400" />
+                      <input
+                        type="text"
+                        value={customerSearch}
+                        onChange={(e) => setCustomerSearch(e.target.value)}
+                        placeholder="ค้นหาชื่อ, อีเมล, เบอร์โทร, รหัสลูกค้า..."
+                        className="w-full pl-8.5 pr-8 py-1.5 border border-slate-200 rounded-xl text-xs focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 bg-slate-50/50"
+                        id="admin-customer-search-input"
+                      />
+                      {customerSearch && (
+                        <button
+                          type="button"
+                          onClick={() => setCustomerSearch('')}
+                          className="absolute right-2.5 top-2 text-slate-400 hover:text-slate-600 cursor-pointer"
+                        >
+                          <X size={12} />
+                        </button>
+                      )}
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        fetchCustomers();
+                        triggerToast('รีเฟรชข้อมูลลูกค้าจาก Supabase สำเร็จ');
+                      }}
+                      className="p-2 border border-slate-200 hover:bg-slate-50 rounded-xl text-slate-600 transition-colors cursor-pointer shrink-0"
+                      title="รีเฟรชข้อมูล"
+                    >
+                      <RefreshCw size={14} />
+                    </button>
+                  </div>
                 </div>
 
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-xs border-collapse">
                     <thead>
-                      <tr className="border-b border-slate-200 bg-slate-50 text-slate-500 font-bold">
+                      <tr className="border-b border-slate-200 bg-slate-50 text-slate-600 font-bold text-[11px]">
+                        <th className="py-2.5 px-3">รหัสลูกค้า</th>
                         <th className="py-2.5 px-3.5">ชื่อลูกค้า</th>
                         <th className="py-2.5 px-3">ช่องทางอีเมลติดต่อ</th>
-                        <th className="py-2.5 px-3 text-center">เบอร์สายด่วน</th>
-                        <th className="py-2.5 px-3 text-center">แร้งกิ้งรางวัล</th>
-                        <th className="py-2.5 px-3 text-right">แต้มสะสมเกียรติยศ</th>
+                        <th className="py-2.5 px-3 text-center">เบอร์โทรศัพท์</th>
+                        <th className="py-2.5 px-3 text-center">รหัสผ่าน</th>
+                        <th className="py-2.5 px-3 text-center">แร้งกิ้ง / แต้ม</th>
+                        <th className="py-2.5 px-3 text-center">ประวัติการสั่งซื้อ</th>
                         <th className="py-2.5 px-4 text-center">การจัดการ</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {adminMembers.length === 0 ? (
+                      {filteredAdminMembers.length === 0 ? (
                         <tr>
-                          <td colSpan={6} className="py-12 text-center text-slate-400 font-medium">ยังไม่มีข้อมูล</td>
+                          <td colSpan={8} className="py-12 text-center text-slate-400 font-medium">
+                            {customerSearch ? `ไม่พบข้อมูลลูกค้าที่ตรงกับคำค้นหา "${customerSearch}"` : 'ยังไม่มีข้อมูลลูกค้าในระบบ'}
+                          </td>
                         </tr>
                       ) : (
-                        adminMembers.map((member, idx) => (
-                          <tr key={idx} className="hover:bg-slate-50/70 text-[11px]">
-                            <td className="py-3 px-3.5">
-                              <strong className="text-slate-800 block font-bold">คุณ {member.name}</strong>
-                            </td>
-                            <td className="py-3 px-3 font-mono text-slate-600">{member.email}</td>
-                            <td className="py-3 px-3 text-center text-slate-700 font-mono">{member.phone}</td>
-                            <td className="py-3 px-3 text-center">
-                              <span className="px-2.5 py-0.5 rounded-full bg-sky-50 text-sky-700 text-[9px] font-bold border border-sky-200">
-                                {member.rank || 'Standard Family'}
-                              </span>
-                            </td>
-                            <td className="py-3 px-3 text-right font-black text-sky-600 font-mono">{member.rewardPoints || 0} pt</td>
-                            <td className="py-3 px-4 text-center">
-                              <div className="flex justify-center items-center gap-2">
+                        filteredAdminMembers.map((member, idx) => {
+                          const custCode = member.id ? `CUST-${member.id.substring(0, 8).toUpperCase()}` : 'CUST-NEW';
+                          const isPassVisible = !!visiblePasswords[member.id];
+                          return (
+                            <tr key={member.id || idx} className="hover:bg-slate-50/70 text-[11px] transition-colors">
+                              {/* 1. รหัสลูกค้า (User ID / Customer Code) */}
+                              <td className="py-3 px-3">
+                                <div className="flex items-center gap-1.5">
+                                  <span 
+                                    className="px-2 py-0.5 rounded-lg bg-sky-50 text-sky-800 font-mono text-[10.5px] font-bold border border-sky-200 inline-block"
+                                    title={member.id || ''}
+                                  >
+                                    {custCode}
+                                  </span>
+                                  {member.id && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        navigator.clipboard.writeText(member.id);
+                                        setCopiedCustCode(member.id);
+                                        triggerToast(`คัดลอกรหัสลูกค้า ${custCode} แล้ว`);
+                                        setTimeout(() => setCopiedCustCode(null), 2000);
+                                      }}
+                                      className="text-slate-400 hover:text-sky-600 cursor-pointer p-0.5 transition-colors"
+                                      title="คลิกเพื่อคัดลอก UUID ลูกค้า"
+                                    >
+                                      {copiedCustCode === member.id ? <CheckCircle2 size={12} className="text-emerald-500" /> : <Copy size={12} />}
+                                    </button>
+                                  )}
+                                </div>
+                              </td>
+
+                              {/* 2. ชื่อลูกค้า */}
+                              <td className="py-3 px-3.5">
+                                <strong className="text-slate-800 block font-bold text-xs">คุณ {member.name}</strong>
+                                <span className="text-[10px] text-slate-400">สมัครเมื่อ {member.registerDate || '2026-05-01'}</span>
+                              </td>
+
+                              {/* 3. อีเมลติดต่อ */}
+                              <td className="py-3 px-3 font-mono text-slate-600 text-xs">
+                                <div className="flex items-center gap-1.5">
+                                  <Mail size={12} className="text-slate-400 shrink-0" />
+                                  <span>{member.email}</span>
+                                </div>
+                              </td>
+
+                              {/* 4. เบอร์โทรศัพท์ */}
+                              <td className="py-3 px-3 text-center text-slate-700 font-mono text-xs">
+                                {member.phone || 'ไม่ระบุ'}
+                              </td>
+
+                              {/* 5. รหัสผ่าน (Password Hash หรือ Masked) */}
+                              <td className="py-3 px-3 text-center">
+                                <div className="inline-flex items-center justify-center gap-1.5 px-2 py-1 rounded-lg bg-slate-100 border border-slate-200 font-mono text-[11px] font-bold text-slate-700">
+                                  <span>{isPassVisible ? (member.password || 'ไม่มีรหัส') : '••••••••'}</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => togglePasswordVisibility(member.id)}
+                                    className="text-slate-400 hover:text-slate-600 cursor-pointer p-0.5 transition-colors"
+                                    title={isPassVisible ? 'ซ่อนรหัสผ่าน' : 'ดูรหัสผ่าน'}
+                                  >
+                                    {isPassVisible ? <EyeOff size={12} /> : <Eye size={12} />}
+                                  </button>
+                                </div>
+                              </td>
+
+                              {/* 6. แร้งกิ้ง / แต้มสะสม */}
+                              <td className="py-3 px-3 text-center">
+                                <span className="px-2 py-0.5 rounded-full bg-sky-50 text-sky-700 text-[9px] font-bold border border-sky-200 block mb-0.5">
+                                  {member.rank || 'Standard Family'}
+                                </span>
+                                <span className="font-mono font-bold text-sky-600 text-[11px]">
+                                  {member.rewardPoints || 0} pt
+                                </span>
+                              </td>
+
+                              {/* 7. ประวัติการสั่งซื้อ (Order History Modal / Link) */}
+                              <td className="py-3 px-3 text-center">
                                 <button
-                                  onClick={async () => {
-                                    try {
-                                      const newPoints = (member.rewardPoints || 0) + 10;
-                                      if (member.id) {
-                                        await supabaseCustomers.updatePoints(member.id, newPoints);
-                                      }
-                                      setAdminMembers(prev => prev.map((m, i) => i === idx ? { ...m, rewardPoints: newPoints } : m));
-                                      triggerToast(`มอบแต้มสมาชิกพิเศษ 10 คะแนน แก่คุณ ${member.name} สำเร็จ!`);
-                                    } catch (err: any) {
-                                      triggerToast(`ข้อผิดพลาด: ${err.message || 'ไม่สามารถอัปเดตแต้มรางวัลได้'}`);
-                                    }
-                                  }}
-                                  className="px-2.5 py-1 bg-sky-50 border border-sky-200 text-sky-700 font-bold text-[9.5px] rounded-lg cursor-pointer hover:bg-sky-100 transition-colors"
+                                  type="button"
+                                  onClick={() => handleOpenCustomerOrderHistory(member)}
+                                  className="px-2.5 py-1.5 bg-sky-50 hover:bg-sky-100 border border-sky-200 text-sky-700 rounded-xl font-bold text-[10.5px] cursor-pointer transition-colors inline-flex items-center gap-1 shadow-2xs"
+                                  id={`btn-order-history-${member.id}`}
+                                  title="เปิดดูประวัติคำสั่งซื้อทั้งหมดของลูกค้ารายนี้"
                                 >
-                                  + 10 แต้มพิเศษ
+                                  <ShoppingBag size={12} />
+                                  <span>ดูประวัติคำสั่งซื้อ</span>
                                 </button>
-                                
-                                <button
-                                  onClick={async () => {
-                                    if (confirm(`คุณแน่ใจหรือไม่ที่จะลบข้อมูลผู้ใช้งานของ คุณ ${member.name}?`)) {
+                              </td>
+
+                              {/* 8. การจัดการ */}
+                              <td className="py-3 px-3 text-center">
+                                <div className="flex justify-center items-center gap-1.5 flex-wrap">
+                                  {/* ปุ่ม ดูรายละเอียด / แก้ไขข้อมูลลูกค้า */}
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenCustomerDetail(member)}
+                                    className="px-2.5 py-1 bg-white hover:bg-sky-50 border border-sky-300 text-sky-700 font-bold text-[10px] rounded-lg cursor-pointer transition-colors inline-flex items-center gap-1 shadow-2xs"
+                                    title="ดูรายละเอียดเต็ม, รีเซ็ตรหัสผ่าน และที่อยู่จัดส่ง"
+                                    id={`btn-detail-customer-${member.id}`}
+                                  >
+                                    <User size={11} />
+                                    <span>ดูรายละเอียด / แก้ไข</span>
+                                  </button>
+
+                                  {/* ปุ่ม มอบแต้มพิเศษ */}
+                                  <button
+                                    type="button"
+                                    onClick={async () => {
                                       try {
+                                        const newPoints = (member.rewardPoints || 0) + 10;
                                         if (member.id) {
-                                          await supabaseCustomers.delete(member.id);
-                                          window.dispatchEvent(new Event('customers-updated'));
-                                          triggerToast(`ลบข้อมูลสมาชิกคุณ ${member.name} สำเร็จ!`);
-                                        } else {
-                                          triggerToast(`ไม่พบรหัสสมาชิกที่ต้องการลบ`);
+                                          await supabaseCustomers.updatePoints(member.id, newPoints);
                                         }
+                                        setAdminMembers(prev => prev.map((m) => m.id === member.id ? { ...m, rewardPoints: newPoints } : m));
+                                        triggerToast(`มอบแต้มพิเศษ 10 คะแนน แก่คุณ ${member.name} สำเร็จ!`);
                                       } catch (err: any) {
-                                        triggerToast(`ข้อผิดพลาด: ${err.message || 'ไม่สามารถลบข้อมูลได้'}`);
+                                        triggerToast(`ข้อผิดพลาด: ${err.message || 'ไม่สามารถอัปเดตแต้มรางวัลได้'}`);
                                       }
-                                    }
-                                  }}
-                                  className="px-2.5 py-1 bg-rose-50 border border-rose-200 hover:bg-rose-100 text-rose-700 font-bold text-[9.5px] rounded-lg cursor-pointer transition-colors"
-                                >
-                                  ลบระเบียน
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        ))
+                                    }}
+                                    className="px-2 py-1 bg-amber-50 border border-amber-200 text-amber-700 font-bold text-[10px] rounded-lg cursor-pointer hover:bg-amber-100 transition-colors"
+                                    title="มอบแต้มสะสม 10 คะแนน"
+                                  >
+                                    +10 แต้ม
+                                  </button>
+                                  
+                                  {/* ปุ่ม ลบระเบียน */}
+                                  <button
+                                    type="button"
+                                    onClick={async () => {
+                                      if (confirm(`คุณแน่ใจหรือไม่ที่จะลบข้อมูลผู้ใช้งานของ คุณ ${member.name}?`)) {
+                                        try {
+                                          if (member.id) {
+                                            await supabaseCustomers.delete(member.id);
+                                            window.dispatchEvent(new Event('customers-updated'));
+                                            triggerToast(`ลบข้อมูลสมาชิกคุณ ${member.name} สำเร็จ!`);
+                                          } else {
+                                            triggerToast(`ไม่พบรหัสสมาชิกที่ต้องการลบ`);
+                                          }
+                                        } catch (err: any) {
+                                          triggerToast(`ข้อผิดพลาด: ${err.message || 'ไม่สามารถลบข้อมูลได้'}`);
+                                        }
+                                      }
+                                    }}
+                                    className="p-1 bg-rose-50 border border-rose-200 hover:bg-rose-100 text-rose-700 rounded-lg cursor-pointer transition-colors"
+                                    title="ลบระเบียนผู้ใช้งาน"
+                                  >
+                                    <Trash2 size={13} />
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })
                       )}
                     </tbody>
                   </table>
@@ -2400,6 +2608,28 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
         </div>
 
       </main>
+
+      {/* CUSTOMER ORDER HISTORY MODAL */}
+      <CustomerOrderHistoryModal
+        isOpen={isMemberOrderHistoryOpen}
+        onClose={() => setIsMemberOrderHistoryOpen(false)}
+        customer={memberForOrderHistory}
+        triggerToast={triggerToast}
+        onViewSlip={(slipUrl) => setZoomedSlipUrl(slipUrl)}
+      />
+
+      {/* CUSTOMER DETAIL & EDIT MODAL */}
+      <CustomerDetailModal
+        isOpen={isMemberDetailOpen}
+        onClose={() => setIsMemberDetailOpen(false)}
+        customer={selectedMember}
+        onCustomerUpdated={handleCustomerUpdated}
+        onOpenOrderHistory={(cust) => {
+          setMemberForOrderHistory(cust);
+          setIsMemberOrderHistoryOpen(true);
+        }}
+        triggerToast={triggerToast}
+      />
 
       {/* ZOOMED SLIP IMAGE FULL-SCREEN MODAL PREVIEW */}
       {zoomedSlipUrl && (

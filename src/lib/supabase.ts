@@ -260,6 +260,26 @@ export interface DbCustomer {
   created_at?: string;
 }
 
+export interface UnifiedCustomer {
+  id: string;
+  user_id?: string;
+  name: string;
+  full_name: string;
+  email: string;
+  phone: string;
+  password?: string;
+  membership_level: string;
+  rank: string;
+  points: number;
+  rewardPoints: number;
+  registerDate: string;
+  createdAtFull: string;
+  status: string;
+  verification_status: string;
+  is_verified: boolean;
+  source: 'profiles' | 'customers' | 'both';
+}
+
 export const supabaseCustomers = {
   async list(): Promise<DbCustomer[]> {
     if (!isSupabaseConfigured || !supabase) {
@@ -275,6 +295,137 @@ export const supabaseCustomers = {
       throw error;
     }
     return data || [];
+  },
+
+  async listUnified(): Promise<UnifiedCustomer[]> {
+    if (!isSupabaseConfigured || !supabase) {
+      console.warn('Supabase is not configured. Returning empty customers.');
+      return [];
+    }
+
+    const resultMap = new Map<string, UnifiedCustomer>();
+
+    // 1. Fetch from 'profiles' table in Supabase
+    try {
+      const { data: profiles, error: pErr } = await supabase
+        .from('profiles')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (!pErr && Array.isArray(profiles)) {
+        for (const p of profiles) {
+          const uid = String(p.id || p.user_id || '').trim();
+          const email = String(p.email || '').toLowerCase().trim();
+          const key = uid || email;
+          if (!key) continue;
+
+          const fullName = p.full_name || p.name || p.display_name || 'ผู้ใช้งาน Supabase';
+          const phone = p.phone || p.phone_number || p.telephone || 'ไม่ระบุ';
+          const pts = Number(p.points ?? p.reward_points ?? 0);
+          const rank = p.membership_level || p.rank || 'Standard';
+          const isVerified = Boolean(p.is_verified || p.verified || p.email_confirmed_at || p.phone_confirmed_at);
+          const createdAt = p.created_at || p.updated_at || new Date().toISOString();
+          const regDate = createdAt ? new Date(createdAt).toISOString().split('T')[0] : '2026-05-01';
+
+          resultMap.set(key, {
+            id: uid,
+            user_id: uid,
+            name: fullName,
+            full_name: fullName,
+            email: email,
+            phone: phone,
+            password: '',
+            membership_level: rank,
+            rank: rank,
+            points: pts,
+            rewardPoints: pts,
+            registerDate: regDate,
+            createdAtFull: createdAt,
+            status: 'Active',
+            verification_status: isVerified ? 'ยืนยันตัวตนแล้ว (Verified)' : 'ลงทะเบียนแล้ว (Active)',
+            is_verified: isVerified,
+            source: 'profiles'
+          });
+        }
+      }
+    } catch (e: any) {
+      console.warn('Could not query profiles from Supabase:', e?.message || e);
+    }
+
+    // 2. Fetch from 'customers' table in Supabase
+    try {
+      const { data: customers, error: cErr } = await supabase
+        .from('customers')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (!cErr && Array.isArray(customers)) {
+        for (const c of customers) {
+          const cid = String(c.id || '').trim();
+          const email = String(c.email || '').toLowerCase().trim();
+          
+          let matchedKey: string | undefined = undefined;
+          if (cid && resultMap.has(cid)) matchedKey = cid;
+          else if (email && resultMap.has(email)) matchedKey = email;
+          else {
+            for (const [k, v] of resultMap.entries()) {
+              if (email && v.email === email) {
+                matchedKey = k;
+                break;
+              }
+            }
+          }
+
+          const fullName = c.name || c.full_name || 'ผู้ใช้งาน';
+          const phone = c.phone || 'ไม่ระบุ';
+          const pts = Number(c.points || 0);
+          const rank = c.membership_level || 'Standard';
+          const createdAt = c.created_at || new Date().toISOString();
+          const regDate = createdAt ? new Date(createdAt).toISOString().split('T')[0] : '2026-05-01';
+
+          if (matchedKey) {
+            const existing = resultMap.get(matchedKey)!;
+            resultMap.set(matchedKey, {
+              ...existing,
+              id: existing.id || cid,
+              user_id: existing.user_id || cid,
+              password: c.password || existing.password,
+              points: existing.points || pts,
+              rewardPoints: existing.rewardPoints || pts,
+              phone: existing.phone && existing.phone !== 'ไม่ระบุ' ? existing.phone : phone,
+              name: existing.name && existing.name !== 'ผู้ใช้งาน Supabase' ? existing.name : fullName,
+              full_name: existing.full_name && existing.full_name !== 'ผู้ใช้งาน Supabase' ? existing.full_name : fullName,
+              source: 'both'
+            });
+          } else {
+            const key = cid || email || `cust_${Date.now()}`;
+            resultMap.set(key, {
+              id: cid,
+              user_id: cid,
+              name: fullName,
+              full_name: fullName,
+              email: email,
+              phone: phone,
+              password: c.password || '',
+              membership_level: rank,
+              rank: rank,
+              points: pts,
+              rewardPoints: pts,
+              registerDate: regDate,
+              createdAtFull: createdAt,
+              status: 'Active',
+              verification_status: 'ยืนยัน OTP แล้ว (Active)',
+              is_verified: true,
+              source: 'customers'
+            });
+          }
+        }
+      }
+    } catch (e: any) {
+      console.warn('Could not query customers from Supabase:', e?.message || e);
+    }
+
+    return Array.from(resultMap.values());
   },
 
   async insert(item: DbCustomer): Promise<DbCustomer> {
@@ -334,6 +485,44 @@ export const supabaseCustomers = {
     return true;
   },
 
+  async updateCustomer(id: string, updates: { name?: string; email?: string; phone?: string; membership_level?: string; points?: number; password?: string }): Promise<boolean> {
+    if (!isSupabaseConfigured || !supabase) {
+      throw new Error('Supabase is not configured.');
+    }
+    const payload: any = {};
+    if (updates.name !== undefined) payload.name = updates.name;
+    if (updates.email !== undefined) payload.email = updates.email.toLowerCase().trim();
+    if (updates.phone !== undefined) payload.phone = updates.phone;
+    if (updates.membership_level !== undefined) payload.membership_level = updates.membership_level;
+    if (updates.points !== undefined) payload.points = updates.points;
+    if (updates.password !== undefined) payload.password = updates.password;
+
+    const { error } = await supabase
+      .from('customers')
+      .update(payload)
+      .eq('id', id);
+
+    if (error) {
+      throw error;
+    }
+    return true;
+  },
+
+  async resetPassword(id: string, newPassword: string): Promise<boolean> {
+    if (!isSupabaseConfigured || !supabase) {
+      throw new Error('Supabase is not configured.');
+    }
+    const { error } = await supabase
+      .from('customers')
+      .update({ password: newPassword })
+      .eq('id', id);
+
+    if (error) {
+      throw error;
+    }
+    return true;
+  },
+
   async updateProfile(email: string, name: string, phone: string): Promise<boolean> {
     if (!isSupabaseConfigured || !supabase) {
       throw new Error('Supabase is not configured.');
@@ -384,6 +573,7 @@ export interface DbProfile {
   user_id?: string;
   full_name?: string;
   name?: string;
+  display_name?: string;
   phone?: string;
   phone_number?: string;
   telephone?: string;
@@ -391,10 +581,40 @@ export interface DbProfile {
   delivery_address?: string;
   shipping_address?: string;
   email?: string;
+  points?: number;
+  reward_points?: number;
+  membership_level?: string;
+  rank?: string;
+  role?: string;
+  status?: string;
+  is_verified?: boolean;
+  verified?: boolean;
+  email_confirmed_at?: string;
+  phone_confirmed_at?: string;
+  created_at?: string;
   updated_at?: string;
 }
 
 export const supabaseProfiles = {
+  async listAll(): Promise<DbProfile[]> {
+    if (!supabase) return [];
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.warn('Could not select from profiles table in Supabase:', error.message);
+        return [];
+      }
+      return data || [];
+    } catch (e: any) {
+      console.warn('Profiles listAll caught error:', e?.message || e);
+      return [];
+    }
+  },
+
   async getProfile(userId?: string, email?: string): Promise<DbProfile | null> {
     if (!supabase) return null;
     try {
@@ -700,6 +920,56 @@ export const supabaseUserAddresses = {
       console.warn('Could not delete address from Supabase:', err);
       return false;
     }
+  },
+
+  async update(addressId: string, updates: Partial<UserAddress>, userId?: string, userEmail?: string): Promise<boolean> {
+    const localKey = `pornpong_addresses_${userId || userEmail || 'guest'}`;
+    try {
+      const raw = localStorage.getItem(localKey);
+      if (raw) {
+        const list: UserAddress[] = JSON.parse(raw);
+        const idx = list.findIndex(item => item.id === addressId);
+        if (idx !== -1) {
+          list[idx] = { ...list[idx], ...updates, updated_at: new Date().toISOString() };
+          if (updates.is_default) {
+            list.forEach((item, i) => {
+              if (i !== idx) item.is_default = false;
+            });
+          }
+          localStorage.setItem(localKey, JSON.stringify(list));
+        }
+      }
+    } catch {
+      // ignore
+    }
+
+    if (!supabase) return true;
+    try {
+      const dbPayload: any = {};
+      if (updates.title !== undefined) dbPayload.title = updates.title;
+      if (updates.recipient_name !== undefined) {
+        dbPayload.recipient_name = updates.recipient_name;
+        dbPayload.name = updates.recipient_name;
+      }
+      if (updates.phone !== undefined) dbPayload.phone = updates.phone;
+      if (updates.address !== undefined) dbPayload.address = updates.address;
+      if (updates.is_default !== undefined) dbPayload.is_default = updates.is_default;
+      dbPayload.updated_at = new Date().toISOString();
+
+      if (updates.is_default && userId) {
+        // Reset previous defaults
+        await supabase.from('user_addresses').update({ is_default: false }).eq('user_id', userId);
+      }
+      await supabase.from('user_addresses').update(dbPayload).eq('id', addressId);
+      return true;
+    } catch (err) {
+      console.warn('Could not update address in Supabase:', err);
+      return false;
+    }
+  },
+
+  async setDefault(addressId: string, userId?: string, userEmail?: string): Promise<boolean> {
+    return this.update(addressId, { is_default: true }, userId, userEmail);
   }
 };
 
@@ -739,6 +1009,95 @@ export const supabaseOrders = {
       }));
     } catch (e: any) {
       console.warn('Orders fetch caught error:', e.message);
+      return [];
+    }
+  },
+
+  async listByUserId(userId?: string, email?: string, phone?: string): Promise<any[]> {
+    if (!isSupabaseConfigured || !supabase) return [];
+    try {
+      const cleanUserId = userId?.trim() || '';
+      const cleanEmail = email?.toLowerCase().trim() || '';
+      const cleanPhone = phone && phone !== 'ไม่ระบุ' ? phone.replace(/\D/g, '') : '';
+
+      let matchedRows: any[] = [];
+
+      // 1. Direct query by customer_id
+      if (cleanUserId) {
+        const { data, error } = await supabase
+          .from('orders')
+          .select('*')
+          .eq('customer_id', cleanUserId)
+          .order('created_at', { ascending: false });
+
+        if (!error && data && data.length > 0) {
+          matchedRows = data;
+        }
+      }
+
+      // 2. Query user_id column if distinct or no matches yet
+      if (matchedRows.length === 0 && cleanUserId) {
+        try {
+          const { data: byUid, error: errUid } = await supabase
+            .from('orders')
+            .select('*')
+            .eq('user_id', cleanUserId)
+            .order('created_at', { ascending: false });
+
+          if (!errUid && byUid && byUid.length > 0) {
+            matchedRows = byUid;
+          }
+        } catch {
+          // column may not exist, safe fallback
+        }
+      }
+
+      // 3. Query customer_email if still no matches
+      if (matchedRows.length === 0 && cleanEmail) {
+        const { data: byEmail, error: errEmail } = await supabase
+          .from('orders')
+          .select('*')
+          .eq('customer_email', cleanEmail)
+          .order('created_at', { ascending: false });
+
+        if (!errEmail && byEmail && byEmail.length > 0) {
+          matchedRows = byEmail;
+        }
+      }
+
+      // 4. Fallback filter
+      if (matchedRows.length === 0) {
+        const all = await this.list();
+        matchedRows = all.filter((o: any) => {
+          if (cleanUserId && (String(o.customer_id) === cleanUserId || String(o.user_id) === cleanUserId)) return true;
+          if (cleanEmail && o.customer_email && o.customer_email.toLowerCase() === cleanEmail) return true;
+          if (cleanPhone && o.customer_phone && o.customer_phone.replace(/\D/g, '').includes(cleanPhone)) return true;
+          return false;
+        });
+      }
+
+      return matchedRows.map((row: any) => ({
+        ...row,
+        id: row.id,
+        customerName: row.customer_name || row.customerName || '',
+        date: row.created_at ? new Date(row.created_at).toISOString().split('T')[0] : '',
+        productName: row.productName || row.product_name || 'เรือพลาสติกและอุปกรณ์',
+        color: row.color || 'คละสี',
+        amount: Number(row.total_amount || row.amount || 0),
+        status: row.payment_status || row.status || 'Pending',
+        shipmentNo: row.shipmentNo || row.shipment_no || '',
+        payment_slip_url: row.payment_slip_url || '',
+        customer_id: row.customer_id || row.user_id || cleanUserId,
+        customer_name: row.customer_name || row.customerName || '',
+        customer_email: row.customer_email || cleanEmail,
+        customer_phone: row.customer_phone || '',
+        total_amount: Number(row.total_amount || row.amount || 0),
+        payment_status: row.payment_status || row.status || 'pending',
+        order_status: row.order_status || 'waiting_payment',
+        created_at: row.created_at || row.date || ''
+      }));
+    } catch (e: any) {
+      console.warn('Orders listByUserId caught error:', e.message);
       return [];
     }
   },
@@ -800,16 +1159,17 @@ export const supabaseOrders = {
   },
 
   async delete(id: string): Promise<boolean> {
-    if (!isSupabaseConfigured || !supabase) return false;
+    if (!isSupabaseConfigured || !supabase) return true;
     try {
       const { error } = await supabase.from('orders').delete().eq('id', id);
       if (error) {
-        throw error;
+        console.warn('Could not delete from orders table in Supabase:', error.message);
+        return false;
       }
       return true;
     } catch (err: any) {
       console.error('Failed to delete order from Supabase:', err.message);
-      throw err;
+      return false;
     }
   },
 
@@ -987,6 +1347,25 @@ export const supabasePreOrders = {
       status: row.status || 'AwaitingDeposit'
     };
   },
+  async listByUserId(userId?: string, phone?: string, name?: string): Promise<any[]> {
+    if (!isSupabaseConfigured || !supabase) return [];
+    try {
+      const cleanPhone = phone && phone !== 'ไม่ระบุ' ? phone.replace(/\D/g, '') : '';
+      const cleanName = name?.toLowerCase().trim() || '';
+      const cleanUserId = userId?.trim() || '';
+
+      const all = await this.list();
+      return all.filter((p: any) => {
+        if (cleanUserId && (p.user_id === cleanUserId || p.customer_id === cleanUserId)) return true;
+        if (cleanPhone && p.phone && p.phone.replace(/\D/g, '').includes(cleanPhone)) return true;
+        if (cleanName && p.customerName && p.customerName.toLowerCase().trim().includes(cleanName)) return true;
+        return false;
+      });
+    } catch (e: any) {
+      console.warn('Pre-orders listByUserId caught error:', e.message);
+      return [];
+    }
+  },
   async updateStatus(id: string, status: string): Promise<boolean> {
     if (!isSupabaseConfigured || !supabase) return false;
     try {
@@ -994,6 +1373,21 @@ export const supabasePreOrders = {
       await supabase.from('pre_orders').update({ status }).eq('id', id);
       return true;
     } catch {
+      return false;
+    }
+  },
+  async delete(id: string): Promise<boolean> {
+    if (!isSupabaseConfigured || !supabase) return true;
+    try {
+      const res1 = await supabase.from('pre_orders').delete().eq('id', id);
+      const res2 = await supabase.from('preorders').delete().eq('id', id);
+      if (res1.error && res2.error) {
+        console.warn('Could not delete from pre_orders or preorders in Supabase:', res1.error?.message || res2.error?.message);
+        return false;
+      }
+      return true;
+    } catch (err: any) {
+      console.error('Failed to delete pre-order from Supabase:', err.message);
       return false;
     }
   }

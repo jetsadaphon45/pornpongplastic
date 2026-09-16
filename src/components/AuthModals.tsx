@@ -268,9 +268,98 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onRegisterSuccess,
 
   if (!isOpen) return null;
 
+  // Helper to normalize and validate Thai phone numbers
+  const normalizeThaiPhone = (raw: string): string => {
+    let cleaned = raw.replace(/[\s\-\(\)\.]/g, '');
+    if (cleaned.startsWith('+66')) {
+      cleaned = '0' + cleaned.slice(3);
+    }
+    return cleaned;
+  };
+
   const validateEmail = (emailStr: string) => {
     const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     return re.test(emailStr);
+  };
+
+  // Helper to format Auth / OTP errors cleanly without returning "{}"
+  const formatAuthError = (err: any): { alertMessage: string; formMessage: string } => {
+    if (!err) {
+      const fallback = 'ไม่สามารถส่งรหัส OTP ได้ กรุณาตรวจสอบอีเมลหรือการตั้งค่า SMTP';
+      return { alertMessage: fallback, formMessage: fallback };
+    }
+
+    // 1. Extract error details safely (preventing native Error from stringifying to "{}")
+    let rawDetail = '';
+    if (typeof err === 'string' && err.trim()) {
+      rawDetail = err.trim();
+    } else if (err?.message && typeof err.message === 'string' && err.message.trim()) {
+      rawDetail = err.message.trim();
+    } else if (err?.error_description && typeof err.error_description === 'string' && err.error_description.trim()) {
+      rawDetail = err.error_description.trim();
+    } else if (err?.description && typeof err.description === 'string' && err.description.trim()) {
+      rawDetail = err.description.trim();
+    } else if (err?.msg && typeof err.msg === 'string' && err.msg.trim()) {
+      rawDetail = err.msg.trim();
+    } else {
+      try {
+        const props = Object.getOwnPropertyNames(err);
+        if (props.length > 0) {
+          const serialized = JSON.stringify(err, props);
+          if (serialized && serialized !== '{}') {
+            rawDetail = serialized;
+          }
+        }
+        if (!rawDetail) {
+          const standardJson = JSON.stringify(err);
+          if (standardJson && standardJson !== '{}') {
+            rawDetail = standardJson;
+          }
+        }
+      } catch {
+        rawDetail = String(err);
+      }
+    }
+
+    if (!rawDetail || rawDetail === '{}' || rawDetail === '[object Object]') {
+      rawDetail = 'ไม่สามารถส่งรหัส OTP ได้';
+    }
+
+    const lower = rawDetail.toLowerCase();
+
+    // 2. Identify common Supabase SMTP, Auth, or Rate-limit failure cases
+    let thaiNotice = 'ไม่สามารถส่งรหัส OTP ได้ กรุณาตรวจสอบอีเมลหรือการตั้งค่า SMTP';
+    if (
+      lower.includes('smtp') ||
+      lower.includes('error sending') ||
+      lower.includes('sending confirmation') ||
+      lower.includes('mail') ||
+      lower.includes('email provider') ||
+      lower.includes('over_email_send_rate_limit') ||
+      lower.includes('email rate limit') ||
+      lower.includes('500: internal server error')
+    ) {
+      thaiNotice = 'ไม่สามารถส่งรหัส OTP ได้ กรุณาตรวจสอบอีเมลหรือการตั้งค่า SMTP';
+    } else if (lower.includes('rate limit') || lower.includes('too many requests')) {
+      thaiNotice = 'ขอรหัส OTP ถี่เกินไป กรุณารอสักครู่แล้วลองใหม่อีกครั้ง';
+    } else if (lower.includes('invalid email') || lower.includes('valid email')) {
+      thaiNotice = 'รูปแบบอีเมลไม่ถูกต้องหรือไม่สามารถรับอีเมลได้';
+    } else if (lower.includes('already registered') || lower.includes('already exists')) {
+      thaiNotice = 'อีเมลนี้ลงทะเบียนในระบบแล้ว กรุณาเข้าสู่ระบบ';
+    } else if (lower.includes('ยังไม่ได้ถูกกำหนดค่า') || lower.includes('not configured')) {
+      thaiNotice = 'ระบบ Supabase ยังไม่ได้เชื่อมต่ออย่างสมบูรณ์';
+    }
+
+    // Readable message for alert and inline form error
+    const displayDetail = (rawDetail && rawDetail !== thaiNotice) ? rawDetail : '';
+    const alertMessage = displayDetail
+      ? `${thaiNotice}\n\n(รายละเอียด: ${displayDetail})`
+      : thaiNotice;
+    const formMessage = displayDetail
+      ? `${thaiNotice} (${displayDetail})`
+      : thaiNotice;
+
+    return { alertMessage, formMessage };
   };
 
   // 1. ฟังก์ชันสั่งส่ง OTP ผ่าน Supabase Auth
@@ -282,10 +371,15 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onRegisterSuccess,
       newErrors.fullName = 'กรุณากรอกชื่อ-นามสกุล';
     }
 
+    const cleanedPhone = normalizeThaiPhone(phone);
     if (!phone.trim()) {
       newErrors.phone = 'กรุณากรอกเบอร์โทรศัพท์';
-    } else if (phone.trim().replace(/-/g, '').length < 9) {
-      newErrors.phone = 'เบอร์โทรศัพท์ไม่ถูกต้อง (อย่างน้อย 9-10 หลัก)';
+    } else if (!/^[0-9]+$/.test(cleanedPhone)) {
+      newErrors.phone = 'เบอร์โทรศัพท์ต้องเป็นตัวเลขเท่านั้น';
+    } else if (cleanedPhone.length !== 10) {
+      newErrors.phone = `เบอร์โทรศัพท์ไทยต้องมี 10 หลัก (ปัจจุบันมี ${cleanedPhone.length} หลัก)`;
+    } else if (!cleanedPhone.startsWith('0')) {
+      newErrors.phone = 'เบอร์โทรศัพท์ไทยต้องขึ้นต้นด้วยเลข 0 (เช่น 0812345678)';
     }
 
     if (!email.trim()) {
@@ -324,7 +418,7 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onRegisterSuccess,
           shouldCreateUser: true, // อนุญาตให้สร้างบัญชีใหม่ถ้ายังไม่มีในระบบ
           data: {
             full_name: fullName.trim(),
-            phone: phone.trim(),
+            phone: cleanedPhone,
           }
         }
       });
@@ -335,9 +429,9 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onRegisterSuccess,
       setErrors({});
       triggerToast(`ส่งรหัส OTP ไปยัง ${email.trim()} เรียบร้อยแล้ว`);
     } catch (err: any) {
-      const errorMsg = err?.message || 'เกิดข้อผิดพลาดในการส่ง OTP';
-      setErrors({ form: errorMsg });
-      alert(errorMsg);
+      const { alertMessage, formMessage } = formatAuthError(err);
+      setErrors({ form: formMessage });
+      alert(alertMessage);
     } finally {
       setIsLoading(false);
     }
@@ -388,10 +482,11 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onRegisterSuccess,
       }
 
       // Save customer profile in database
+      const finalPhone = normalizeThaiPhone(phone) || phone.trim();
       const newAccount = {
         name: fullName.trim(),
         email: email.trim(),
-        phone: phone.trim(),
+        phone: finalPhone,
         password: password,
         membership_level: 'Standard',
         points: 0
@@ -424,9 +519,12 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onRegisterSuccess,
 
       onClose();
     } catch (err: any) {
+      const { alertMessage, formMessage } = formatAuthError(err);
+      const otpError = err?.message || formMessage || 'รหัส OTP ไม่ถูกต้องหรือหมดอายุ โปรดลองใหม่อีกครั้ง';
       setErrors({
-        otp: err?.message || 'รหัส OTP ไม่ถูกต้องหรือหมดอายุ โปรดลองใหม่อีกครั้ง'
+        otp: otpError
       });
+      alert(alertMessage || otpError);
     } finally {
       setIsLoading(false);
     }
@@ -558,7 +656,17 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onRegisterSuccess,
                   type="text"
                   placeholder="กรอกชื่อและนามสกุลจริง"
                   value={fullName}
-                  onChange={(e) => setFullName(e.target.value)}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setFullName(val);
+                    if (errors.fullName && val.trim()) {
+                      setErrors((prev) => {
+                        const next = { ...prev };
+                        delete next.fullName;
+                        return next;
+                      });
+                    }
+                  }}
                   className={`w-full rounded-xl border ${
                     errors.fullName ? 'border-red-400 focus:border-red-500 focus:ring-red-50' : 'border-slate-200 focus:border-brand-blue focus:ring-sky-100'
                   } bg-slate-55 px-3.5 py-2 pl-9 text-xs outline-hidden focus:ring-2`}
@@ -570,16 +678,30 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onRegisterSuccess,
 
             {/* Phone Input */}
             <div className="space-y-1">
-              <label className="block text-xs font-bold text-slate-600">เบอร์โทรศัพท์ (Mobile)</label>
+              <label className="block text-xs font-bold text-slate-600">เบอร์โทรศัพท์ (Mobile 10 หลัก)</label>
               <div className="relative">
                 <span className="absolute left-3 top-2.5 text-slate-400">
                   <Phone size={15} />
                 </span>
                 <input
                   type="tel"
-                  placeholder="เช่น 0891234567"
+                  placeholder="เช่น 0812345678 หรือ 081-234-5678"
                   value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setPhone(val);
+                    // Clear error immediately when user starts or continues typing
+                    if (errors.phone) {
+                      setErrors((prev) => {
+                        const next = { ...prev };
+                        // Remove "กรุณากรอกเบอร์โทรศัพท์" as soon as any character is entered
+                        if (val.trim()) {
+                          delete next.phone;
+                        }
+                        return next;
+                      });
+                    }
+                  }}
                   className={`w-full rounded-xl border ${
                     errors.phone ? 'border-red-400 focus:border-red-500 focus:ring-red-50' : 'border-slate-200 focus:border-brand-blue focus:ring-sky-100'
                   } bg-slate-55 px-3.5 py-2 pl-9 text-xs outline-hidden focus:ring-2`}
@@ -600,7 +722,17 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onRegisterSuccess,
                   type="text"
                   placeholder="example@yourmail.com"
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setEmail(val);
+                    if (errors.email && val.trim()) {
+                      setErrors((prev) => {
+                        const next = { ...prev };
+                        delete next.email;
+                        return next;
+                      });
+                    }
+                  }}
                   className={`w-full rounded-xl border ${
                     errors.email ? 'border-red-400 focus:border-red-500 focus:ring-red-50' : 'border-slate-200 focus:border-brand-blue focus:ring-sky-100'
                   } bg-slate-55 px-3.5 py-2 pl-9 text-xs outline-hidden focus:ring-2`}
@@ -622,7 +754,17 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onRegisterSuccess,
                     type={showPassword ? "text" : "password"}
                     placeholder="รหัสผ่าน"
                     value={password}
-                    onChange={(e) => setPassword(e.target.value)}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setPassword(val);
+                      if (errors.password && val) {
+                        setErrors((prev) => {
+                          const next = { ...prev };
+                          delete next.password;
+                          return next;
+                        });
+                      }
+                    }}
                     className={`w-full rounded-xl border ${
                       errors.password ? 'border-red-400 focus:border-red-500 focus:ring-red-50' : 'border-slate-200 focus:border-brand-blue focus:ring-sky-100'
                     } bg-slate-55 px-3.5 py-2 pl-9 pr-9 text-xs outline-hidden focus:ring-2`}
@@ -650,7 +792,17 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onRegisterSuccess,
                     type={showConfirmPassword ? "text" : "password"}
                     placeholder="ยืนยันรหัสผ่าน"
                     value={confirmPassword}
-                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setConfirmPassword(val);
+                      if (errors.confirmPassword && val) {
+                        setErrors((prev) => {
+                          const next = { ...prev };
+                          delete next.confirmPassword;
+                          return next;
+                        });
+                      }
+                    }}
                     className={`w-full rounded-xl border ${
                       errors.confirmPassword ? 'border-red-400 focus:border-red-500 focus:ring-red-50' : 'border-slate-200 focus:border-brand-blue focus:ring-sky-100'
                     } bg-slate-55 px-3.5 py-2 pl-9 pr-9 text-xs outline-hidden focus:ring-2`}
