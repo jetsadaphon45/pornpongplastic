@@ -14,19 +14,20 @@ import {
 } from 'lucide-react';
 
 import { Product, CartItem, User } from './types';
-import { supabaseProducts, supabaseCustomers, supabaseOrders, supabaseProfiles } from './lib/supabase';
+import { supabase, supabaseProducts, supabaseCustomers, supabaseOrders, supabaseProfiles } from './lib/supabase';
 
 import Header from './components/Header';
 import Footer from './components/Footer';
 import ProductCard from './components/ProductCard';
 import ProductDetailModal from './components/ProductDetailModal';
 import CartDrawer from './components/CartDrawer';
-import { LoginModal, RegisterModal } from './components/AuthModals';
+import { LoginModal, RegisterModal, ForgotPasswordModal } from './components/AuthModals';
 import { ProfileModal } from './components/ProfileModal';
 import { AppNotification } from './components/NotificationDropdown';
 import { AdminDashboard } from './components/AdminDashboard';
 import AdminLoginPage from './components/AdminLoginPage';
 import PaymentPage from './components/PaymentPage';
+import { ResetPasswordPage } from './components/ResetPasswordPage';
 
 import HomeSection from './components/HomeSection';
 import AboutSection from './components/AboutSection';
@@ -72,14 +73,23 @@ export default function App() {
   });
 
   // Simple Client-Side Router state
-  const [currentPath, setCurrentPath] = React.useState<string>(() => window.location.pathname);
+  const [currentPath, setCurrentPath] = React.useState<string>(() => {
+    if (typeof window !== 'undefined' && (window.location.hash.includes('type=recovery') || window.location.pathname === '/reset-password')) {
+      return '/reset-password';
+    }
+    return window.location.pathname;
+  });
 
   React.useEffect(() => {
     const handleLocationChange = () => {
-      setCurrentPath(window.location.pathname);
-      if (window.location.pathname === '/admin-dashboard') {
+      let path = window.location.pathname;
+      if (window.location.hash.includes('type=recovery')) {
+        path = '/reset-password';
+      }
+      setCurrentPath(path);
+      if (path === '/admin-dashboard') {
         setIsAdminMode(true);
-      } else if (window.location.pathname === '/admin-login') {
+      } else if (path === '/admin-login') {
         setIsAdminMode(false);
       } else {
         setIsAdminMode(false);
@@ -98,6 +108,19 @@ export default function App() {
     window.dispatchEvent(new Event('pushstate-changed'));
   };
 
+  // ตรวจจับ Password Recovery จาก Supabase Auth เพื่อนำทางสู่หน้า /reset-password อัตโนมัติ
+  React.useEffect(() => {
+    if (!supabase) return;
+    const { data: authSub } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'PASSWORD_RECOVERY') {
+        navigateTo('/reset-password');
+      }
+    });
+    return () => {
+      authSub?.subscription?.unsubscribe();
+    };
+  }, []);
+
   // Order state for payment page redirections
   const [currentOrder, setCurrentOrder] = React.useState<any>(null);
 
@@ -113,6 +136,7 @@ export default function App() {
 
   const [isLoginOpen, setIsLoginOpen] = React.useState<boolean>(false);
   const [isRegisterOpen, setIsRegisterOpen] = React.useState<boolean>(false);
+  const [isForgotPasswordOpen, setIsForgotPasswordOpen] = React.useState<boolean>(false);
   const [isProfileOpen, setIsProfileOpen] = React.useState<boolean>(false);
 
   // Notifications State (with dynamic default data to avoid database dependency)
@@ -315,7 +339,10 @@ export default function App() {
       setCurrentOrder(finalOrder);
 
       // Save/Upsert delivery address and profile details to Supabase profiles table
-      const profileUserId = currentUser?.id || (customerEmail !== 'guest@example.com' ? `user_${customerEmail.replace(/[^a-zA-Z0-9]/g, '_')}` : null);
+      // Safety check: ทำการ upsert ลง profiles เฉพาะกรณีผู้ใช้ล็อกอินเรียบร้อย (มี currentUser.id ที่ถูกต้อง)
+      const profileUserId = (currentUser?.id && currentUser.id !== 'guest' && currentUser.id !== 'undefined' && !currentUser.id.startsWith('guest')) 
+        ? currentUser.id 
+        : null;
       if (profileUserId) {
         try {
           await supabaseProfiles.upsertProfile({
@@ -437,6 +464,36 @@ export default function App() {
         onBackToHome={() => {
           setCurrentOrder(null);
           navigateTo('/');
+        }}
+        triggerToast={triggerToast}
+      />
+    );
+  }
+
+  if (currentPath === '/reset-password') {
+    return (
+      <ResetPasswordPage
+        onBackToHome={() => {
+          navigateTo('/');
+        }}
+        onPasswordResetSuccess={(user) => {
+          if (user) {
+            setCurrentUser(user);
+            try {
+              localStorage.setItem('pornpong_current_user', JSON.stringify(user));
+            } catch {
+              // ignore
+            }
+          }
+          if (window.location.hash) {
+            window.history.replaceState(null, '', '/');
+          }
+          navigateTo('/');
+          triggerToast('เปลี่ยนรหัสผ่านสำเร็จแล้ว');
+        }}
+        onOpenLogin={() => {
+          navigateTo('/');
+          setIsLoginOpen(true);
         }}
         triggerToast={triggerToast}
       />
@@ -680,23 +737,61 @@ export default function App() {
           setIsLoginOpen(false);
           setIsRegisterOpen(true);
         }}
+        onOpenForgotPassword={() => {
+          setIsLoginOpen(false);
+          setIsForgotPasswordOpen(true);
+        }}
         onLoginSuccess={async (user) => {
           let enrichedUser = { ...user };
           try {
-            const profile = await supabaseProfiles.getProfile(user.id, user.email);
-            if (profile) {
-              enrichedUser = {
-                ...enrichedUser,
-                name: profile.full_name || profile.name || enrichedUser.name,
-                phone: profile.phone || enrichedUser.phone,
-                address: profile.address || profile.delivery_address || enrichedUser.address
-              };
+            // Safety check: ตรวจสอบว่าผู้ใช้ล็อกอินเรียบร้อย (มี user.id ที่ถูกต้อง) ก่อนค่อย query ข้อมูล profiles ด้วย id
+            if (user?.id && user.id !== 'guest' && user.id !== 'undefined') {
+              const profile = await supabaseProfiles.getProfile(user.id);
+              if (profile) {
+                enrichedUser = {
+                  ...enrichedUser,
+                  name: profile.full_name || profile.name || enrichedUser.name,
+                  phone: profile.phone || enrichedUser.phone,
+                  address: profile.address || profile.delivery_address || enrichedUser.address
+                };
+              }
             }
           } catch {
             // ignore
           }
           setCurrentUser(enrichedUser);
           localStorage.setItem('pornpong_current_user', JSON.stringify(enrichedUser));
+        }}
+        triggerToast={triggerToast}
+      />
+
+      <ForgotPasswordModal
+        isOpen={isForgotPasswordOpen}
+        onClose={() => setIsForgotPasswordOpen(false)}
+        onBackToLogin={() => {
+          setIsForgotPasswordOpen(false);
+          setIsLoginOpen(true);
+        }}
+        onResetSuccess={async (user) => {
+          let enrichedUser = { ...user };
+          try {
+            if (user?.id && user.id !== 'guest' && user.id !== 'undefined') {
+              const profile = await supabaseProfiles.getProfile(user.id);
+              if (profile) {
+                enrichedUser = {
+                  ...enrichedUser,
+                  name: profile.full_name || profile.name || enrichedUser.name,
+                  phone: profile.phone || enrichedUser.phone,
+                  address: profile.address || profile.delivery_address || enrichedUser.address
+                };
+              }
+            }
+          } catch {
+            // ignore
+          }
+          setCurrentUser(enrichedUser);
+          localStorage.setItem('pornpong_current_user', JSON.stringify(enrichedUser));
+          setIsForgotPasswordOpen(false);
         }}
         triggerToast={triggerToast}
       />
@@ -711,14 +806,17 @@ export default function App() {
         onRegisterSuccess={async (user) => {
           let enrichedUser = { ...user };
           try {
-            const profile = await supabaseProfiles.getProfile(user.id, user.email);
-            if (profile) {
-              enrichedUser = {
-                ...enrichedUser,
-                name: profile.full_name || profile.name || enrichedUser.name,
-                phone: profile.phone || enrichedUser.phone,
-                address: profile.address || profile.delivery_address || enrichedUser.address
-              };
+            // Safety check: ตรวจสอบว่าผู้ใช้ล็อกอินเรียบร้อย (มี user.id ที่ถูกต้อง) ก่อนค่อย query ข้อมูล profiles ด้วย id
+            if (user?.id && user.id !== 'guest' && user.id !== 'undefined') {
+              const profile = await supabaseProfiles.getProfile(user.id);
+              if (profile) {
+                enrichedUser = {
+                  ...enrichedUser,
+                  name: profile.full_name || profile.name || enrichedUser.name,
+                  phone: profile.phone || enrichedUser.phone,
+                  address: profile.address || profile.delivery_address || enrichedUser.address
+                };
+              }
             }
           } catch {
             // ignore

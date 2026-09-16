@@ -88,9 +88,20 @@ export default function CartDrawer({
         const addressesFromDb = await supabaseUserAddresses.listByUser(userId, userEmail);
 
         // B. Load user profile details from Supabase profiles table
+        // Safety check: ตรวจสอบว่าผู้ใช้ล็อกอินเรียบร้อย (มี user.id ที่ถูกต้อง) ก่อนค่อยเรียก query ข้อมูล profiles
         let profile = null;
-        if (userId || userEmail) {
-          profile = await supabaseProfiles.getProfile(userId, userEmail);
+        const isValidLoggedInUser = Boolean(
+          userId && 
+          typeof userId === 'string' && 
+          userId.trim() && 
+          userId.trim() !== 'guest' && 
+          userId.trim() !== 'undefined' && 
+          userId.trim() !== 'null'
+        );
+
+        if (isValidLoggedInUser) {
+          // Query ด้วย Primary Key id เพียงอย่างเดียว
+          profile = await supabaseProfiles.getProfile(userId!.trim());
         }
 
         if (!isMounted) return;

@@ -601,8 +601,7 @@ export const supabaseProfiles = {
     try {
       const { data, error } = await supabase
         .from('profiles')
-        .select('*')
-        .order('created_at', { ascending: false });
+        .select('*');
 
       if (error) {
         console.warn('Could not select from profiles table in Supabase:', error.message);
@@ -615,49 +614,39 @@ export const supabaseProfiles = {
     }
   },
 
-  async getProfile(userId?: string, email?: string): Promise<DbProfile | null> {
+  /**
+   * Fetch single user profile by Primary Key 'id'
+   * - ตรวจสอบ Safety Check: ต้องมี userId ที่ถูกต้อง (ผู้ใช้ล็อกอินเรียบร้อย) ก่อนเรียก query
+   * - ใช้ .eq('id', userId) ให้ตรงตาม Primary Key ของตาราง profiles เท่านั้น
+   * - ยกเลิกการ query ด้วย user_id หรือ email โดยค้นด้วย id เพียงอย่างเดียวเพื่อป้องกัน Error 400
+   */
+  async getProfile(userId?: string): Promise<DbProfile | null> {
+    // Safety check 1: Supabase client ตรวจสอบว่าพร้อมใช้งาน
     if (!supabase) return null;
-    try {
-      // 1. Try querying by id (Supabase auth user UUID)
-      if (userId) {
-        const { data, error } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', userId)
-          .maybeSingle();
 
-        if (!error && data) {
-          return data;
-        }
-
-        // 2. Try querying by user_id column
-        const { data: byUserId, error: errUserId } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('user_id', userId)
-          .maybeSingle();
-
-        if (!errUserId && byUserId) {
-          return byUserId;
-        }
-      }
-
-      // 3. Try querying by email
-      if (email) {
-        const { data: byEmail, error: errEmail } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('email', email.toLowerCase().trim())
-          .maybeSingle();
-
-        if (!errEmail && byEmail) {
-          return byEmail;
-        }
-      }
-
+    // Safety check 2: ตรวจสอบว่าผู้ใช้ล็อกอินเรียบร้อย (มี user.id ที่ถูกต้อง) ก่อนค่อยเรียก query
+    if (!userId || typeof userId !== 'string') return null;
+    const cleanUserId = userId.trim();
+    if (!cleanUserId || cleanUserId === 'undefined' || cleanUserId === 'null' || cleanUserId === 'guest') {
       return null;
-    } catch (e) {
-      console.warn('Could not fetch from profiles table in Supabase:', e);
+    }
+
+    try {
+      // Query ตาราง profiles ด้วยเงื่อนไข 'id' (Primary Key) เพียงอย่างเดียว
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', cleanUserId)
+        .maybeSingle();
+
+      if (error) {
+        console.warn('Could not fetch from profiles table in Supabase (eq id):', error.message);
+        return null;
+      }
+
+      return data || null;
+    } catch (e: any) {
+      console.warn('Profiles getProfile caught exception:', e?.message || e);
       return null;
     }
   },
@@ -672,9 +661,19 @@ export const supabaseProfiles = {
     if (!supabase) {
       return { success: false, error: 'Supabase client not initialized' };
     }
+
+    // Safety check: ต้องมี id ที่ถูกต้อง (ตรงตาม Primary Key ของ profiles)
+    if (!profile?.id || typeof profile.id !== 'string') {
+      return { success: false, error: 'Valid user ID is required' };
+    }
+    const cleanId = profile.id.trim();
+    if (!cleanId || cleanId === 'undefined' || cleanId === 'null' || cleanId === 'guest') {
+      return { success: false, error: 'Valid user ID is required' };
+    }
+
     try {
       const payload: any = {
-        id: profile.id,
+        id: cleanId,
         full_name: profile.fullName.trim(),
         name: profile.fullName.trim(),
         phone: profile.phone.trim(),
@@ -685,37 +684,15 @@ export const supabaseProfiles = {
         payload.email = profile.email.toLowerCase().trim();
       }
 
-      // Try upsert onConflict: 'id'
+      // Upsert ตรงเข้าสู่ id ซึ่งเป็น Primary Key ของตาราง profiles โดยตรง
       const { data, error } = await supabase
         .from('profiles')
         .upsert(payload, { onConflict: 'id' })
         .select();
 
       if (error) {
-        console.warn('Upsert onConflict id failed, attempting onConflict user_id:', error.message);
-        // Fallback: try onConflict: 'user_id'
-        const userPayload: any = {
-          user_id: profile.id,
-          full_name: profile.fullName.trim(),
-          name: profile.fullName.trim(),
-          phone: profile.phone.trim(),
-          address: profile.address.trim(),
-          updated_at: new Date().toISOString()
-        };
-        if (profile.email) {
-          userPayload.email = profile.email.toLowerCase().trim();
-        }
-
-        const { data: dataUserId, error: errUserId } = await supabase
-          .from('profiles')
-          .upsert(userPayload, { onConflict: 'user_id' })
-          .select();
-
-        if (errUserId) {
-          console.warn('Upsert fallback on user_id error:', errUserId.message);
-          return { success: false, error: errUserId.message };
-        }
-        return { success: true, data: dataUserId };
+        console.warn('Profiles upsert error on id:', error.message);
+        return { success: false, error: error.message };
       }
 
       return { success: true, data };

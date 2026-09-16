@@ -1,6 +1,6 @@
 import React from 'react';
-import { X, Mail, Lock, User, Phone, Eye, EyeOff, CheckCircle2, AlertCircle, KeyRound, ArrowLeft } from 'lucide-react';
-import { supabase, supabaseCustomers } from '../lib/supabase';
+import { X, Mail, Lock, User, Phone, Eye, EyeOff, CheckCircle2, AlertCircle, KeyRound, ArrowLeft, ShieldCheck, RefreshCw } from 'lucide-react';
+import { supabase, supabaseCustomers, supabaseProfiles } from '../lib/supabase';
 
 interface UserData {
   id?: string;
@@ -10,15 +10,104 @@ interface UserData {
   address?: string;
 }
 
+// Helper ตรวจสอบรูปแบบอีเมล
+const validateEmail = (emailStr: string) => {
+  const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  return re.test(emailStr);
+};
+
+// ดักจับและแสดงข้อผิดพลาดจาก Supabase ใน Alert:
+// - ให้แสดงข้อความ error.message หรือ error.error_description จาก Supabase โดยตรงใน Alert
+// - หาก error มีวัตถุซ้อน ให้แปลงเป็น alert(JSON.stringify(error, null, 2)) เพื่อให้เห็นสาเหตุที่แท้จริงจาก Supabase
+export const handleSupabaseAuthError = (error: any): string => {
+  if (!error) {
+    const fallback = 'เกิดข้อผิดพลาดในการเชื่อมต่อกับ Supabase';
+    alert(fallback);
+    return fallback;
+  }
+
+  const isObject = typeof error === 'object' && error !== null;
+
+  // ตรวจสอบว่า error มีวัตถุซ้อน (Nested Object) หรือไม่
+  let hasNestedObject = false;
+  if (isObject) {
+    const propertyKeys = [...Object.keys(error), ...Object.getOwnPropertyNames(error)];
+    hasNestedObject = propertyKeys.some((key) => {
+      if (key === 'stack') return false; // ข้าม call stack
+      const val = error[key];
+      return typeof val === 'object' && val !== null && Object.keys(val).length > 0;
+    });
+  }
+
+  // 1. หาก error มีวัตถุซ้อน ให้แปลงเป็น alert(JSON.stringify(error, null, 2))
+  if (hasNestedObject) {
+    let stringified = '';
+    try {
+      stringified = JSON.stringify(error, null, 2);
+    } catch {
+      stringified = '';
+    }
+
+    // หาก native Error stringify ปกติได้ "{}" ให้ดึงตาม Property Names
+    if (!stringified || stringified === '{}') {
+      try {
+        const props = Object.getOwnPropertyNames(error);
+        stringified = JSON.stringify(error, props, 2);
+      } catch {
+        stringified = '';
+      }
+    }
+
+    if (stringified && stringified !== '{}') {
+      alert(stringified);
+      return error.message || error.error_description || stringified;
+    }
+  }
+
+  // 2. ให้แสดงข้อความ error.message หรือ error.error_description จาก Supabase โดยตรงใน Alert
+  if (error?.message && typeof error.message === 'string' && error.message.trim()) {
+    alert(error.message);
+    return error.message;
+  }
+
+  if (error?.error_description && typeof error.error_description === 'string' && error.error_description.trim()) {
+    alert(error.error_description);
+    return error.error_description;
+  }
+
+  // 3. หาก error เป็น object แต่ไม่มี message / error_description ให้ stringify ด้วย indent 2
+  if (isObject) {
+    try {
+      let jsonOutput = JSON.stringify(error, null, 2);
+      if (!jsonOutput || jsonOutput === '{}') {
+        const props = Object.getOwnPropertyNames(error);
+        jsonOutput = JSON.stringify(error, props, 2);
+      }
+      if (jsonOutput && jsonOutput !== '{}') {
+        alert(jsonOutput);
+        return jsonOutput;
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  // 4. กรณีเป็น string หรือค่าอื่นๆ
+  const textOutput = typeof error === 'string' ? error : (error?.toString() || 'เกิดข้อผิดพลาดจาก Supabase');
+  alert(textOutput);
+  return textOutput;
+};
+
 interface LoginModalProps {
   isOpen: boolean;
   onClose: () => void;
   onOpenRegister: () => void;
+  onOpenForgotPassword?: () => void;
   onLoginSuccess: (user: UserData) => void;
   triggerToast: (msg: string) => void;
 }
 
-export function LoginModal({ isOpen, onClose, onOpenRegister, onLoginSuccess, triggerToast }: LoginModalProps) {
+export function LoginModal({ isOpen, onClose, onOpenRegister, onOpenForgotPassword, onLoginSuccess, triggerToast }: LoginModalProps) {
   const [email, setEmail] = React.useState('');
   const [password, setPassword] = React.useState('');
   const [showPassword, setShowPassword] = React.useState(false);
@@ -26,23 +115,22 @@ export function LoginModal({ isOpen, onClose, onOpenRegister, onLoginSuccess, tr
 
   if (!isOpen) return null;
 
-  const validateEmail = (emailStr: string) => {
-    const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    return re.test(emailStr);
-  };
-
   const handleForgotPassword = (e: React.MouseEvent) => {
     e.preventDefault();
-    if (!email) {
-      setErrors({ email: 'กรุณากรอกอีเมลของท่านเพื่อรับลิงก์รีเซ็ตรหัสผ่าน' });
-      return;
+    if (onOpenForgotPassword) {
+      onOpenForgotPassword();
+    } else {
+      if (!email.trim()) {
+        setErrors({ email: 'กรุณากรอกอีเมลของท่านเพื่อรับลิงก์รีเซ็ตรหัสผ่าน' });
+        return;
+      }
+      if (!validateEmail(email.trim())) {
+        setErrors({ email: 'รูปแบบอีเมลไม่ถูกต้อง' });
+        return;
+      }
+      setErrors({});
+      triggerToast(`กำลังเปลี่ยนไปหน้าขอรับลิงก์รีเซ็ตรหัสผ่านสำหรับ ${email}`);
     }
-    if (!validateEmail(email)) {
-      setErrors({ email: 'รูปแบบอีเมลไม่ถูกต้อง' });
-      return;
-    }
-    setErrors({});
-    triggerToast(`ระบบได้ส่งลิงก์รีเซ็ตรหัสผ่านไปยัง ${email} แล้ว! (ตัวอย่างเสมือน)`);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -275,93 +363,6 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onRegisterSuccess,
       cleaned = '0' + cleaned.slice(3);
     }
     return cleaned;
-  };
-
-  const validateEmail = (emailStr: string) => {
-    const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    return re.test(emailStr);
-  };
-
-  // ดักจับและแสดงข้อผิดพลาดจาก Supabase ใน Alert:
-  // - ให้แสดงข้อความ error.message หรือ error.error_description จาก Supabase โดยตรงใน Alert
-  // - หาก error มีวัตถุซ้อน ให้แปลงเป็น alert(JSON.stringify(error, null, 2)) เพื่อให้เห็นสาเหตุที่แท้จริงจาก Supabase
-  const handleSupabaseAuthError = (error: any): string => {
-    if (!error) {
-      const fallback = 'เกิดข้อผิดพลาดในการเชื่อมต่อกับ Supabase';
-      alert(fallback);
-      return fallback;
-    }
-
-    const isObject = typeof error === 'object' && error !== null;
-
-    // ตรวจสอบว่า error มีวัตถุซ้อน (Nested Object) หรือไม่
-    let hasNestedObject = false;
-    if (isObject) {
-      const propertyKeys = [...Object.keys(error), ...Object.getOwnPropertyNames(error)];
-      hasNestedObject = propertyKeys.some((key) => {
-        if (key === 'stack') return false; // ข้าม call stack
-        const val = error[key];
-        return typeof val === 'object' && val !== null && Object.keys(val).length > 0;
-      });
-    }
-
-    // 1. หาก error มีวัตถุซ้อน ให้แปลงเป็น alert(JSON.stringify(error, null, 2))
-    if (hasNestedObject) {
-      let stringified = '';
-      try {
-        stringified = JSON.stringify(error, null, 2);
-      } catch {
-        stringified = '';
-      }
-
-      // หาก native Error stringify ปกติได้ "{}" ให้ดึงตาม Property Names
-      if (!stringified || stringified === '{}') {
-        try {
-          const props = Object.getOwnPropertyNames(error);
-          stringified = JSON.stringify(error, props, 2);
-        } catch {
-          stringified = '';
-        }
-      }
-
-      if (stringified && stringified !== '{}') {
-        alert(stringified);
-        return error.message || error.error_description || stringified;
-      }
-    }
-
-    // 2. ให้แสดงข้อความ error.message หรือ error.error_description จาก Supabase โดยตรงใน Alert
-    if (error?.message && typeof error.message === 'string' && error.message.trim()) {
-      alert(error.message);
-      return error.message;
-    }
-
-    if (error?.error_description && typeof error.error_description === 'string' && error.error_description.trim()) {
-      alert(error.error_description);
-      return error.error_description;
-    }
-
-    // 3. หาก error เป็น object แต่ไม่มี message / error_description ให้ stringify ด้วย indent 2
-    if (isObject) {
-      try {
-        let jsonOutput = JSON.stringify(error, null, 2);
-        if (!jsonOutput || jsonOutput === '{}') {
-          const props = Object.getOwnPropertyNames(error);
-          jsonOutput = JSON.stringify(error, props, 2);
-        }
-        if (jsonOutput && jsonOutput !== '{}') {
-          alert(jsonOutput);
-          return jsonOutput;
-        }
-      } catch {
-        // ignore
-      }
-    }
-
-    // 4. กรณีเป็น string หรือค่าอื่นๆ
-    const textOutput = typeof error === 'string' ? error : (error?.toString() || 'เกิดข้อผิดพลาดจาก Supabase');
-    alert(textOutput);
-    return textOutput;
   };
 
   // 1. ฟังก์ชันสั่งส่ง OTP ผ่าน Supabase Auth
@@ -897,6 +898,575 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onRegisterSuccess,
                 คลิกเพื่อเข้าสู่ระบบที่นี่
               </button>
             </div>
+          </form>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export interface ForgotPasswordModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onBackToLogin: () => void;
+  onResetSuccess?: (user: UserData) => void;
+  triggerToast: (msg: string) => void;
+}
+
+export function ForgotPasswordModal({
+  isOpen,
+  onClose,
+  onBackToLogin,
+  onResetSuccess,
+  triggerToast,
+}: ForgotPasswordModalProps) {
+  const [step, setStep] = React.useState<'email' | 'otp' | 'new_password'>('email');
+  const [email, setEmail] = React.useState('');
+  const [otpCode, setOtpCode] = React.useState('');
+  const [newPassword, setNewPassword] = React.useState('');
+  const [confirmPassword, setConfirmPassword] = React.useState('');
+  const [showPassword, setShowPassword] = React.useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = React.useState(false);
+  const [isLoading, setIsLoading] = React.useState(false);
+  const [countdown, setCountdown] = React.useState(0);
+  const [errors, setErrors] = React.useState<Record<string, string>>({});
+
+  // Reset state on modal open/close
+  React.useEffect(() => {
+    if (isOpen) {
+      setStep('email');
+      setOtpCode('');
+      setNewPassword('');
+      setConfirmPassword('');
+      setErrors({});
+    }
+  }, [isOpen]);
+
+  // Countdown timer for resending OTP
+  React.useEffect(() => {
+    if (countdown > 0) {
+      const timer = setTimeout(() => setCountdown((prev) => prev - 1), 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [countdown]);
+
+  if (!isOpen) return null;
+
+  // ขั้นตอนที่ 1 (กรอกอีเมล): ขอรับรหัส OTP ผ่าน supabase.auth.resetPasswordForEmail(email)
+  const handleRequestOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanEmail = email.trim();
+    if (!cleanEmail) {
+      setErrors({ email: 'กรุณากรอกอีเมลที่ลงทะเบียนไว้' });
+      return;
+    }
+    if (!validateEmail(cleanEmail)) {
+      setErrors({ email: 'รูปแบบอีเมลไม่ถูกต้อง' });
+      return;
+    }
+
+    setIsLoading(true);
+    setErrors({});
+
+    try {
+      if (!supabase) {
+        throw new Error('Supabase client ยังไม่ได้ถูกกำหนดค่า');
+      }
+
+      // เรียกใช้งาน supabase.auth.resetPasswordForEmail(email)
+      const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail);
+
+      if (error) {
+        const errorMsg = handleSupabaseAuthError(error);
+        setErrors({ email: errorMsg });
+        return;
+      }
+
+      triggerToast(`ส่งรหัส OTP 6 หลักไปยัง ${cleanEmail} เรียบร้อยแล้ว`);
+      setCountdown(60);
+      // สลับหน้า Modal ไปยังหน้า "กรอกรหัส OTP 6 หลัก"
+      setStep('otp');
+    } catch (err: any) {
+      const errorMsg = handleSupabaseAuthError(err);
+      setErrors({ email: errorMsg });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // ขอรหัส OTP ใหม่อีกครั้ง
+  const handleResendOtp = async () => {
+    if (countdown > 0 || isLoading) return;
+    setIsLoading(true);
+    try {
+      if (!supabase) throw new Error('Supabase client ยังไม่ได้ถูกกำหนดค่า');
+      const { error } = await supabase.auth.resetPasswordForEmail(email.trim());
+      if (error) {
+        triggerToast(handleSupabaseAuthError(error));
+        return;
+      }
+      setCountdown(60);
+      triggerToast(`ส่งรหัส OTP ใหม่อีกครั้งไปยัง ${email.trim()} เรียบร้อยแล้ว`);
+    } catch (err: any) {
+      triggerToast(handleSupabaseAuthError(err));
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // ขั้นตอนที่ 2 (ยืนยัน OTP 6 หลัก): เรียกใช้งาน supabase.auth.verifyOtp({ email, token, type: 'recovery' })
+  const handleVerifyOtp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanedOtp = otpCode.trim();
+
+    if (!cleanedOtp) {
+      setErrors({ otp: 'กรุณากรอกรหัส OTP 6 หลัก' });
+      return;
+    }
+    if (cleanedOtp.length !== 6) {
+      setErrors({ otp: 'กรุณากรอกรหัส OTP ให้ครบ 6 หลัก' });
+      return;
+    }
+
+    setIsLoading(true);
+    setErrors({});
+
+    try {
+      if (!supabase) {
+        throw new Error('Supabase client ยังไม่ได้ถูกกำหนดค่า');
+      }
+
+      // เรียกใช้งาน supabase.auth.verifyOtp({ email, token, type: 'recovery' })
+      const { error } = await supabase.auth.verifyOtp({
+        email: email.trim(),
+        token: cleanedOtp,
+        type: 'recovery',
+      });
+
+      if (error) {
+        const errorMsg = handleSupabaseAuthError(error);
+        setErrors({ otp: errorMsg });
+        return;
+      }
+
+      // หากรหัสถูกต้อง ให้เปิดหน้า/สลับไปยังขั้นตอน "ตั้งรหัสผ่านใหม่" ทันที
+      setStep('new_password');
+      triggerToast('ยืนยันรหัส OTP ถูกต้อง กรุณากำหนดรหัสผ่านใหม่');
+    } catch (err: any) {
+      const errorMsg = handleSupabaseAuthError(err);
+      setErrors({ otp: errorMsg });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // ขั้นตอนที่ 3 (ตั้งรหัสผ่านใหม่ & Auto Login): เรียกใช้งาน supabase.auth.updateUser({ password: newPassword })
+  const handleUpdatePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const newErrors: Record<string, string> = {};
+
+    if (!newPassword) {
+      newErrors.newPassword = 'กรุณาระบุรหัสผ่านใหม่';
+    } else if (newPassword.length < 6) {
+      newErrors.newPassword = 'รหัสผ่านต้องมีความยาวอย่างน้อย 6 ตัวอักษร';
+    }
+
+    if (!confirmPassword) {
+      newErrors.confirmPassword = 'กรุณายืนยันรหัสผ่านใหม่';
+    } else if (newPassword !== confirmPassword) {
+      newErrors.confirmPassword = 'รหัสผ่านทั้งสองช่องไม่ตรงกัน';
+    }
+
+    if (Object.keys(newErrors).length > 0) {
+      setErrors(newErrors);
+      return;
+    }
+
+    setIsLoading(true);
+    setErrors({});
+
+    try {
+      if (!supabase) {
+        throw new Error('Supabase client ยังไม่ได้ถูกกำหนดค่า');
+      }
+
+      // เรียกใช้งาน supabase.auth.updateUser({ password: newPassword })
+      const { data, error } = await supabase.auth.updateUser({
+        password: newPassword,
+      });
+
+      if (error) {
+        const errorMsg = handleSupabaseAuthError(error);
+        setErrors({ form: errorMsg });
+        return;
+      }
+
+      // เมื่อบันทึกสำเร็จ ให้แสดงแจ้งเตือน "เปลี่ยนรหัสผ่านสำเร็จ"
+      triggerToast('เปลี่ยนรหัสผ่านสำเร็จ');
+
+      // ทำการ Auto Login พาลูกค้าเข้าสู่ระบบหน้าหลักทันที
+      let authUser = data?.user;
+      if (!authUser) {
+        const { data: userData } = await supabase.auth.getUser();
+        authUser = userData?.user;
+      }
+
+      let enrichedUser: UserData = {
+        id: authUser?.id || `user_${email.trim().replace(/[^a-zA-Z0-9]/g, '_')}`,
+        name: authUser?.user_metadata?.full_name || authUser?.user_metadata?.name || email.trim().split('@')[0],
+        email: email.trim(),
+        phone: authUser?.user_metadata?.phone || '',
+        address: '',
+      };
+
+      if (authUser?.id) {
+        try {
+          const profile = await supabaseProfiles.getProfile(authUser.id);
+          if (profile) {
+            enrichedUser.name = profile.full_name || profile.name || enrichedUser.name;
+            enrichedUser.phone = profile.phone || enrichedUser.phone;
+            enrichedUser.address = profile.address || profile.delivery_address || enrichedUser.address;
+          }
+        } catch {
+          // ignore
+        }
+      }
+
+      if (onResetSuccess) {
+        onResetSuccess(enrichedUser);
+      }
+      onClose();
+    } catch (err: any) {
+      const errorMsg = handleSupabaseAuthError(err);
+      setErrors({ form: errorMsg });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs font-sans">
+      <div 
+        className="relative w-full max-w-md overflow-hidden rounded-2xl border border-sky-100 bg-white shadow-2xl transition-all duration-350 animate-fadeIn"
+        id="forgot-password-modal-container"
+      >
+        {/* Modal Header */}
+        <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4 bg-gradient-to-r from-sky-50 to-white">
+          <div>
+            <h2 className="font-display text-base font-extrabold text-slate-850">
+              {step === 'email' && 'ลืมรหัสผ่าน (ขอรหัส OTP)'}
+              {step === 'otp' && 'ยืนยันรหัส OTP 6 หลัก'}
+              {step === 'new_password' && 'ตั้งรหัสผ่านใหม่'}
+            </h2>
+            <p className="text-[11px] text-slate-500 mt-0.5">
+              {step === 'email' && 'ระบุอีเมลเพื่อรับรหัส OTP 6 หลักสำหรับรีเซ็ตรหัสผ่าน'}
+              {step === 'otp' && `กรอกรหัส 6 หลักที่ได้รับทางอีเมล ${email}`}
+              {step === 'new_password' && 'กำหนดรหัสผ่านใหม่สำหรับเข้าสู่ระบบ'}
+            </p>
+          </div>
+          <button 
+            onClick={onClose}
+            className="rounded-full p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors cursor-pointer"
+            id="close-forgot-password-modal"
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* Step Indicator Progress */}
+        <div className="flex items-center justify-between px-6 py-2.5 bg-slate-50 border-b border-slate-100 text-[11px] font-semibold">
+          <div className={`flex items-center gap-1.5 ${step === 'email' ? 'text-brand-blue' : 'text-emerald-600'}`}>
+            <span className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold ${
+              step === 'email' ? 'bg-brand-blue text-white' : 'bg-emerald-100 text-emerald-700'
+            }`}>
+              1
+            </span>
+            <span>กรอกอีเมล</span>
+          </div>
+          <span className="text-slate-300">──</span>
+          <div className={`flex items-center gap-1.5 ${
+            step === 'otp' ? 'text-brand-blue' : step === 'new_password' ? 'text-emerald-600' : 'text-slate-400'
+          }`}>
+            <span className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold ${
+              step === 'otp' ? 'bg-brand-blue text-white' : step === 'new_password' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-500'
+            }`}>
+              2
+            </span>
+            <span>ยืนยัน OTP</span>
+          </div>
+          <span className="text-slate-300">──</span>
+          <div className={`flex items-center gap-1.5 ${step === 'new_password' ? 'text-brand-blue' : 'text-slate-400'}`}>
+            <span className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold ${
+              step === 'new_password' ? 'bg-brand-blue text-white' : 'bg-slate-200 text-slate-500'
+            }`}>
+              3
+            </span>
+            <span>รหัสผ่านใหม่</span>
+          </div>
+        </div>
+
+        {/* Modal Body */}
+        {/* ==================== STEP 1: กรอกอีเมล ==================== */}
+        {step === 'email' && (
+          <form onSubmit={handleRequestOtp} className="p-6 space-y-4">
+            {errors.email && (
+              <div className="flex items-start gap-2.5 rounded-lg bg-red-50 p-3 text-xs text-red-600 border border-red-100">
+                <AlertCircle size={15} className="shrink-0 mt-0.5" />
+                <span>{errors.email}</span>
+              </div>
+            )}
+
+            <div className="rounded-xl border border-sky-200/80 bg-sky-50/80 p-3.5 flex items-center gap-2.5 text-xs text-slate-700">
+              <div className="h-7 w-7 rounded-lg bg-brand-blue/10 flex items-center justify-center shrink-0 text-brand-blue">
+                <KeyRound size={15} />
+              </div>
+              <div className="flex-1 text-[11px] text-slate-600 leading-normal">
+                กรอกอีเมลที่ลงทะเบียนไว้ ระบบจะส่งรหัส OTP 6 หลักไปยังอีเมลของคุณเพื่อยืนยันตัวตน
+              </div>
+            </div>
+
+            {/* Email Input */}
+            <div className="space-y-1">
+              <label className="block text-xs font-bold text-slate-600">อีเมล (Email)</label>
+              <div className="relative">
+                <span className="absolute left-3 top-2.5 text-slate-400">
+                  <Mail size={15} />
+                </span>
+                <input
+                  type="text"
+                  placeholder="example@yourmail.com"
+                  value={email}
+                  onChange={(e) => {
+                    setEmail(e.target.value);
+                    if (errors.email) setErrors({});
+                  }}
+                  className={`w-full rounded-xl border ${
+                    errors.email ? 'border-red-400 focus:border-red-500 focus:ring-red-50' : 'border-slate-200 focus:border-brand-blue focus:ring-sky-100'
+                  } bg-slate-55 px-3.5 py-2 pl-9 text-xs outline-hidden focus:ring-2`}
+                  id="forgot-password-email-input"
+                  autoFocus
+                />
+              </div>
+            </div>
+
+            {/* Request OTP Button */}
+            <button
+              type="submit"
+              disabled={isLoading}
+              className="w-full rounded-xl bg-brand-blue hover:bg-brand-blue-light text-white font-bold text-xs py-3 shadow-md shadow-sky-50 transition-colors cursor-pointer disabled:opacity-50 flex items-center justify-center gap-1.5"
+              id="request-otp-button"
+            >
+              {isLoading ? (
+                <div className="h-4 w-4 rounded-full border-2 border-white border-t-transparent animate-spin" />
+              ) : (
+                <span>ขอรับรหัส OTP</span>
+              )}
+            </button>
+
+            {/* Back to Login Button */}
+            <div className="text-center pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  onBackToLogin();
+                }}
+                className="text-xs font-semibold text-slate-600 hover:text-brand-blue inline-flex items-center gap-1.5 transition-colors cursor-pointer"
+                id="back-to-login-button"
+              >
+                <ArrowLeft size={14} />
+                <span>ย้อนกลับไปหน้าเข้าสู่ระบบ</span>
+              </button>
+            </div>
+          </form>
+        )}
+
+        {/* ==================== STEP 2: ยืนยัน OTP 6 หลัก ==================== */}
+        {step === 'otp' && (
+          <form onSubmit={handleVerifyOtp} className="p-6 space-y-4">
+            {errors.otp && (
+              <div className="flex items-start gap-2.5 rounded-lg bg-red-50 p-3 text-xs text-red-600 border border-red-100">
+                <AlertCircle size={15} className="shrink-0 mt-0.5" />
+                <span>{errors.otp}</span>
+              </div>
+            )}
+
+            {/* Info Box */}
+            <div className="rounded-xl border border-sky-200/80 bg-sky-50/80 p-3.5 flex items-center gap-2.5 text-xs text-slate-700 shadow-xs">
+              <div className="h-7 w-7 rounded-lg bg-brand-blue/10 flex items-center justify-center shrink-0 text-brand-blue">
+                <KeyRound size={15} />
+              </div>
+              <div className="flex-1">
+                <span className="font-bold text-brand-blue block text-[11px]">รหัส OTP 6 หลักถูกส่งไปยังอีเมลแล้ว</span>
+                <span className="text-[10px] text-slate-600 truncate block">{email}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setStep('email')}
+                className="text-[10px] text-brand-blue font-bold hover:underline shrink-0"
+              >
+                เปลี่ยนอีเมล
+              </button>
+            </div>
+
+            {/* Centered OTP Input */}
+            <div className="space-y-2 py-2">
+              <label className="block text-center text-xs font-bold text-slate-700">
+                กรอกรหัสยืนยัน OTP (6 ตัวอักษร/ตัวเลข)
+              </label>
+              <div className="relative flex justify-center">
+                <input
+                  type="text"
+                  maxLength={6}
+                  autoFocus
+                  placeholder="------"
+                  value={otpCode}
+                  onChange={(e) => {
+                    const val = e.target.value.trim().slice(0, 6);
+                    setOtpCode(val);
+                    if (errors.otp) setErrors({});
+                  }}
+                  className={`w-4/5 max-w-[240px] text-center font-mono text-2xl font-bold tracking-[0.5em] rounded-xl border ${
+                    errors.otp ? 'border-red-400 focus:border-red-500 focus:ring-red-50' : 'border-slate-200 focus:border-brand-blue focus:ring-sky-50'
+                  } bg-slate-50 py-3 px-4 outline-hidden focus:ring-4 transition-all`}
+                  id="reset-otp-input"
+                />
+              </div>
+            </div>
+
+            {/* Verify OTP Button */}
+            <button
+              type="submit"
+              disabled={isLoading || otpCode.trim().length !== 6}
+              className="w-full rounded-xl bg-brand-blue hover:bg-brand-blue-light text-white font-bold text-xs py-3 shadow-md shadow-sky-50 transition-colors cursor-pointer disabled:opacity-50 flex items-center justify-center gap-1.5"
+              id="verify-reset-otp-button"
+            >
+              {isLoading ? (
+                <div className="h-4 w-4 rounded-full border-2 border-white border-t-transparent animate-spin" />
+              ) : (
+                <span>ยืนยันรหัส OTP</span>
+              )}
+            </button>
+
+            {/* Resend OTP */}
+            <div className="flex items-center justify-between pt-1 text-[11px] text-slate-500">
+              <button
+                type="button"
+                onClick={() => setStep('email')}
+                className="inline-flex items-center gap-1 text-slate-600 hover:text-brand-blue cursor-pointer"
+              >
+                <ArrowLeft size={13} />
+                <span>ย้อนกลับ</span>
+              </button>
+
+              <button
+                type="button"
+                disabled={countdown > 0 || isLoading}
+                onClick={handleResendOtp}
+                className="inline-flex items-center gap-1 font-semibold text-brand-blue hover:underline cursor-pointer disabled:text-slate-400 disabled:no-underline"
+              >
+                <RefreshCw size={12} className={isLoading ? 'animate-spin' : ''} />
+                {countdown > 0 ? `ขอรหัสใหม่ได้ใน ${countdown} วิ` : 'ขอรหัส OTP ใหม่อีกครั้ง'}
+              </button>
+            </div>
+          </form>
+        )}
+
+        {/* ==================== STEP 3: ตั้งรหัสผ่านใหม่ & Auto Login ==================== */}
+        {step === 'new_password' && (
+          <form onSubmit={handleUpdatePassword} className="p-6 space-y-4">
+            {errors.form && (
+              <div className="flex items-start gap-2.5 rounded-lg bg-red-50 p-3 text-xs text-red-600 border border-red-100">
+                <AlertCircle size={15} className="shrink-0 mt-0.5" />
+                <span>{errors.form}</span>
+              </div>
+            )}
+
+            <div className="rounded-xl border border-emerald-200/80 bg-emerald-50/80 p-3.5 flex items-center gap-2.5 text-xs text-emerald-800">
+              <div className="h-7 w-7 rounded-lg bg-emerald-100 flex items-center justify-center shrink-0 text-emerald-600">
+                <ShieldCheck size={16} />
+              </div>
+              <div className="flex-1 text-[11px] leading-normal">
+                ยืนยันรหัส OTP สำเร็จแล้ว กรุณากำหนดรหัสผ่านใหม่สำหรับ <span className="font-semibold text-emerald-900">{email}</span>
+              </div>
+            </div>
+
+            {/* New Password */}
+            <div className="space-y-1">
+              <label className="block text-xs font-bold text-slate-600">รหัสผ่านใหม่ (อย่างน้อย 6 ตัวอักษร)</label>
+              <div className="relative">
+                <span className="absolute left-3 top-2.5 text-slate-400">
+                  <Lock size={15} />
+                </span>
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  placeholder="กรอกรหัสผ่านใหม่"
+                  value={newPassword}
+                  onChange={(e) => {
+                    setNewPassword(e.target.value);
+                    if (errors.newPassword || errors.form) setErrors({});
+                  }}
+                  className={`w-full rounded-xl border ${
+                    errors.newPassword ? 'border-red-400 focus:border-red-500 focus:ring-red-50' : 'border-slate-200 focus:border-brand-blue focus:ring-sky-100'
+                  } bg-slate-55 px-3.5 py-2 pl-9 pr-9 text-xs outline-hidden focus:ring-2`}
+                  id="modal-new-password-input"
+                  autoFocus
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600 cursor-pointer"
+                >
+                  {showPassword ? <EyeOff size={15} /> : <Eye size={15} />}
+                </button>
+              </div>
+              {errors.newPassword && <p className="text-[10px] font-semibold text-red-500">{errors.newPassword}</p>}
+            </div>
+
+            {/* Confirm Password */}
+            <div className="space-y-1">
+              <label className="block text-xs font-bold text-slate-600">ยืนยันรหัสผ่านใหม่</label>
+              <div className="relative">
+                <span className="absolute left-3 top-2.5 text-slate-400">
+                  <Lock size={15} />
+                </span>
+                <input
+                  type={showConfirmPassword ? 'text' : 'password'}
+                  placeholder="กรอกรหัสผ่านใหม่อีกครั้ง"
+                  value={confirmPassword}
+                  onChange={(e) => {
+                    setConfirmPassword(e.target.value);
+                    if (errors.confirmPassword || errors.form) setErrors({});
+                  }}
+                  className={`w-full rounded-xl border ${
+                    errors.confirmPassword ? 'border-red-400 focus:border-red-500 focus:ring-red-50' : 'border-slate-200 focus:border-brand-blue focus:ring-sky-100'
+                  } bg-slate-55 px-3.5 py-2 pl-9 pr-9 text-xs outline-hidden focus:ring-2`}
+                  id="modal-confirm-password-input"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                  className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600 cursor-pointer"
+                >
+                  {showConfirmPassword ? <EyeOff size={15} /> : <Eye size={15} />}
+                </button>
+              </div>
+              {errors.confirmPassword && <p className="text-[10px] font-semibold text-red-500">{errors.confirmPassword}</p>}
+            </div>
+
+            {/* Submit Button */}
+            <button
+              type="submit"
+              disabled={isLoading}
+              className="w-full rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs py-3 shadow-md shadow-emerald-50 transition-colors cursor-pointer disabled:opacity-50 flex items-center justify-center gap-1.5"
+              id="save-new-password-modal-button"
+            >
+              {isLoading ? (
+                <div className="h-4 w-4 rounded-full border-2 border-white border-t-transparent animate-spin" />
+              ) : (
+                <span>บันทึกรหัสผ่านใหม่</span>
+              )}
+            </button>
           </form>
         )}
       </div>
