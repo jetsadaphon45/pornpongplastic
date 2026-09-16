@@ -282,84 +282,86 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onRegisterSuccess,
     return re.test(emailStr);
   };
 
-  // Helper to format Auth / OTP errors cleanly without returning "{}"
-  const formatAuthError = (err: any): { alertMessage: string; formMessage: string } => {
-    if (!err) {
-      const fallback = 'ไม่สามารถส่งรหัส OTP ได้ กรุณาตรวจสอบอีเมลหรือการตั้งค่า SMTP';
-      return { alertMessage: fallback, formMessage: fallback };
+  // ดักจับและแสดงข้อผิดพลาดจาก Supabase ใน Alert:
+  // - ให้แสดงข้อความ error.message หรือ error.error_description จาก Supabase โดยตรงใน Alert
+  // - หาก error มีวัตถุซ้อน ให้แปลงเป็น alert(JSON.stringify(error, null, 2)) เพื่อให้เห็นสาเหตุที่แท้จริงจาก Supabase
+  const handleSupabaseAuthError = (error: any): string => {
+    if (!error) {
+      const fallback = 'เกิดข้อผิดพลาดในการเชื่อมต่อกับ Supabase';
+      alert(fallback);
+      return fallback;
     }
 
-    // 1. Extract error details safely (preventing native Error from stringifying to "{}")
-    let rawDetail = '';
-    if (typeof err === 'string' && err.trim()) {
-      rawDetail = err.trim();
-    } else if (err?.message && typeof err.message === 'string' && err.message.trim()) {
-      rawDetail = err.message.trim();
-    } else if (err?.error_description && typeof err.error_description === 'string' && err.error_description.trim()) {
-      rawDetail = err.error_description.trim();
-    } else if (err?.description && typeof err.description === 'string' && err.description.trim()) {
-      rawDetail = err.description.trim();
-    } else if (err?.msg && typeof err.msg === 'string' && err.msg.trim()) {
-      rawDetail = err.msg.trim();
-    } else {
+    const isObject = typeof error === 'object' && error !== null;
+
+    // ตรวจสอบว่า error มีวัตถุซ้อน (Nested Object) หรือไม่
+    let hasNestedObject = false;
+    if (isObject) {
+      const propertyKeys = [...Object.keys(error), ...Object.getOwnPropertyNames(error)];
+      hasNestedObject = propertyKeys.some((key) => {
+        if (key === 'stack') return false; // ข้าม call stack
+        const val = error[key];
+        return typeof val === 'object' && val !== null && Object.keys(val).length > 0;
+      });
+    }
+
+    // 1. หาก error มีวัตถุซ้อน ให้แปลงเป็น alert(JSON.stringify(error, null, 2))
+    if (hasNestedObject) {
+      let stringified = '';
       try {
-        const props = Object.getOwnPropertyNames(err);
-        if (props.length > 0) {
-          const serialized = JSON.stringify(err, props);
-          if (serialized && serialized !== '{}') {
-            rawDetail = serialized;
-          }
-        }
-        if (!rawDetail) {
-          const standardJson = JSON.stringify(err);
-          if (standardJson && standardJson !== '{}') {
-            rawDetail = standardJson;
-          }
-        }
+        stringified = JSON.stringify(error, null, 2);
       } catch {
-        rawDetail = String(err);
+        stringified = '';
+      }
+
+      // หาก native Error stringify ปกติได้ "{}" ให้ดึงตาม Property Names
+      if (!stringified || stringified === '{}') {
+        try {
+          const props = Object.getOwnPropertyNames(error);
+          stringified = JSON.stringify(error, props, 2);
+        } catch {
+          stringified = '';
+        }
+      }
+
+      if (stringified && stringified !== '{}') {
+        alert(stringified);
+        return error.message || error.error_description || stringified;
       }
     }
 
-    if (!rawDetail || rawDetail === '{}' || rawDetail === '[object Object]') {
-      rawDetail = 'ไม่สามารถส่งรหัส OTP ได้';
+    // 2. ให้แสดงข้อความ error.message หรือ error.error_description จาก Supabase โดยตรงใน Alert
+    if (error?.message && typeof error.message === 'string' && error.message.trim()) {
+      alert(error.message);
+      return error.message;
     }
 
-    const lower = rawDetail.toLowerCase();
-
-    // 2. Identify common Supabase SMTP, Auth, or Rate-limit failure cases
-    let thaiNotice = 'ไม่สามารถส่งรหัส OTP ได้ กรุณาตรวจสอบอีเมลหรือการตั้งค่า SMTP';
-    if (
-      lower.includes('smtp') ||
-      lower.includes('error sending') ||
-      lower.includes('sending confirmation') ||
-      lower.includes('mail') ||
-      lower.includes('email provider') ||
-      lower.includes('over_email_send_rate_limit') ||
-      lower.includes('email rate limit') ||
-      lower.includes('500: internal server error')
-    ) {
-      thaiNotice = 'ไม่สามารถส่งรหัส OTP ได้ กรุณาตรวจสอบอีเมลหรือการตั้งค่า SMTP';
-    } else if (lower.includes('rate limit') || lower.includes('too many requests')) {
-      thaiNotice = 'ขอรหัส OTP ถี่เกินไป กรุณารอสักครู่แล้วลองใหม่อีกครั้ง';
-    } else if (lower.includes('invalid email') || lower.includes('valid email')) {
-      thaiNotice = 'รูปแบบอีเมลไม่ถูกต้องหรือไม่สามารถรับอีเมลได้';
-    } else if (lower.includes('already registered') || lower.includes('already exists')) {
-      thaiNotice = 'อีเมลนี้ลงทะเบียนในระบบแล้ว กรุณาเข้าสู่ระบบ';
-    } else if (lower.includes('ยังไม่ได้ถูกกำหนดค่า') || lower.includes('not configured')) {
-      thaiNotice = 'ระบบ Supabase ยังไม่ได้เชื่อมต่ออย่างสมบูรณ์';
+    if (error?.error_description && typeof error.error_description === 'string' && error.error_description.trim()) {
+      alert(error.error_description);
+      return error.error_description;
     }
 
-    // Readable message for alert and inline form error
-    const displayDetail = (rawDetail && rawDetail !== thaiNotice) ? rawDetail : '';
-    const alertMessage = displayDetail
-      ? `${thaiNotice}\n\n(รายละเอียด: ${displayDetail})`
-      : thaiNotice;
-    const formMessage = displayDetail
-      ? `${thaiNotice} (${displayDetail})`
-      : thaiNotice;
+    // 3. หาก error เป็น object แต่ไม่มี message / error_description ให้ stringify ด้วย indent 2
+    if (isObject) {
+      try {
+        let jsonOutput = JSON.stringify(error, null, 2);
+        if (!jsonOutput || jsonOutput === '{}') {
+          const props = Object.getOwnPropertyNames(error);
+          jsonOutput = JSON.stringify(error, props, 2);
+        }
+        if (jsonOutput && jsonOutput !== '{}') {
+          alert(jsonOutput);
+          return jsonOutput;
+        }
+      } catch {
+        // ignore
+      }
+    }
 
-    return { alertMessage, formMessage };
+    // 4. กรณีเป็น string หรือค่าอื่นๆ
+    const textOutput = typeof error === 'string' ? error : (error?.toString() || 'เกิดข้อผิดพลาดจาก Supabase');
+    alert(textOutput);
+    return textOutput;
   };
 
   // 1. ฟังก์ชันสั่งส่ง OTP ผ่าน Supabase Auth
@@ -423,21 +425,59 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onRegisterSuccess,
         }
       });
 
-      if (error) throw error;
+      if (error) {
+        const errorMsg = handleSupabaseAuthError(error);
+        setErrors({ form: errorMsg });
+        return;
+      }
 
       setStep('otp'); // สลับไปหน้ากรอก OTP
       setErrors({});
       triggerToast(`ส่งรหัส OTP ไปยัง ${email.trim()} เรียบร้อยแล้ว`);
     } catch (err: any) {
-      const { alertMessage, formMessage } = formatAuthError(err);
-      setErrors({ form: formMessage });
-      alert(alertMessage);
+      const errorMsg = handleSupabaseAuthError(err);
+      setErrors({ form: errorMsg });
     } finally {
       setIsLoading(false);
     }
   };
 
-  // 2. ฟังก์ชันยืนยัน OTP ผ่าน Supabase Auth
+  // 2. ฟังก์ชันขอส่งรหัส OTP ใหม่อีกครั้ง
+  const handleResendOtp = async () => {
+    setIsLoading(true);
+    try {
+      if (!supabase) {
+        throw new Error('Supabase client ยังไม่ได้ถูกกำหนดค่า');
+      }
+      const cleanedPhone = normalizeThaiPhone(phone);
+      const { error } = await supabase.auth.signInWithOtp({
+        email: email.trim(),
+        options: {
+          shouldCreateUser: true,
+          data: {
+            full_name: fullName.trim(),
+            phone: cleanedPhone,
+          }
+        }
+      });
+
+      if (error) {
+        const errorMsg = handleSupabaseAuthError(error);
+        setErrors({ otp: errorMsg });
+        return;
+      }
+
+      setErrors({});
+      triggerToast(`ส่งรหัส OTP ใหม่ไปยัง ${email.trim()} เรียบร้อยแล้ว`);
+    } catch (err: any) {
+      const errorMsg = handleSupabaseAuthError(err);
+      setErrors({ otp: errorMsg });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // 3. ฟังก์ชันยืนยัน OTP ผ่าน Supabase Auth
   const handleVerifyOtpAndCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     const cleanedOtp = otpCode.trim();
@@ -478,7 +518,9 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onRegisterSuccess,
       }
 
       if (verifyResult.error) {
-        throw verifyResult.error;
+        const errorMsg = handleSupabaseAuthError(verifyResult.error);
+        setErrors({ otp: errorMsg });
+        return;
       }
 
       // Save customer profile in database
@@ -519,12 +561,8 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onRegisterSuccess,
 
       onClose();
     } catch (err: any) {
-      const { alertMessage, formMessage } = formatAuthError(err);
-      const otpError = err?.message || formMessage || 'รหัส OTP ไม่ถูกต้องหรือหมดอายุ โปรดลองใหม่อีกครั้ง';
-      setErrors({
-        otp: otpError
-      });
-      alert(alertMessage || otpError);
+      const errorMsg = handleSupabaseAuthError(err);
+      setErrors({ otp: errorMsg });
     } finally {
       setIsLoading(false);
     }
@@ -619,19 +657,29 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onRegisterSuccess,
               )}
             </button>
 
-            {/* Back Button Link */}
-            <div className="text-center pt-1">
+            {/* Resend OTP & Back Button Links */}
+            <div className="flex flex-col items-center gap-2 pt-1 text-xs">
+              <button
+                type="button"
+                disabled={isLoading}
+                onClick={handleResendOtp}
+                className="font-semibold text-brand-blue hover:text-sky-700 hover:underline cursor-pointer disabled:opacity-50"
+                id="register-resend-otp-button"
+              >
+                ไม่ได้รับรหัส? คลิกเพื่อส่ง OTP ใหม่อีกครั้ง
+              </button>
+
               <button
                 type="button"
                 onClick={() => {
                   setStep('form');
                   setErrors({});
                 }}
-                className="text-xs font-semibold text-slate-500 hover:text-slate-700 inline-flex items-center gap-1 transition-colors cursor-pointer"
+                className="font-medium text-slate-500 hover:text-slate-700 inline-flex items-center gap-1 transition-colors cursor-pointer"
                 id="back-to-register-form"
               >
                 <ArrowLeft size={13} />
-                <span>← ย้อนกลับไปแก้ไขข้อมูล</span>
+                <span>ย้อนกลับไปแก้ไขข้อมูล</span>
               </button>
             </div>
           </form>
