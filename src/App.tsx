@@ -137,6 +137,7 @@ export default function App() {
   const [isLoginOpen, setIsLoginOpen] = React.useState<boolean>(false);
   const [isRegisterOpen, setIsRegisterOpen] = React.useState<boolean>(false);
   const [isForgotPasswordOpen, setIsForgotPasswordOpen] = React.useState<boolean>(false);
+  const [forgotPasswordEmail, setForgotPasswordEmail] = React.useState<string>('');
   const [isProfileOpen, setIsProfileOpen] = React.useState<boolean>(false);
 
   // Notifications State (with dynamic default data to avoid database dependency)
@@ -737,7 +738,8 @@ export default function App() {
           setIsLoginOpen(false);
           setIsRegisterOpen(true);
         }}
-        onOpenForgotPassword={() => {
+        onOpenForgotPassword={(currentEmail) => {
+          setForgotPasswordEmail(currentEmail || '');
           setIsLoginOpen(false);
           setIsForgotPasswordOpen(true);
         }}
@@ -767,7 +769,11 @@ export default function App() {
 
       <ForgotPasswordModal
         isOpen={isForgotPasswordOpen}
-        onClose={() => setIsForgotPasswordOpen(false)}
+        initialEmail={forgotPasswordEmail}
+        onClose={() => {
+          setIsForgotPasswordOpen(false);
+          setForgotPasswordEmail('');
+        }}
         onBackToLogin={() => {
           setIsForgotPasswordOpen(false);
           setIsLoginOpen(true);
@@ -792,6 +798,7 @@ export default function App() {
           setCurrentUser(enrichedUser);
           localStorage.setItem('pornpong_current_user', JSON.stringify(enrichedUser));
           setIsForgotPasswordOpen(false);
+          setForgotPasswordEmail('');
         }}
         triggerToast={triggerToast}
       />

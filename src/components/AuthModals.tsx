@@ -102,7 +102,7 @@ interface LoginModalProps {
   isOpen: boolean;
   onClose: () => void;
   onOpenRegister: () => void;
-  onOpenForgotPassword?: () => void;
+  onOpenForgotPassword?: (initialEmail?: string) => void;
   onLoginSuccess: (user: UserData) => void;
   triggerToast: (msg: string) => void;
 }
@@ -118,7 +118,7 @@ export function LoginModal({ isOpen, onClose, onOpenRegister, onOpenForgotPasswo
   const handleForgotPassword = (e: React.MouseEvent) => {
     e.preventDefault();
     if (onOpenForgotPassword) {
-      onOpenForgotPassword();
+      onOpenForgotPassword(email.trim());
     } else {
       if (!email.trim()) {
         setErrors({ email: 'กรุณากรอกอีเมลของท่านเพื่อรับลิงก์รีเซ็ตรหัสผ่าน' });
@@ -129,7 +129,7 @@ export function LoginModal({ isOpen, onClose, onOpenRegister, onOpenForgotPasswo
         return;
       }
       setErrors({});
-      triggerToast(`กำลังเปลี่ยนไปหน้าขอรับลิงก์รีเซ็ตรหัสผ่านสำหรับ ${email}`);
+      triggerToast(`กำลังเปลี่ยนไปหน้าขอรับรหัส OTP สำหรับ ${email}`);
     }
   };
 
@@ -909,6 +909,7 @@ export interface ForgotPasswordModalProps {
   isOpen: boolean;
   onClose: () => void;
   onBackToLogin: () => void;
+  initialEmail?: string;
   onResetSuccess?: (user: UserData) => void;
   triggerToast: (msg: string) => void;
 }
@@ -917,11 +918,12 @@ export function ForgotPasswordModal({
   isOpen,
   onClose,
   onBackToLogin,
+  initialEmail = '',
   onResetSuccess,
   triggerToast,
 }: ForgotPasswordModalProps) {
   const [step, setStep] = React.useState<'email' | 'otp' | 'new_password'>('email');
-  const [email, setEmail] = React.useState('');
+  const [email, setEmail] = React.useState(initialEmail || '');
   const [otpCode, setOtpCode] = React.useState('');
   const [newPassword, setNewPassword] = React.useState('');
   const [confirmPassword, setConfirmPassword] = React.useState('');
@@ -931,16 +933,34 @@ export function ForgotPasswordModal({
   const [countdown, setCountdown] = React.useState(0);
   const [errors, setErrors] = React.useState<Record<string, string>>({});
 
-  // Reset state on modal open/close
+  const emailInputRef = React.useRef<HTMLInputElement>(null);
+  const requestOtpButtonRef = React.useRef<HTMLButtonElement>(null);
+
+  // Reset state on modal open/close & sync initialEmail
   React.useEffect(() => {
     if (isOpen) {
       setStep('email');
+      const cleanInitial = (initialEmail || '').trim();
+      setEmail(cleanInitial);
       setOtpCode('');
       setNewPassword('');
       setConfirmPassword('');
       setErrors({});
+
+      // จัดการ Focus และความพร้อมตามข้อกำหนด:
+      // - หากผู้ใช้ยังไม่ได้กรอกอีเมลในหน้าแรก ให้โฟกัสช่องกรอกอีเมลตามปกติ
+      // - หากผู้ใช้พิมพ์อีเมลไว้ถูกต้องแล้ว เมื่อเปิดหน้า "ลืมรหัสผ่าน" ให้แสดงอีเมลนั้นค้างไว้ และพร้อมกดปุ่ม "ขอรับรหัส OTP" ได้ทันที
+      const timer = setTimeout(() => {
+        if (cleanInitial && validateEmail(cleanInitial)) {
+          requestOtpButtonRef.current?.focus();
+        } else {
+          emailInputRef.current?.focus();
+        }
+      }, 80);
+
+      return () => clearTimeout(timer);
     }
-  }, [isOpen]);
+  }, [isOpen, initialEmail]);
 
   // Countdown timer for resending OTP
   React.useEffect(() => {
@@ -1233,6 +1253,7 @@ export function ForgotPasswordModal({
                   <Mail size={15} />
                 </span>
                 <input
+                  ref={emailInputRef}
                   type="text"
                   placeholder="example@yourmail.com"
                   value={email}
@@ -1244,16 +1265,16 @@ export function ForgotPasswordModal({
                     errors.email ? 'border-red-400 focus:border-red-500 focus:ring-red-50' : 'border-slate-200 focus:border-brand-blue focus:ring-sky-100'
                   } bg-slate-55 px-3.5 py-2 pl-9 text-xs outline-hidden focus:ring-2`}
                   id="forgot-password-email-input"
-                  autoFocus
                 />
               </div>
             </div>
 
             {/* Request OTP Button */}
             <button
+              ref={requestOtpButtonRef}
               type="submit"
               disabled={isLoading}
-              className="w-full rounded-xl bg-brand-blue hover:bg-brand-blue-light text-white font-bold text-xs py-3 shadow-md shadow-sky-50 transition-colors cursor-pointer disabled:opacity-50 flex items-center justify-center gap-1.5"
+              className="w-full rounded-xl bg-brand-blue hover:bg-brand-blue-light text-white font-bold text-xs py-3 shadow-md shadow-sky-50 transition-colors cursor-pointer disabled:opacity-50 flex items-center justify-center gap-1.5 focus:ring-2 focus:ring-sky-300 focus:outline-hidden"
               id="request-otp-button"
             >
               {isLoading ? (
