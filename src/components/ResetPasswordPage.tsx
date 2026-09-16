@@ -85,11 +85,15 @@ export function ResetPasswordPage({
         return;
       }
 
-      // 2. เมื่ออัปเดตสำเร็จ แสดง Alert หรือ Notification ภาษาไทยว่า "เปลี่ยนรหัสผ่านสำเร็จแล้ว"
-      triggerToast('เปลี่ยนรหัสผ่านสำเร็จแล้ว');
+      // 2. เมื่ออัปเดตสำเร็จ ดึงข้อมูล Session ล่าสุด หรือเรียกใช้ supabase.auth.getSession() เพื่อยืนยันการเข้าสู่ระบบ
+      const { data: sessionData } = await supabase.auth.getSession();
+      const sessionUser = sessionData?.session?.user || data?.user;
+
+      // แสดง Notification แจ้งเตือนภาษาไทยว่า "เปลี่ยนรหัสผ่านสำเร็จ และเข้าสู่ระบบเรียบร้อยแล้ว"
+      triggerToast('เปลี่ยนรหัสผ่านสำเร็จ และเข้าสู่ระบบเรียบร้อยแล้ว');
 
       // 3. เตรียมข้อมูลผู้ใช้สำหรับการล็อกอินอัตโนมัติ (Auto Login)
-      let authUser = data?.user;
+      let authUser = sessionUser;
       if (!authUser) {
         const { data: userData } = await supabase.auth.getUser();
         authUser = userData?.user;

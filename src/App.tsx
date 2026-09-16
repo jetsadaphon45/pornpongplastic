@@ -489,8 +489,13 @@ export default function App() {
           if (window.location.hash) {
             window.history.replaceState(null, '', '/');
           }
+          setIsForgotPasswordOpen(false);
+          setIsLoginOpen(false);
+          setIsRegisterOpen(false);
+          setForgotPasswordEmail('');
+          setActiveTab('home');
           navigateTo('/');
-          triggerToast('เปลี่ยนรหัสผ่านสำเร็จแล้ว');
+          triggerToast('เปลี่ยนรหัสผ่านสำเร็จ และเข้าสู่ระบบเรียบร้อยแล้ว');
         }}
         onOpenLogin={() => {
           navigateTo('/');
@@ -798,7 +803,12 @@ export default function App() {
           setCurrentUser(enrichedUser);
           localStorage.setItem('pornpong_current_user', JSON.stringify(enrichedUser));
           setIsForgotPasswordOpen(false);
+          setIsLoginOpen(false);
+          setIsRegisterOpen(false);
           setForgotPasswordEmail('');
+          setActiveTab('home');
+          navigateTo('/');
+          triggerToast('เปลี่ยนรหัสผ่านสำเร็จ และเข้าสู่ระบบเรียบร้อยแล้ว');
         }}
         triggerToast={triggerToast}
       />

@@ -1121,16 +1121,20 @@ export function ForgotPasswordModal({
         return;
       }
 
-      // เมื่อบันทึกสำเร็จ ให้แสดง Alert และแจ้งเตือน "เปลี่ยนรหัสผ่านสำเร็จ"
-      alert('เปลี่ยนรหัสผ่านสำเร็จ');
-      triggerToast('เปลี่ยนรหัสผ่านสำเร็จ');
+      // เมื่ออัปเดตสำเร็จ ให้ดึงข้อมูล Session ล่าสุด หรือเรียกใช้ supabase.auth.getSession() เพื่อยืนยันการเข้าสู่ระบบ
+      const { data: sessionData } = await supabase.auth.getSession();
+      const sessionUser = sessionData?.session?.user || data?.user;
 
-      // ทำการ Auto Login พาลูกค้าเข้าสู่ระบบหน้าหลักทันที
-      let authUser = data?.user;
+      let authUser = sessionUser;
       if (!authUser) {
         const { data: userData } = await supabase.auth.getUser();
         authUser = userData?.user;
       }
+
+      // แสดง Notification แจ้งเตือนภาษาไทยว่า "เปลี่ยนรหัสผ่านสำเร็จ และเข้าสู่ระบบเรียบร้อยแล้ว"
+      triggerToast('เปลี่ยนรหัสผ่านสำเร็จ และเข้าสู่ระบบเรียบร้อยแล้ว');
+
+      // ทำการ Auto Login พาลูกค้าเข้าสู่ระบบหน้าหลักทันที
 
       let enrichedUser: UserData = {
         id: authUser?.id || `user_${email.trim().replace(/[^a-zA-Z0-9]/g, '_')}`,
