@@ -16,6 +16,26 @@ const validateEmail = (emailStr: string) => {
   return re.test(emailStr);
 };
 
+// ตรวจสอบข้อผิดพลาดรหัสผ่านซ้ำกับของเดิม (Password History / Same Password)
+export const isSamePasswordError = (error: any): boolean => {
+  if (!error) return false;
+  const raw = typeof error === 'string'
+    ? error
+    : (error?.message || error?.error_description || error?.code || '');
+  const lower = String(raw).toLowerCase();
+  return (
+    lower.includes('different from the old') ||
+    lower.includes('different from old') ||
+    lower.includes('same_password') ||
+    lower.includes('same password') ||
+    lower.includes('should be different') ||
+    lower.includes('cannot be the same') ||
+    lower.includes('previously used') ||
+    lower.includes('password history') ||
+    lower.includes('reused')
+  );
+};
+
 // ดักจับและแสดงข้อผิดพลาดจาก Supabase ใน Alert:
 // - ให้แสดงข้อความ error.message หรือ error.error_description จาก Supabase โดยตรงใน Alert
 // - หาก error มีวัตถุซ้อน ให้แปลงเป็น alert(JSON.stringify(error, null, 2)) เพื่อให้เห็นสาเหตุที่แท้จริงจาก Supabase
@@ -24,6 +44,13 @@ export const handleSupabaseAuthError = (error: any): string => {
     const fallback = 'เกิดข้อผิดพลาดในการเชื่อมต่อกับ Supabase';
     alert(fallback);
     return fallback;
+  }
+
+  // หากเป็นข้อผิดพลาดกรณีตั้งรหัสผ่านซ้ำกับรหัสผ่านเดิม
+  if (isSamePasswordError(error)) {
+    const samePwdMsg = 'ไม่สามารถใช้นี้ได้: รหัสผ่านใหม่ต้องไม่ซ้ำกับรหัสผ่านเดิม กรุณากำหนดรหัสผ่านอื่น';
+    alert(samePwdMsg);
+    return samePwdMsg;
   }
 
   const isObject = typeof error === 'object' && error !== null;
@@ -935,6 +962,7 @@ export function ForgotPasswordModal({
 
   const emailInputRef = React.useRef<HTMLInputElement>(null);
   const requestOtpButtonRef = React.useRef<HTMLButtonElement>(null);
+  const newPasswordInputRef = React.useRef<HTMLInputElement>(null);
 
   // Reset state on modal open/close & sync initialEmail
   React.useEffect(() => {
@@ -1110,12 +1138,53 @@ export function ForgotPasswordModal({
         throw new Error('Supabase client ยังไม่ได้ถูกกำหนดค่า');
       }
 
-      // เรียกใช้งาน supabase.auth.updateUser({ password: newPassword })
+      const SAME_PASSWORD_ERROR_MSG = 'ไม่สามารถใช้นี้ได้: รหัสผ่านใหม่ต้องไม่ซ้ำกับรหัสผ่านเดิม กรุณากำหนดรหัสผ่านอื่น';
+
+      // 1. ตรวจสอบว่ารหัสผ่านใหม่ตรงกับรหัสผ่านเดิมที่เคยใช้หรือไม่ผ่าน signInWithPassword
+      const cleanEmail = email.trim();
+      if (cleanEmail) {
+        try {
+          const { data: testSign, error: testErr } = await supabase.auth.signInWithPassword({
+            email: cleanEmail,
+            password: newPassword,
+          });
+          if (!testErr && testSign?.user) {
+            // รหัสผ่านใหม่ซ้ำกับรหัสผ่านเดิม ยับยั้งการบันทึกข้อมูล
+            setErrors({
+              form: SAME_PASSWORD_ERROR_MSG,
+              newPassword: SAME_PASSWORD_ERROR_MSG,
+            });
+            setNewPassword('');
+            setConfirmPassword('');
+            setTimeout(() => {
+              newPasswordInputRef.current?.focus();
+            }, 60);
+            return;
+          }
+        } catch {
+          // ignore
+        }
+      }
+
+      // 2. เรียกใช้งาน supabase.auth.updateUser({ password: newPassword })
       const { data, error } = await supabase.auth.updateUser({
         password: newPassword,
       });
 
       if (error) {
+        // หาก Supabase ตีกลับ Error เนื่องจากรหัสผ่านซ้ำ เช่น "New password should be different from the old password"
+        if (isSamePasswordError(error)) {
+          setErrors({
+            form: SAME_PASSWORD_ERROR_MSG,
+            newPassword: SAME_PASSWORD_ERROR_MSG,
+          });
+          setNewPassword('');
+          setConfirmPassword('');
+          setTimeout(() => {
+            newPasswordInputRef.current?.focus();
+          }, 60);
+          return;
+        }
         const errorMsg = handleSupabaseAuthError(error);
         setErrors({ form: errorMsg });
         return;
@@ -1131,11 +1200,7 @@ export function ForgotPasswordModal({
         authUser = userData?.user;
       }
 
-      // แสดง Notification แจ้งเตือนภาษาไทยว่า "เปลี่ยนรหัสผ่านสำเร็จ และเข้าสู่ระบบเรียบร้อยแล้ว"
-      triggerToast('เปลี่ยนรหัสผ่านสำเร็จ และเข้าสู่ระบบเรียบร้อยแล้ว');
-
       // ทำการ Auto Login พาลูกค้าเข้าสู่ระบบหน้าหลักทันที
-
       let enrichedUser: UserData = {
         id: authUser?.id || `user_${email.trim().replace(/[^a-zA-Z0-9]/g, '_')}`,
         name: authUser?.user_metadata?.full_name || authUser?.user_metadata?.name || email.trim().split('@')[0],
@@ -1159,6 +1224,8 @@ export function ForgotPasswordModal({
 
       if (onResetSuccess) {
         onResetSuccess(enrichedUser);
+      } else {
+        triggerToast('เปลี่ยนรหัสผ่านสำเร็จ เข้าสู่ระบบเรียบร้อยแล้ว');
       }
       onClose();
     } catch (err: any) {
@@ -1425,6 +1492,7 @@ export function ForgotPasswordModal({
                   <Lock size={15} />
                 </span>
                 <input
+                  ref={newPasswordInputRef}
                   type={showPassword ? 'text' : 'password'}
                   placeholder="กรอกรหัสผ่านใหม่"
                   value={newPassword}

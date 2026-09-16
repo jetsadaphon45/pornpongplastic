@@ -50,7 +50,8 @@ import {
   supabasePreOrders,
   supabaseCoupons,
   supabaseReviews,
-  supabasePromotions
+  supabasePromotions,
+  getLocalStoredProducts
 } from '../lib/supabase';
 import { AppNotification } from './NotificationDropdown';
 import { CustomerOrderHistoryModal } from './CustomerOrderHistoryModal';
@@ -95,14 +96,16 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
   const [activeMenu, setActiveMenu] = React.useState<string>('dashboard');
 
   // Interactive Administration Datasets backed by Supabase
-  const [adminProducts, setAdminProducts] = React.useState<Product[]>([]);
+  const [adminProducts, setAdminProducts] = React.useState<Product[]>(() => getLocalStoredProducts());
 
   const reloadProducts = React.useCallback(async () => {
     try {
       const data = await supabaseProducts.list();
-      setAdminProducts(data);
+      if (data && data.length > 0) {
+        setAdminProducts(data);
+      }
     } catch (err) {
-      console.error('Failed to sync admin products with Supabase:', err);
+      console.warn('Notice syncing admin products with Supabase:', err);
     }
   }, []);
 

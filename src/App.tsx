@@ -14,7 +14,14 @@ import {
 } from 'lucide-react';
 
 import { Product, CartItem, User } from './types';
-import { supabase, supabaseProducts, supabaseCustomers, supabaseOrders, supabaseProfiles } from './lib/supabase';
+import { 
+  supabase, 
+  supabaseProducts, 
+  supabaseCustomers, 
+  supabaseOrders, 
+  supabaseProfiles, 
+  getLocalStoredProducts 
+} from './lib/supabase';
 
 import Header from './components/Header';
 import Footer from './components/Footer';
@@ -35,16 +42,17 @@ import FAQSection from './components/FAQSection';
 import ContactSection from './components/ContactSection';
 
 export default function App() {
-  const [products, setProducts] = React.useState<Product[]>([]);
-  const [isLoadingProducts, setIsLoadingProducts] = React.useState<boolean>(true);
+  const [products, setProducts] = React.useState<Product[]>(() => getLocalStoredProducts());
+  const [isLoadingProducts, setIsLoadingProducts] = React.useState<boolean>(false);
 
   const fetchSupabaseProducts = React.useCallback(async () => {
-    setIsLoadingProducts(true);
     try {
       const data = await supabaseProducts.list();
-      setProducts(data);
-    } catch (e) {
-      console.error('Failed to load products from Supabase:', e);
+      if (data && data.length > 0) {
+        setProducts(data);
+      }
+    } catch (e: any) {
+      console.warn('Notice loading products from Supabase:', e?.message || e);
     } finally {
       setIsLoadingProducts(false);
     }
@@ -495,7 +503,7 @@ export default function App() {
           setForgotPasswordEmail('');
           setActiveTab('home');
           navigateTo('/');
-          triggerToast('เปลี่ยนรหัสผ่านสำเร็จ และเข้าสู่ระบบเรียบร้อยแล้ว');
+          triggerToast('เปลี่ยนรหัสผ่านสำเร็จ เข้าสู่ระบบเรียบร้อยแล้ว');
         }}
         onOpenLogin={() => {
           navigateTo('/');
@@ -808,7 +816,7 @@ export default function App() {
           setForgotPasswordEmail('');
           setActiveTab('home');
           navigateTo('/');
-          triggerToast('เปลี่ยนรหัสผ่านสำเร็จ และเข้าสู่ระบบเรียบร้อยแล้ว');
+          triggerToast('เปลี่ยนรหัสผ่านสำเร็จ เข้าสู่ระบบเรียบร้อยแล้ว');
         }}
         triggerToast={triggerToast}
       />

@@ -1,7 +1,7 @@
 import React from 'react';
 import { Lock, Eye, EyeOff, CheckCircle2, AlertCircle, ArrowLeft, ShieldCheck, Mail } from 'lucide-react';
 import { supabase, supabaseProfiles } from '../lib/supabase';
-import { handleSupabaseAuthError } from './AuthModals';
+import { handleSupabaseAuthError, isSamePasswordError } from './AuthModals';
 
 interface ResetPasswordPageProps {
   onBackToHome: () => void;
@@ -23,6 +23,7 @@ export function ResetPasswordPage({
   const [isLoading, setIsLoading] = React.useState(false);
   const [userEmail, setUserEmail] = React.useState<string>('');
   const [errors, setErrors] = React.useState<Record<string, string>>({});
+  const newPasswordInputRef = React.useRef<HTMLInputElement>(null);
 
   // ตรวจสอบข้อมูล Session ของผู้ใช้จากลิงก์รีเซ็ตรหัสผ่าน
   React.useEffect(() => {
@@ -74,12 +75,60 @@ export function ResetPasswordPage({
         throw new Error('Supabase client ยังไม่ได้ถูกกำหนดค่า');
       }
 
-      // 1. เรียกใช้งาน supabase.auth.updateUser({ password: newPassword })
+      const SAME_PASSWORD_ERROR_MSG = 'ไม่สามารถใช้นี้ได้: รหัสผ่านใหม่ต้องไม่ซ้ำกับรหัสผ่านเดิม กรุณากำหนดรหัสผ่านอื่น';
+
+      // 1. ตรวจสอบว่ารหัสผ่านใหม่ตรงกับรหัสผ่านเดิมหรือไม่
+      let targetEmail = userEmail;
+      if (!targetEmail) {
+        try {
+          const { data: userData } = await supabase.auth.getUser();
+          targetEmail = userData?.user?.email || '';
+        } catch {
+          // ignore
+        }
+      }
+
+      if (targetEmail) {
+        try {
+          const { data: testSign, error: testErr } = await supabase.auth.signInWithPassword({
+            email: targetEmail,
+            password: newPassword,
+          });
+          if (!testErr && testSign?.user) {
+            setErrors({
+              form: SAME_PASSWORD_ERROR_MSG,
+              newPassword: SAME_PASSWORD_ERROR_MSG,
+            });
+            setNewPassword('');
+            setConfirmPassword('');
+            setTimeout(() => {
+              newPasswordInputRef.current?.focus();
+            }, 60);
+            return;
+          }
+        } catch {
+          // ignore
+        }
+      }
+
+      // 2. เรียกใช้งาน supabase.auth.updateUser({ password: newPassword })
       const { data, error } = await supabase.auth.updateUser({
         password: newPassword,
       });
 
       if (error) {
+        if (isSamePasswordError(error)) {
+          setErrors({
+            form: SAME_PASSWORD_ERROR_MSG,
+            newPassword: SAME_PASSWORD_ERROR_MSG,
+          });
+          setNewPassword('');
+          setConfirmPassword('');
+          setTimeout(() => {
+            newPasswordInputRef.current?.focus();
+          }, 60);
+          return;
+        }
         const errorMsg = handleSupabaseAuthError(error);
         setErrors({ form: errorMsg });
         return;
@@ -88,9 +137,6 @@ export function ResetPasswordPage({
       // 2. เมื่ออัปเดตสำเร็จ ดึงข้อมูล Session ล่าสุด หรือเรียกใช้ supabase.auth.getSession() เพื่อยืนยันการเข้าสู่ระบบ
       const { data: sessionData } = await supabase.auth.getSession();
       const sessionUser = sessionData?.session?.user || data?.user;
-
-      // แสดง Notification แจ้งเตือนภาษาไทยว่า "เปลี่ยนรหัสผ่านสำเร็จ และเข้าสู่ระบบเรียบร้อยแล้ว"
-      triggerToast('เปลี่ยนรหัสผ่านสำเร็จ และเข้าสู่ระบบเรียบร้อยแล้ว');
 
       // 3. เตรียมข้อมูลผู้ใช้สำหรับการล็อกอินอัตโนมัติ (Auto Login)
       let authUser = sessionUser;
@@ -186,6 +232,7 @@ export function ResetPasswordPage({
                   <Lock size={15} />
                 </span>
                 <input
+                  ref={newPasswordInputRef}
                   type={showPassword ? 'text' : 'password'}
                   placeholder="กรอกรหัสผ่านใหม่"
                   value={newPassword}
