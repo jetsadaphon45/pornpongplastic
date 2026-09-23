@@ -39,7 +39,11 @@ import {
   MapPin,
   User,
   ExternalLink,
-  Mail
+  Mail,
+  Sliders,
+  Palette,
+  Check,
+  Save
 } from 'lucide-react';
 import { Product } from '../types';
 import { 
@@ -51,6 +55,10 @@ import {
   supabaseCoupons,
   supabaseReviews,
   supabasePromotions,
+  supabasePreOrderSettings,
+  PreOrderSettings,
+  PreOrderColorConfig,
+  DEFAULT_PREORDER_SETTINGS,
   getLocalStoredProducts
 } from '../lib/supabase';
 import { AppNotification } from './NotificationDropdown';
@@ -149,6 +157,14 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
   const [ordersSearch, setOrdersSearch] = React.useState('');
   const [preordersSearch, setPreordersSearch] = React.useState('');
   const [supabaseOrdersSearch, setSupabaseOrdersSearch] = React.useState('');
+
+  // Pre-Order Settings & Price Override States
+  const [preOrderSettings, setPreOrderSettings] = React.useState<PreOrderSettings>(DEFAULT_PREORDER_SETTINGS);
+  const [isSavingPreOrderSettings, setIsSavingPreOrderSettings] = React.useState(false);
+  const [editingPreOrder, setEditingPreOrder] = React.useState<any | null>(null);
+  const [editFinalPrice, setEditFinalPrice] = React.useState<number>(3000);
+  const [editDepositPrice, setEditDepositPrice] = React.useState<number>(1000);
+  const [isSavingPriceOverride, setIsSavingPriceOverride] = React.useState(false);
 
   // Editing modal / drawer states
   const [isProductAddOpen, setIsProductAddOpen] = React.useState(false);
@@ -275,6 +291,15 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
     }
   }, []);
 
+  const reloadPreOrderSettings = React.useCallback(async () => {
+    try {
+      const data = await supabasePreOrderSettings.get();
+      if (data) setPreOrderSettings(data);
+    } catch (err) {
+      console.error('Failed to reload preorder settings:', err);
+    }
+  }, []);
+
   React.useEffect(() => {
     reloadOrders();
     reloadPreOrders();
@@ -282,7 +307,8 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
     reloadReviews();
     reloadPromotions();
     reloadWaitingVerifyOrders();
-  }, [reloadOrders, reloadPreOrders, reloadCoupons, reloadReviews, reloadPromotions, reloadWaitingVerifyOrders]);
+    reloadPreOrderSettings();
+  }, [reloadOrders, reloadPreOrders, reloadCoupons, reloadReviews, reloadPromotions, reloadWaitingVerifyOrders, reloadPreOrderSettings]);
 
   // Website settings persistence auto-saver helper
   React.useEffect(() => {
@@ -413,13 +439,71 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
     triggerToast('อัปเดตสถานะพรีออเดอร์ ' + preId + ' เป็น [' + nextStatus + '] สำเร็จ');
   };
 
-    // Navigation Sidebar Lists
+  // Price Override Action
+  const handleSavePriceOverride = async () => {
+    if (!editingPreOrder) return;
+    setIsSavingPriceOverride(true);
+    try {
+      await supabasePreOrders.updateOrderPrice(
+        editingPreOrder.id,
+        editFinalPrice,
+        editDepositPrice
+      );
+      await reloadPreOrders();
+      await reloadOrders();
+      triggerToast(`อัปเดตราคาพรีออเดอร์ #${editingPreOrder.id} เป็น ฿${editFinalPrice.toLocaleString()} (มัดจำ ฿${editDepositPrice.toLocaleString()}) เรียบร้อยแล้ว`);
+      setEditingPreOrder(null);
+    } catch (err) {
+      console.error('Failed to update price override:', err);
+      triggerToast('ไม่สามารถอัปเดตราคาได้ กรุณาลองใหม่อีกครั้ง');
+    } finally {
+      setIsSavingPriceOverride(false);
+    }
+  };
+
+  // Pre-Order Settings Save Action
+  const handleSavePreOrderSettings = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    setIsSavingPreOrderSettings(true);
+    try {
+      await supabasePreOrderSettings.save(preOrderSettings);
+      triggerToast('บันทึกการตั้งค่าราคาและสีพรีออเดอร์ลงระบบเรียบร้อยแล้ว');
+    } catch (err) {
+      console.error('Failed to save preorder settings:', err);
+      triggerToast('ไม่สามารถบันทึกการตั้งค่าได้ กรุณาลองใหม่อีกครั้ง');
+    } finally {
+      setIsSavingPreOrderSettings(false);
+    }
+  };
+
+  // Toggle Color in Pre-Order Settings
+  const togglePreOrderColor = (colorId: string) => {
+    setPreOrderSettings((prev) => ({
+      ...prev,
+      colors: prev.colors.map((c) => 
+        c.id === colorId ? { ...c, enabled: !c.enabled } : c
+      )
+    }));
+  };
+
+  // Rename Color in Pre-Order Settings
+  const renamePreOrderColor = (colorId: string, newName: string) => {
+    setPreOrderSettings((prev) => ({
+      ...prev,
+      colors: prev.colors.map((c) => 
+        c.id === colorId ? { ...c, name: newName } : c
+      )
+    }));
+  };
+
+  // Navigation Sidebar Lists
   const MENUS = [
     { id: 'dashboard', label: 'หน้าแดชบอร์ด', icon: LayoutDashboard },
     { id: 'payment-verify', label: 'ตรวจสอบการชำระเงิน', icon: ShieldCheck },
     { id: 'products', label: 'จัดการรหัสสินค้า', icon: Package },
     { id: 'orders', label: 'คำสั่งซื้อสำเร็จ', icon: FileText },
     { id: 'preorders', label: 'ประวัติพรีออเดอร์', icon: Calendar },
+    { id: 'preorder-settings', label: 'จัดการราคาพรีออเดอร์', icon: Sliders },
     { id: 'members', label: 'ระบบฐานลูกค้า', icon: Users },
     { id: 'reviews', label: 'อนุมัติรีวิวสินค้า', icon: Star },
     { id: 'notifications', label: 'ส่งข่าวประกาศดันเข้า', icon: Bell },
@@ -1212,19 +1296,28 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                 <div className="flex flex-col sm:flex-row gap-3 flex-1">
                   
                   {/* Search bar */}
-                  <div className="relative flex-1">
-                    <span className="absolute left-3.5 top-3 text-slate-400">
-                      <Search size={13} />
-                    </span>
+                  <div className="relative flex-1 flex items-center">
+                    <div className="absolute inset-y-0 left-0 flex items-center pl-3.5 pointer-events-none text-slate-400">
+                      <Search size={14} />
+                    </div>
                     <input
                       type="text"
                       placeholder="พิมพ์รหัส ค้นหาหมวดเรือพลาสติก ตราพรพงศ์..."
                       value={productsSearch}
                       onChange={(e) => setProductsSearch(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-4 py-2.5 text-xs text-slate-800 placeholder-slate-400 outline-none focus:bg-white focus:border-sky-500 focus:ring-1 focus:ring-sky-500/20"
+                      className="w-full h-10 bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-9 text-xs leading-normal text-slate-800 placeholder-slate-400 outline-none focus:bg-white focus:border-sky-500 focus:ring-1 focus:ring-sky-500/20 transition-all"
                       id="admin-products-search-input"
-                    >
-                    </input>
+                    />
+                    {productsSearch && (
+                      <button
+                        type="button"
+                        onClick={() => setProductsSearch('')}
+                        className="absolute inset-y-0 right-0 flex items-center pr-3 text-slate-400 hover:text-slate-600 cursor-pointer"
+                        title="ล้างคำค้นหา"
+                      >
+                        <X size={13} />
+                      </button>
+                    )}
                   </div>
 
                   {/* Filter by Category */}
@@ -1562,18 +1655,28 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
               ----------------------------------------------------------- */}
           {activeMenu === 'orders' && (
             <div className="space-y-4 animate-fadeIn">
-              <div className="relative max-w-sm">
-                <span className="absolute left-3 top-2.5 text-slate-400">
-                  <Search size={13} />
-                </span>
+              <div className="relative max-w-sm flex items-center">
+                <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-slate-400">
+                  <Search size={14} />
+                </div>
                 <input
                   type="text"
                   placeholder="พิมพ์หาชื่อคู่ค้าง ค้นหาเลขที่เช็คบิล..."
                   value={ordersSearch}
                   onChange={(e) => setOrdersSearch(e.target.value)}
-                  className="w-full bg-white border border-slate-200 rounded-xl pl-8.5 pr-4 py-2 text-xs text-slate-800 placeholder-slate-400 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500/20 shadow-xs"
+                  className="w-full h-9 bg-white border border-slate-200 rounded-xl pl-9 pr-8 text-xs leading-normal text-slate-800 placeholder-slate-400 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500/20 shadow-xs transition-all"
                   id="admin-orders-search-input"
                 />
+                {ordersSearch && (
+                  <button
+                    type="button"
+                    onClick={() => setOrdersSearch('')}
+                    className="absolute inset-y-0 right-0 flex items-center pr-2.5 text-slate-400 hover:text-slate-600 cursor-pointer"
+                    title="ล้างคำค้นหา"
+                  >
+                    <X size={13} />
+                  </button>
+                )}
               </div>
 
               <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
@@ -1879,18 +1982,53 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
               ----------------------------------------------------------- */}
           {activeMenu === 'preorders' && (
             <div className="space-y-4 animate-fadeIn">
-              <div className="relative max-w-sm">
-                <span className="absolute left-3 top-2.5 text-slate-400">
-                  <Search size={13} />
-                </span>
-                <input
-                  type="text"
-                  placeholder="พิมพ์หาใบจอง สเปกโมเดลคิว..."
-                  value={preordersSearch}
-                  onChange={(e) => setPreordersSearch(e.target.value)}
-                  className="w-full bg-white border border-slate-200 rounded-xl pl-8.5 pr-4 py-2 text-xs text-slate-800 placeholder-slate-400 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500/20 shadow-xs"
-                  id="admin-preorders-search-input"
-                />
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="relative max-w-sm flex-1 flex items-center">
+                  <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-slate-400">
+                    <Search size={14} />
+                  </div>
+                  <input
+                    type="text"
+                    placeholder="พิมพ์หาใบจอง สเปกโมเดลคิว..."
+                    value={preordersSearch}
+                    onChange={(e) => setPreordersSearch(e.target.value)}
+                    className="w-full h-9 bg-white border border-slate-200 rounded-xl pl-9 pr-8 text-xs leading-normal text-slate-800 placeholder-slate-400 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500/20 shadow-xs transition-all"
+                    id="admin-preorders-search-input"
+                  />
+                  {preordersSearch && (
+                    <button
+                      type="button"
+                      onClick={() => setPreordersSearch('')}
+                      className="absolute inset-y-0 right-0 flex items-center pr-2.5 text-slate-400 hover:text-slate-600 cursor-pointer"
+                      title="ล้างคำค้นหา"
+                    >
+                      <X size={13} />
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setActiveMenu('preorder-settings')}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 text-xs font-bold transition-all cursor-pointer shadow-2xs"
+                  >
+                    <Sliders size={13} />
+                    <span>จัดการราคาพรีออเดอร์</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      reloadPreOrders();
+                      triggerToast('รีเฟรชข้อมูลพรีออเดอร์เรียบร้อย');
+                    }}
+                    className="p-2 border border-slate-200 hover:bg-slate-50 rounded-xl text-slate-600 transition-colors cursor-pointer"
+                    title="รีเฟรชข้อมูล"
+                  >
+                    <RefreshCw size={14} />
+                  </button>
+                </div>
               </div>
 
               <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
@@ -1898,51 +2036,106 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                   <table className="w-full text-left text-xs border-collapse">
                     <thead>
                       <tr className="border-b border-slate-200 bg-slate-50 text-slate-500 font-bold">
-                        <th className="py-3 px-4">รหัสคิวหลอมพลาสติก</th>
+                        <th className="py-3 px-4">รหัสคิว / สเปก</th>
                         <th className="py-3 px-3">ลูกค้าเป้าหมาย</th>
-                        <th className="py-3 px-3">เรือและโมเดลที่ต้องการ</th>
-                        <th className="py-3 px-3 text-right">เงินมัดจำล่วงหน้า</th>
-                        <th className="py-3 px-3 text-right">ราคาสุทธิ</th>
+                        <th className="py-3 px-3">เรือและสเปกที่ลูกค้าเลือก</th>
+                        <th className="py-3 px-3 text-right">เงินมัดจำ</th>
+                        <th className="py-3 px-3 text-right">ราคาสุทธิ (Final)</th>
                         <th className="py-3 px-3">กำหนดขนส่ง</th>
-                        <th className="py-3 px-4 text-center">ปรับจูนสถานะในโรงงาน</th>
+                        <th className="py-3 px-4 text-center">จัดการคำสั่งซื้อ</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {filteredAdminPreorders.length === 0 ? (
                         <tr>
-                          <td colSpan={7} className="py-12 text-center text-slate-400 font-medium">ยังไม่มีข้อมูล</td>
+                          <td colSpan={7} className="py-12 text-center text-slate-400 font-medium">ยังไม่มีข้อมูลรายการพรีออเดอร์</td>
                         </tr>
                       ) : (
                         filteredAdminPreorders.map((pre) => (
                           <tr key={pre.id} className="hover:bg-slate-50/70 text-[11px]">
-                            <td className="py-3.5 px-4 font-mono font-bold text-slate-800">{pre.id}</td>
+                            <td className="py-3.5 px-4 font-mono font-bold text-slate-800">
+                              <div>{pre.id}</div>
+                              {pre.price_overridden && (
+                                <span className="inline-block mt-1 px-1.5 py-0.5 rounded text-[9px] font-bold bg-purple-50 text-purple-700 border border-purple-200">
+                                  แอดมินปรับราคา
+                                </span>
+                              )}
+                            </td>
                             <td className="py-3.5 px-3">
                               <span className="font-bold block text-slate-800">{pre.customerName}</span>
+                              {pre.phone && <span className="text-[10px] text-slate-500 font-sans block">{pre.phone}</span>}
                               <span className="text-[9.5px] text-slate-400 font-mono">ลงทะเบียน {pre.date}</span>
                             </td>
                             <td className="py-3.5 px-3">
                               <span className="block font-semibold text-slate-800">{pre.productName}</span>
-                              <span className="text-[10px] text-slate-500">{pre.color}</span>
+                              {/* CUSTOM SPECS (Color, Sticker, Custom Text) */}
+                              <div className="flex flex-wrap items-center gap-1 mt-1">
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-slate-100 text-slate-700 text-[10px] font-medium border border-slate-200">
+                                  <span className={`w-2 h-2 rounded-full shrink-0 ${
+                                    pre.selected_color?.includes('แดง') || pre.color?.includes('แดง') ? 'bg-red-500' :
+                                    pre.selected_color?.includes('เขียว') || pre.color?.includes('เขียว') ? 'bg-green-500' :
+                                    pre.selected_color?.includes('ส้ม') || pre.color?.includes('ส้ม') ? 'bg-orange-500' : 'bg-blue-600'
+                                  }`}></span>
+                                  {pre.selected_color || pre.color || 'สีน้ำเงิน'}
+                                </span>
+
+                                {pre.sticker_option && (
+                                  <span className={`px-2 py-0.5 rounded text-[10px] font-medium border ${
+                                    pre.sticker_option.includes('ติดสติกเกอร์') || pre.sticker_option.includes('สติกเกอร์')
+                                      ? 'bg-amber-50 text-amber-800 border-amber-200'
+                                      : 'bg-slate-50 text-slate-500 border-slate-200'
+                                  }`}>
+                                    {pre.sticker_option.includes('ติดสติกเกอร์') ? '🏷️ ติดสติกเกอร์' : '🏷️ ไม่ติดสติกเกอร์'}
+                                  </span>
+                                )}
+
+                                {pre.custom_text && (
+                                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-sky-50 text-sky-800 border border-sky-200" title={`สกรีนข้อความ: ${pre.custom_text}`}>
+                                    ✍️ "{pre.custom_text}"
+                                  </span>
+                                )}
+                              </div>
                             </td>
                             <td className="py-3.5 px-3 text-right font-bold text-amber-600">
-                              ฿{pre.deposit.toLocaleString()}
+                              ฿{Number(pre.deposit || 0).toLocaleString()}
                             </td>
-                            <td className="py-3.5 px-3 text-right font-black text-sky-600">
-                              ฿{pre.fullPrice.toLocaleString()}
+                            <td className="py-3.5 px-3 text-right">
+                              <div className="font-black text-sky-600 text-xs">
+                                ฿{Number(pre.fullPrice || 0).toLocaleString()}
+                              </div>
+                              {pre.original_price && pre.original_price !== pre.fullPrice && (
+                                <div className="text-[9.5px] text-slate-400 line-through">
+                                  ฿{Number(pre.original_price).toLocaleString()}
+                                </div>
+                              )}
                             </td>
                             <td className="py-3.5 px-3 text-slate-700 font-semibold">{pre.estDelivery}</td>
                             <td className="py-3.5 px-4 text-center">
-                              <div className="flex items-center justify-center gap-1.5">
+                              <div className="flex flex-col items-center justify-center gap-1.5 max-w-[130px] mx-auto">
                                 <select
                                   value={pre.status}
                                   onChange={(e) => changePreOrderStatus(pre.id, e.target.value as any)}
-                                  className="bg-slate-50 border border-slate-200 rounded-lg py-1 px-2.5 text-[10.5px] text-slate-700 cursor-pointer text-center font-bold focus:bg-white focus:border-sky-500"
+                                  className="w-full bg-slate-50 border border-slate-200 rounded-lg py-1 px-2 text-[10px] text-slate-700 cursor-pointer text-center font-bold focus:bg-white focus:border-sky-500 shadow-2xs"
                                 >
                                   <option value="AwaitingDeposit">รอตรวจค่ามัดจำ</option>
                                   <option value="DepositConfirmed">ยืนยันเงินเรียบร้อย</option>
                                   <option value="InProduction">กำลังหลอมขึ้นรูป</option>
                                   <option value="Ready">ประกอบพร้อมจัดส่ง</option>
                                 </select>
+
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setEditingPreOrder(pre);
+                                    setEditFinalPrice(Number(pre.fullPrice || 3000));
+                                    setEditDepositPrice(Number(pre.deposit || 1000));
+                                  }}
+                                  className="w-full inline-flex items-center justify-center gap-1 px-2 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 text-[10px] font-bold transition-all cursor-pointer shadow-2xs"
+                                  title="แก้ไขราคาสุดท้ายและเงินมัดจำของออเดอร์นี้"
+                                >
+                                  <Edit size={11} />
+                                  <span>แก้ไขราคา</span>
+                                </button>
                               </div>
                             </td>
                           </tr>
@@ -1951,6 +2144,255 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                     </tbody>
                   </table>
                 </div>
+              </div>
+            </div>
+          )}
+
+          {/* -----------------------------------------------------------
+              4.1 PRE-ORDER SETTINGS (จัดการราคาพรีออเดอร์) TAB
+              ----------------------------------------------------------- */}
+          {activeMenu === 'preorder-settings' && (
+            <div className="space-y-6 animate-fadeIn">
+              <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-6">
+                
+                {/* Header */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-100">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-2xl bg-sky-600 text-white flex items-center justify-center font-bold shadow-xs">
+                      <Sliders size={20} />
+                    </div>
+                    <div>
+                      <h3 className="font-display font-black text-slate-800 text-base">
+                        จัดการราคาและตัวเลือกพรีออเดอร์ (Pre-Order Pricing & Config)
+                      </h3>
+                      <p className="text-xs text-slate-500 mt-0.5">
+                        กำหนดราคาเริ่มต้นของเรือ, ค่าอุปกรณ์เสริม และเปิด/ปิดสีเรือ — ระบบจะอัปเดตไปยังหน้าสั่งจองของลูกค้าทันที
+                      </p>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => handleSavePreOrderSettings()}
+                    disabled={isSavingPreOrderSettings}
+                    className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs shadow-sm transition-all cursor-pointer disabled:opacity-50"
+                  >
+                    {isSavingPreOrderSettings ? (
+                      <RefreshCw size={14} className="animate-spin" />
+                    ) : (
+                      <Save size={14} />
+                    )}
+                    <span>{isSavingPreOrderSettings ? 'กำลังบันทึก...' : 'บันทึกการตั้งค่า'}</span>
+                  </button>
+                </div>
+
+                <form onSubmit={handleSavePreOrderSettings} className="space-y-6">
+                  
+                  {/* Part 1: Pricing Matrix */}
+                  <div>
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 mb-3 flex items-center gap-2">
+                      <DollarSign size={15} className="text-sky-600" />
+                      <span>กำหนดโครงสร้างราคาพรีออเดอร์ (Pricing Structure)</span>
+                    </h4>
+                    
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                      {/* Base Price */}
+                      <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/60 hover:bg-white hover:border-sky-300 transition-all shadow-2xs space-y-2">
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs font-bold text-slate-700">ราคาเริ่มต้นของเรือ</label>
+                          <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded bg-sky-100 text-sky-800">Base Price</span>
+                        </div>
+                        <div className="relative">
+                          <span className="absolute left-3 top-2.5 text-xs font-bold text-slate-400">฿</span>
+                          <input
+                            type="number"
+                            min="0"
+                            step="100"
+                            value={preOrderSettings.basePrice}
+                            onChange={(e) => setPreOrderSettings(prev => ({ ...prev, basePrice: Number(e.target.value) || 0 }))}
+                            className="w-full bg-white border border-slate-200 rounded-lg pl-7 pr-3 py-2 text-sm font-bold text-slate-800 focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
+                            placeholder="3000"
+                            required
+                          />
+                        </div>
+                        <p className="text-[10px] text-slate-400">ราคาเรือตัวเปล่ามาตรฐาน 4 ที่นั่ง</p>
+                      </div>
+
+                      {/* Sticker Option Price */}
+                      <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/60 hover:bg-white hover:border-sky-300 transition-all shadow-2xs space-y-2">
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs font-bold text-slate-700">ค่าสติกเกอร์ตกแต่ง</label>
+                          <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded bg-amber-100 text-amber-800">Sticker</span>
+                        </div>
+                        <div className="relative">
+                          <span className="absolute left-3 top-2.5 text-xs font-bold text-slate-400">฿</span>
+                          <input
+                            type="number"
+                            min="0"
+                            step="50"
+                            value={preOrderSettings.stickerPrice}
+                            onChange={(e) => setPreOrderSettings(prev => ({ ...prev, stickerPrice: Number(e.target.value) || 0 }))}
+                            className="w-full bg-white border border-slate-200 rounded-lg pl-7 pr-3 py-2 text-sm font-bold text-slate-800 focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
+                            placeholder="300"
+                            required
+                          />
+                        </div>
+                        <p className="text-[10px] text-slate-400">ค่าติดลายสติกเกอร์กันน้ำรอบลำเรือ</p>
+                      </div>
+
+                      {/* Custom Text Price */}
+                      <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/60 hover:bg-white hover:border-sky-300 transition-all shadow-2xs space-y-2">
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs font-bold text-slate-700">ค่าสกรีนข้อความข้างเรือ</label>
+                          <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded bg-indigo-100 text-indigo-800">Custom Text</span>
+                        </div>
+                        <div className="relative">
+                          <span className="absolute left-3 top-2.5 text-xs font-bold text-slate-400">฿</span>
+                          <input
+                            type="number"
+                            min="0"
+                            step="50"
+                            value={preOrderSettings.customTextPrice}
+                            onChange={(e) => setPreOrderSettings(prev => ({ ...prev, customTextPrice: Number(e.target.value) || 0 }))}
+                            className="w-full bg-white border border-slate-200 rounded-lg pl-7 pr-3 py-2 text-sm font-bold text-slate-800 focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
+                            placeholder="200"
+                            required
+                          />
+                        </div>
+                        <p className="text-[10px] text-slate-400">ค่าบล็อกสกรีนชื่อบุคคลหรือหน่วยงาน</p>
+                      </div>
+
+                      {/* Deposit Amount */}
+                      <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/60 hover:bg-white hover:border-sky-300 transition-all shadow-2xs space-y-2">
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs font-bold text-slate-700">ยอดเงินมัดจำต่อลำ</label>
+                          <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">Deposit</span>
+                        </div>
+                        <div className="relative">
+                          <span className="absolute left-3 top-2.5 text-xs font-bold text-slate-400">฿</span>
+                          <input
+                            type="number"
+                            min="0"
+                            step="100"
+                            value={preOrderSettings.depositPerBoat}
+                            onChange={(e) => setPreOrderSettings(prev => ({ ...prev, depositPerBoat: Number(e.target.value) || 0 }))}
+                            className="w-full bg-white border border-slate-200 rounded-lg pl-7 pr-3 py-2 text-sm font-bold text-slate-800 focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
+                            placeholder="1000"
+                            required
+                          />
+                        </div>
+                        <p className="text-[10px] text-slate-400">ยอดเงินมัดจำขั้นต่ำในการลงคิวผลิต</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Part 2: Boat Colors Management */}
+                  <div>
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 mb-3 flex items-center gap-2">
+                      <Palette size={15} className="text-sky-600" />
+                      <span>ระบบจัดการสีเรือ (Manage Colors: เปิด/ปิดการใช้งาน และเปลี่ยนชื่อสี)</span>
+                    </h4>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                      {preOrderSettings.colors.map((color) => (
+                        <div 
+                          key={color.id}
+                          className={`p-4 rounded-2xl border transition-all shadow-2xs space-y-3 ${
+                            color.enabled 
+                              ? 'border-slate-200 bg-white' 
+                              : 'border-slate-200 bg-slate-50 opacity-60'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <span 
+                                className="w-5 h-5 rounded-full border border-black/10 shadow-xs shrink-0"
+                                style={{ backgroundColor: color.swatchHex }}
+                              />
+                              <span className="text-xs font-bold text-slate-800">{color.id}</span>
+                            </div>
+
+                            {/* Toggle Switch */}
+                            <button
+                              type="button"
+                              onClick={() => togglePreOrderColor(color.id)}
+                              className={`px-2.5 py-1 rounded-full text-[10px] font-bold cursor-pointer transition-colors border ${
+                                color.enabled
+                                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+                                  : 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100'
+                              }`}
+                            >
+                              {color.enabled ? '✓ เปิดใช้งาน' : '✕ ปิดชั่วคราว'}
+                            </button>
+                          </div>
+
+                          {/* Editable Display Name */}
+                          <div className="space-y-1">
+                            <label className="text-[10px] text-slate-400 font-bold block">ชื่อสีที่แสดงหน้าร้าน</label>
+                            <input
+                              type="text"
+                              value={color.name}
+                              onChange={(e) => renamePreOrderColor(color.id, e.target.value)}
+                              className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 font-semibold focus:bg-white focus:border-sky-500 outline-none"
+                              placeholder="เช่น สีน้ำเงินพรีเมียม"
+                            />
+                          </div>
+
+                          <div className="text-[9.5px] text-slate-400 font-mono">
+                            รหัสสี: {color.swatchHex} ({color.english || '-'})
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Part 3: Live Preview Simulation Card */}
+                  <div className="p-5 rounded-2xl bg-gradient-to-br from-sky-50/70 via-white to-sky-50/40 border border-sky-100 shadow-2xs space-y-3">
+                    <div className="flex items-center justify-between flex-wrap gap-2">
+                      <span className="text-xs font-bold text-sky-900 flex items-center gap-1.5">
+                        <Sparkles size={14} className="text-sky-600" />
+                        <span>ตัวอย่างการคำนวณราคาหน้าบ้าน (Customer Live Price Preview)</span>
+                      </span>
+                      <span className="text-[10px] text-slate-500">คำนวณอัตโนมัติจากตัวเลขด้านบน</span>
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
+                      <div className="p-3 bg-white rounded-xl border border-sky-100">
+                        <span className="text-[10.5px] text-slate-500 block">1. เรือเปล่า</span>
+                        <strong className="text-sm font-black text-slate-800 font-mono">฿{preOrderSettings.basePrice.toLocaleString()}</strong>
+                      </div>
+                      <div className="p-3 bg-white rounded-xl border border-sky-100">
+                        <span className="text-[10.5px] text-slate-500 block">2. เรือ + สติกเกอร์</span>
+                        <strong className="text-sm font-black text-amber-700 font-mono">฿{(preOrderSettings.basePrice + preOrderSettings.stickerPrice).toLocaleString()}</strong>
+                      </div>
+                      <div className="p-3 bg-white rounded-xl border border-sky-100">
+                        <span className="text-[10.5px] text-slate-500 block">3. ครบเซต (สติกเกอร์+สกรีน)</span>
+                        <strong className="text-sm font-black text-sky-700 font-mono">฿{(preOrderSettings.basePrice + preOrderSettings.stickerPrice + preOrderSettings.customTextPrice).toLocaleString()}</strong>
+                      </div>
+                      <div className="p-3 bg-white rounded-xl border border-emerald-100">
+                        <span className="text-[10.5px] text-emerald-700 font-bold block">4. ยอดมัดจำจองคิว</span>
+                        <strong className="text-sm font-black text-emerald-700 font-mono">฿{preOrderSettings.depositPerBoat.toLocaleString()}</strong>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Part 4: Submit Button */}
+                  <div className="pt-2 flex justify-end">
+                    <button
+                      type="submit"
+                      disabled={isSavingPreOrderSettings}
+                      className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs shadow-md hover:shadow-lg transition-all cursor-pointer disabled:opacity-50"
+                    >
+                      {isSavingPreOrderSettings ? (
+                        <RefreshCw size={15} className="animate-spin" />
+                      ) : (
+                        <Save size={15} />
+                      )}
+                      <span>{isSavingPreOrderSettings ? 'กำลังบันทึกลงระบบ...' : 'บันทึกการตั้งค่าราคาพรีออเดอร์'}</span>
+                    </button>
+                  </div>
+
+                </form>
               </div>
             </div>
           )}
@@ -1981,21 +2423,24 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
 
                   <div className="flex items-center gap-2">
                     {/* Search bar */}
-                    <div className="relative w-full sm:w-64">
-                      <Search size={14} className="absolute left-3 top-2.5 text-slate-400" />
+                    <div className="relative w-full sm:w-64 flex items-center">
+                      <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-slate-400">
+                        <Search size={14} />
+                      </div>
                       <input
                         type="text"
                         value={customerSearch}
                         onChange={(e) => setCustomerSearch(e.target.value)}
                         placeholder="ค้นหาชื่อ, อีเมล, เบอร์โทร, รหัสลูกค้า..."
-                        className="w-full pl-8.5 pr-8 py-1.5 border border-slate-200 rounded-xl text-xs focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 bg-slate-50/50"
+                        className="w-full h-9 pl-9 pr-8 border border-slate-200 rounded-xl text-xs leading-normal focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 bg-slate-50/50 transition-all"
                         id="admin-customer-search-input"
                       />
                       {customerSearch && (
                         <button
                           type="button"
                           onClick={() => setCustomerSearch('')}
-                          className="absolute right-2.5 top-2 text-slate-400 hover:text-slate-600 cursor-pointer"
+                          className="absolute inset-y-0 right-0 flex items-center pr-2.5 text-slate-400 hover:text-slate-600 cursor-pointer"
+                          title="ล้างคำค้นหา"
                         >
                           <X size={12} />
                         </button>
@@ -2633,6 +3078,174 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
         }}
         triggerToast={triggerToast}
       />
+
+      {/* ADMIN PRE-ORDER PRICE OVERRIDE MODAL */}
+      {editingPreOrder && (
+        <div 
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/70 backdrop-blur-xs p-4 animate-fadeIn"
+          onClick={() => setEditingPreOrder(null)}
+        >
+          <div 
+            className="relative max-w-lg w-full bg-white rounded-3xl border border-sky-100 shadow-2xl p-6 space-y-5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-amber-500 text-white flex items-center justify-center font-bold shadow-xs">
+                  <Edit size={18} />
+                </div>
+                <div>
+                  <h3 className="font-display font-black text-slate-800 text-base">
+                    แก้ไขราคาพรีออเดอร์ (Price Override)
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    ปรับลดหรือกำหนดราคาสุดท้ายและเงินมัดจำสำหรับคำสั่งซื้อนี้โดยตรง
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingPreOrder(null)}
+                className="p-2 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* Order Specs Recap */}
+            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-2 text-xs">
+              <div className="flex justify-between items-center">
+                <span className="text-slate-500 font-medium">รหัสคำสั่งซื้อ:</span>
+                <span className="font-mono font-bold text-slate-800 bg-white px-2 py-0.5 rounded border border-slate-200">
+                  {editingPreOrder.id}
+                </span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-slate-500 font-medium">ลูกค้า:</span>
+                <span className="font-bold text-slate-800">
+                  {editingPreOrder.customerName} {editingPreOrder.phone ? `(${editingPreOrder.phone})` : ''}
+                </span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-slate-500 font-medium">โมเดลเรือ:</span>
+                <span className="font-semibold text-slate-700 truncate max-w-[240px]">
+                  {editingPreOrder.productName}
+                </span>
+              </div>
+
+              {/* Specs Badges */}
+              <div className="pt-2 border-t border-slate-200 flex flex-wrap items-center gap-1.5">
+                <span className="text-[10px] text-slate-400 font-bold">สเปกที่ลูกค้าสั่ง:</span>
+                <span className="px-2 py-0.5 rounded bg-blue-50 text-blue-700 font-semibold text-[10px] border border-blue-200">
+                  สี: {editingPreOrder.selected_color || editingPreOrder.color || 'น้ำเงิน'}
+                </span>
+                {editingPreOrder.sticker_option && (
+                  <span className="px-2 py-0.5 rounded bg-amber-50 text-amber-700 font-semibold text-[10px] border border-amber-200">
+                    {editingPreOrder.sticker_option}
+                  </span>
+                )}
+                {editingPreOrder.custom_text && (
+                  <span className="px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 font-semibold text-[10px] border border-indigo-200">
+                    สกรีน: "{editingPreOrder.custom_text}"
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Price Inputs */}
+            <div className="space-y-4">
+              <div>
+                <div className="flex justify-between items-center mb-1">
+                  <label className="text-xs font-bold text-slate-700">
+                    ราคาสุดท้ายของออเดอร์ (Final Order Price)
+                  </label>
+                  {editingPreOrder.original_price && (
+                    <span className="text-[10px] text-slate-400">
+                      ราคาเดิม: ฿{Number(editingPreOrder.original_price).toLocaleString()}
+                    </span>
+                  )}
+                </div>
+                <div className="relative">
+                  <span className="absolute left-3.5 top-2.5 text-slate-400 font-bold text-sm">฿</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="50"
+                    value={editFinalPrice}
+                    onChange={(e) => setEditFinalPrice(Number(e.target.value) || 0)}
+                    className="w-full bg-white border border-slate-200 rounded-xl pl-8 pr-4 py-2.5 text-sm font-black text-sky-700 focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 shadow-2xs"
+                    placeholder="3000"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div>
+                <div className="flex justify-between items-center mb-1">
+                  <label className="text-xs font-bold text-slate-700">
+                    ยอดเงินมัดจำ (Deposit Amount)
+                  </label>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => setEditDepositPrice(Math.round(editFinalPrice * 0.3))}
+                      className="text-[10px] font-bold text-sky-600 hover:text-sky-800 bg-sky-50 px-2 py-0.5 rounded cursor-pointer"
+                    >
+                      30%
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEditDepositPrice(1000)}
+                      className="text-[10px] font-bold text-sky-600 hover:text-sky-800 bg-sky-50 px-2 py-0.5 rounded cursor-pointer"
+                    >
+                      ฿1,000
+                    </button>
+                  </div>
+                </div>
+                <div className="relative">
+                  <span className="absolute left-3.5 top-2.5 text-slate-400 font-bold text-sm">฿</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="50"
+                    value={editDepositPrice}
+                    onChange={(e) => setEditDepositPrice(Number(e.target.value) || 0)}
+                    className="w-full bg-white border border-slate-200 rounded-xl pl-8 pr-4 py-2.5 text-sm font-black text-amber-700 focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 shadow-2xs"
+                    placeholder="1000"
+                    required
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Bottom Actions */}
+            <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setEditingPreOrder(null)}
+                className="px-4 py-2.5 rounded-xl border border-slate-200 text-slate-600 font-bold text-xs hover:bg-slate-50 transition-colors cursor-pointer"
+              >
+                ยกเลิก
+              </button>
+              <button
+                type="button"
+                onClick={handleSavePriceOverride}
+                disabled={isSavingPriceOverride}
+                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs shadow-md transition-all cursor-pointer disabled:opacity-50"
+              >
+                {isSavingPriceOverride ? (
+                  <RefreshCw size={14} className="animate-spin" />
+                ) : (
+                  <Check size={14} />
+                )}
+                <span>{isSavingPriceOverride ? 'กำลังบันทึก...' : 'บันทึกราคาใหม่'}</span>
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
 
       {/* ZOOMED SLIP IMAGE FULL-SCREEN MODAL PREVIEW */}
       {zoomedSlipUrl && (

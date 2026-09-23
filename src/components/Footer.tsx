@@ -108,6 +108,11 @@ export default function Footer({ setActiveTab, onOpenAdmin }: FooterProps) {
               </button>
             </li>
             <li>
+              <button onClick={() => setActiveTab('preorder')} className="text-amber-300 hover:text-amber-200 font-semibold transition-colors duration-200">
+                &raquo; สั่งจองเรือพรีออเดอร์ (Pre-order)
+              </button>
+            </li>
+            <li>
               <button onClick={() => setActiveTab('about')} className="hover:text-white transition-colors duration-200">
                 &raquo; ทำไมต้องพรพงศ์พลาสติก
               </button>

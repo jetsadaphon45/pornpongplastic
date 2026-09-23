@@ -113,7 +113,7 @@ export default function HomeSection({
           {/* Hero Right Media Preview Grid decoration */}
           <div className="lg:col-span-5 relative">
             <div className="relative mx-auto max-w-md lg:max-w-none">
-              {/* Main premium illustration with overlay shadow card element */}
+              {/* Main premium illustration banner */}
               <div className="aspect-video w-full rounded-2xl overflow-hidden shadow-2xl shadow-sky-100 border border-white">
                 <img
                   src="https://images.unsplash.com/photo-1544551763-46a013bb70d5?q=80&w=700&auto=format&fit=crop"
@@ -121,23 +121,6 @@ export default function HomeSection({
                   referrerPolicy="no-referrer"
                   className="h-full w-full object-cover"
                 />
-              </div>
-
-              {/* Smaller overlay card depicting row boats */}
-              <div className="absolute -bottom-4 -left-4 sm:-bottom-5 sm:-left-5 lg:-bottom-6 lg:-left-6 hidden sm:flex items-center gap-3.5 rounded-xl border border-sky-100 bg-white p-3.5 shadow-xl w-60 animate-bounce animate-duration-[4000ms]">
-                <img
-                  src="https://images.unsplash.com/photo-1540959733332-eab4deceeaf7?q=80&w=200&auto=format&fit=crop"
-                  alt=""
-                  referrerPolicy="no-referrer"
-                  className="h-12 w-16 object-cover rounded-lg shrink-0"
-                />
-                <div>
-                  <h4 className="text-xs font-bold text-slate-800">เรือพัดพลาสติก 2.5 ม.</h4>
-                  <p className="text-[10px] text-amber-500 font-extrabold mt-0.5">ราคา 5,900.- เท่านั้น</p>
-                </div>
-                <div className="bg-emerald-50 text-emerald-600 rounded-full h-5 w-5 flex items-center justify-center text-[10px] font-bold shrink-0">
-                  HOT
-                </div>
               </div>
             </div>
           </div>

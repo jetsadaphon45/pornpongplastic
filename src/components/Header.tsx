@@ -41,6 +41,8 @@ export default function Header({
   onDeleteNotification
 }: HeaderProps) {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = React.useState(false);
+  const [isMobileSearchOpen, setIsMobileSearchOpen] = React.useState(false);
+  const mobileSearchInputRef = React.useRef<HTMLInputElement>(null);
   const [isNotificationOpen, setIsNotificationOpen] = React.useState(false);
   const totalCartItems = cart.reduce((sum, item) => sum + item.quantity, 0);
   const unreadNotificationsCount = notifications.filter(n => !n.isRead).length;
@@ -54,7 +56,7 @@ export default function Header({
     { id: 'home', label: 'หน้าแรก' },
     { id: 'products', label: 'หน้าสินค้า' },
     { id: 'about', label: 'เกี่ยวกับเรา' },
-    { id: 'contact', label: 'ติดต่อเรา' }
+    { id: 'preorder', label: 'พรีออเดอร์' }
   ];
 
 
@@ -101,18 +103,28 @@ export default function Header({
           </div>
 
           {/* Desktop Search Bar */}
-          <div className="hidden md:flex relative flex-1 max-w-md">
+          <div className="hidden md:flex relative flex-1 max-w-md items-center">
+            <div className="absolute inset-y-0 left-0 flex items-center pl-3.5 pointer-events-none text-slate-400">
+              <Search size={16} />
+            </div>
             <input
               type="text"
               placeholder="ค้นหาเรือชูชีพ, พายเรือ, ไซส์เรือ..."
               value={searchTerm}
               onChange={(e) => onSearch(e.target.value)}
-              className="w-full rounded-full border border-sky-100 bg-slate-55 px-4 py-1.8 pl-10 text-sm outline-hidden transition-all duration-200 placeholder:text-slate-400 focus:border-brand-blue focus:bg-white focus:ring-2 focus:ring-sky-100"
+              className="w-full h-10 rounded-full border border-sky-100 bg-slate-50/80 px-4 pl-10 pr-9 text-sm leading-normal outline-hidden transition-all duration-200 placeholder:text-slate-400 focus:border-brand-blue focus:bg-white focus:ring-2 focus:ring-sky-100"
               id="search-input-desktop"
             />
-            <div className="absolute left-3.5 top-2.5 text-slate-400">
-              <Search size={16} />
-            </div>
+            {searchTerm && (
+              <button
+                type="button"
+                onClick={() => onSearch('')}
+                className="absolute inset-y-0 right-0 flex items-center pr-3 text-slate-400 hover:text-slate-600 transition-colors cursor-pointer"
+                title="ล้างคำค้นหา"
+              >
+                <X size={14} />
+              </button>
+            )}
           </div>
 
           {/* Desktop Navigation Links */}
@@ -123,6 +135,13 @@ export default function Header({
                 onClick={() => {
                   setActiveTab(item.id);
                   if (item.id === 'products') onSearch(''); // clear search on clicking products tab
+                  if (item.id === 'preorder') {
+                    window.history.pushState(null, '', '/pre-order');
+                  } else if (item.id === 'home') {
+                    window.history.pushState(null, '', '/');
+                  } else {
+                    window.history.pushState(null, '', `/${item.id}`);
+                  }
                 }}
                 className={`px-4 py-2 text-sm font-medium rounded-full transition-all duration-200 ${
                   activeTab === item.id || (item.id === 'products' && activeTab === 'product-detail')
@@ -223,12 +242,26 @@ export default function Header({
               )}
             </button>
 
-            {/* Mobile Search Button (shows on small screens to trigger modal search or tab) */}
+            {/* Mobile Search Button (shows on small screens to toggle mobile search input) */}
             <button
               onClick={() => {
-                setActiveTab('products');
+                setIsMobileSearchOpen(prev => {
+                  const next = !prev;
+                  if (next) {
+                    setTimeout(() => mobileSearchInputRef.current?.focus(), 50);
+                  }
+                  return next;
+                });
+                if (activeTab !== 'products') {
+                  setActiveTab('products');
+                }
               }}
-              className="md:hidden flex h-10 w-10 items-center justify-center rounded-full border border-slate-100 text-slate-600 hover:text-brand-blue focus:outline-none"
+              className={`md:hidden flex h-10 w-10 items-center justify-center rounded-full border transition-all duration-200 cursor-pointer ${
+                isMobileSearchOpen
+                  ? 'border-brand-blue bg-sky-50 text-brand-blue ring-2 ring-sky-100'
+                  : 'border-slate-100 text-slate-600 hover:text-brand-blue hover:bg-slate-50'
+              }`}
+              aria-label="ค้นหาผลิตภัณฑ์"
               id="search-trigger-mobile"
             >
               <Search size={18} />
@@ -248,22 +281,68 @@ export default function Header({
         </div>
       </div>
 
+      {/* Mobile Expandable Search Bar (Drop down on mobile when search icon is tapped) */}
+      {isMobileSearchOpen && (
+        <div className="md:hidden border-t border-sky-100 bg-white/95 backdrop-blur-md px-4 py-2.5 shadow-sm animate-fadeIn">
+          <div className="relative w-full flex items-center">
+            <div className="absolute inset-y-0 left-0 flex items-center pl-3.5 pointer-events-none text-slate-400">
+              <Search size={16} />
+            </div>
+            <input
+              ref={mobileSearchInputRef}
+              type="text"
+              placeholder="ค้นหาเรือชูชีพ, พายเรือ, ไซส์เรือ..."
+              value={searchTerm}
+              onChange={(e) => {
+                onSearch(e.target.value);
+                if (activeTab !== 'products' && e.target.value) {
+                  setActiveTab('products');
+                }
+              }}
+              className="w-full h-10 rounded-full border border-sky-100 bg-slate-50/80 px-4 pl-10 pr-9 text-sm leading-normal outline-hidden placeholder:text-slate-400 focus:border-brand-blue focus:bg-white focus:ring-2 focus:ring-sky-100 transition-all"
+              id="search-input-mobile-dropdown"
+              autoFocus
+            />
+            {searchTerm && (
+              <button
+                type="button"
+                onClick={() => onSearch('')}
+                className="absolute inset-y-0 right-0 flex items-center pr-3 text-slate-400 hover:text-slate-600 cursor-pointer"
+                title="ล้างคำค้นหา"
+              >
+                <X size={14} />
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Mobile Drawer Navigation Menu */}
       {isMobileMenuOpen && (
         <div className="lg:hidden block border-t border-slate-100 bg-white/95 backdrop-blur-md px-4 py-4 space-y-3 shadow-lg">
           {/* Mobile Search bar */}
-          <div className="relative w-full mb-3">
+          <div className="relative w-full mb-3 flex items-center">
+            <div className="absolute inset-y-0 left-0 flex items-center pl-3.5 pointer-events-none text-slate-400">
+              <Search size={16} />
+            </div>
             <input
               type="text"
-              placeholder="พายเรือ, ไซส์เรือ..."
+              placeholder="ค้นหาเรือชูชีพ, พายเรือ, ไซส์เรือ..."
               value={searchTerm}
               onChange={(e) => onSearch(e.target.value)}
-              className="w-full rounded-lg border border-sky-100 bg-slate-50 px-4 py-2 pl-9 text-sm outline-hidden focus:border-brand-blue"
+              className="w-full h-10 rounded-xl border border-sky-100 bg-slate-50 px-4 pl-10 pr-9 text-sm leading-normal outline-hidden focus:border-brand-blue focus:bg-white focus:ring-2 focus:ring-sky-100 transition-all placeholder:text-slate-400"
               id="search-input-mobile"
             />
-            <div className="absolute left-3 top-2.5 text-slate-400">
-              <Search size={15} />
-            </div>
+            {searchTerm && (
+              <button
+                type="button"
+                onClick={() => onSearch('')}
+                className="absolute inset-y-0 right-0 flex items-center pr-3 text-slate-400 hover:text-slate-600 cursor-pointer"
+                title="ล้างคำค้นหา"
+              >
+                <X size={14} />
+              </button>
+            )}
           </div>
 
           <div className="flex flex-col gap-1.5">
@@ -274,6 +353,13 @@ export default function Header({
                   setActiveTab(item.id);
                   setIsMobileMenuOpen(false);
                   if (item.id === 'products') onSearch('');
+                  if (item.id === 'preorder') {
+                    window.history.pushState(null, '', '/pre-order');
+                  } else if (item.id === 'home') {
+                    window.history.pushState(null, '', '/');
+                  } else {
+                    window.history.pushState(null, '', `/${item.id}`);
+                  }
                 }}
                 className={`w-full text-left px-4 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 ${
                   activeTab === item.id || (item.id === 'products' && activeTab === 'product-detail')

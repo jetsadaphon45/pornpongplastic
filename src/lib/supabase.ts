@@ -1213,6 +1213,107 @@ export const supabaseOrders = {
     }
   },
 
+  async createCustomPreOrder(item: {
+    customer_id?: string | null;
+    customer_name: string;
+    customer_email?: string;
+    customer_phone: string;
+    selected_color: string;
+    sticker_option: string | boolean;
+    custom_text: string;
+    total_price: number;
+    status?: string;
+    deposit_amount?: number;
+    quantity?: number;
+    address?: string;
+    notes?: string;
+  }): Promise<any> {
+    const orderId = 'ORD-PRE-' + Date.now().toString().slice(-6);
+    const stickerText = typeof item.sticker_option === 'boolean' 
+      ? (item.sticker_option ? 'ติดสติกเกอร์ลายพิเศษ (+300 บาท)' : 'ไม่ติดสติกเกอร์ (+0 บาท)')
+      : String(item.sticker_option);
+
+    const fullPayload: any = {
+      id: orderId,
+      customer_id: item.customer_id || null,
+      customer_name: item.customer_name || 'ลูกค้าพรีออเดอร์',
+      customer_email: item.customer_email || 'guest@example.com',
+      customer_phone: item.customer_phone || '',
+      selected_color: item.selected_color,
+      sticker_option: stickerText,
+      custom_text: item.custom_text || '',
+      total_price: Number(item.total_price),
+      status: 'pending_deposit',
+      // Compatibility columns for existing orders view:
+      total_amount: Number(item.total_price),
+      payment_status: 'pending_deposit',
+      order_status: 'pending_deposit',
+      product_name: `เรือพลาสติกสั่งทำพิเศษ (สี${item.selected_color})`,
+      color: item.selected_color,
+      address: item.address || '',
+      notes: `[Custom Pre-Order] สี: ${item.selected_color} | สติกเกอร์: ${stickerText} | ข้อความสกรีน: ${item.custom_text || '-'} | จำนวน: ${item.quantity || 1} ลำ`,
+      created_at: new Date().toISOString()
+    };
+
+    let resultOrder = { ...fullPayload };
+
+    if (isSupabaseConfigured && supabase) {
+      try {
+        // Attempt 1: full payload with custom columns
+        const { data, error } = await supabase.from('orders').insert([fullPayload]).select();
+        if (!error && data && data[0]) {
+          resultOrder = data[0];
+        } else if (error) {
+          console.warn('First insert attempt with custom columns failed, falling back to core columns:', error.message);
+          // Attempt 2: fallback to core schema if custom columns don't exist yet
+          const corePayload: any = {
+            customer_id: item.customer_id || null,
+            customer_name: item.customer_name,
+            customer_email: item.customer_email || 'guest@example.com',
+            customer_phone: item.customer_phone,
+            total_amount: Number(item.total_price),
+            payment_status: 'pending_deposit',
+            order_status: 'pending_deposit'
+          };
+          const { data: dataCore, error: errCore } = await supabase.from('orders').insert([corePayload]).select();
+          if (!errCore && dataCore && dataCore[0]) {
+            resultOrder = { ...resultOrder, ...dataCore[0] };
+          }
+        }
+      } catch (err: any) {
+        console.warn('Failed to insert custom pre-order into Supabase table orders:', err.message);
+      }
+    }
+
+    // Save locally for instant reactivity in Admin Dashboard & Order History
+    try {
+      const localOrders = JSON.parse(localStorage.getItem('admin_orders') || '[]');
+      localOrders.unshift(resultOrder);
+      localStorage.setItem('admin_orders', JSON.stringify(localOrders));
+
+      const localPreorders = JSON.parse(localStorage.getItem('admin_preorders') || '[]');
+      localPreorders.unshift({
+        id: resultOrder.id || orderId,
+        customerName: item.customer_name,
+        phone: item.customer_phone,
+        email: item.customer_email,
+        date: new Date().toISOString().split('T')[0],
+        productName: `เรือสั่งทำพิเศษ (สี${item.selected_color})`,
+        color: item.selected_color,
+        quantity: item.quantity || 1,
+        deposit: item.deposit_amount || 1000,
+        fullPrice: item.total_price,
+        estDelivery: 'ภายใน 5-7 วันทำการ',
+        status: 'pending_deposit',
+        address: item.address || '',
+        notes: fullPayload.notes
+      });
+      localStorage.setItem('admin_preorders', JSON.stringify(localPreorders));
+    } catch {}
+
+    return resultOrder;
+  },
+
   async update(id: string, item: any): Promise<boolean> {
     if (!isSupabaseConfigured || !supabase) return false;
     try {
@@ -1384,40 +1485,124 @@ export const supabaseOrders = {
 
 export const supabasePreOrders = {
   async list(): Promise<any[]> {
-    if (!isSupabaseConfigured || !supabase) return [];
-    try {
-      const { data, error } = await supabase.from('preorders').select('*');
-      if (error) {
-        const { data: data2, error: error2 } = await supabase.from('pre_orders').select('*');
-        if (error2) {
-          console.warn('Could not select from preorders/pre_orders table in Supabase:', error2.message);
-          return [];
+    let results: any[] = [];
+    
+    // 1. Fetch from preorders / pre_orders in Supabase
+    if (isSupabaseConfigured && supabase) {
+      try {
+        const { data, error } = await supabase.from('preorders').select('*').order('created_at', { ascending: false });
+        if (!error && data) {
+          results.push(...data.map(this.mapRow));
+        } else {
+          const { data: data2, error: error2 } = await supabase.from('pre_orders').select('*').order('created_at', { ascending: false });
+          if (!error2 && data2) {
+            results.push(...data2.map(this.mapRow));
+          }
         }
-        return (data2 || []).map(this.mapRow);
+      } catch (e: any) {
+        console.warn('Pre-orders fetch caught error:', e.message);
       }
-      return (data || []).map(this.mapRow);
-    } catch (e: any) {
-      console.warn('Pre-orders fetch caught error:', e.message);
-      return [];
+
+      // Also fetch custom preorders stored in orders table
+      try {
+        const { data: ordData, error: ordErr } = await supabase
+          .from('orders')
+          .select('*')
+          .or('id.like.ORD-PRE-%,payment_status.eq.pending_deposit,order_status.eq.pending_deposit')
+          .order('created_at', { ascending: false });
+        if (!ordErr && ordData) {
+          for (const ord of ordData) {
+            if (!results.some(r => r.id === ord.id)) {
+              results.push(this.mapRow(ord));
+            }
+          }
+        }
+      } catch (e: any) {
+        console.warn('Custom preorders query from orders table caught error:', e.message);
+      }
     }
+
+    // 2. Merge local storage preorders
+    try {
+      const localPreorders = JSON.parse(localStorage.getItem('admin_preorders') || '[]');
+      for (const lp of localPreorders) {
+        const idx = results.findIndex(r => r.id === lp.id);
+        if (idx >= 0) {
+          // Keep overridden prices from local if present
+          if (lp.price_overridden) {
+            results[idx] = { ...results[idx], ...lp, fullPrice: lp.fullPrice, deposit: lp.deposit, price_overridden: true };
+          }
+        } else {
+          results.push(this.mapRow(lp));
+        }
+      }
+
+      const localOrders = JSON.parse(localStorage.getItem('admin_orders') || '[]');
+      for (const lo of localOrders) {
+        if (String(lo.id).startsWith('ORD-PRE-') || lo.payment_status === 'pending_deposit' || (lo.notes && lo.notes.includes('Custom Pre-Order'))) {
+          const idx = results.findIndex(r => r.id === lo.id);
+          if (idx >= 0) {
+            if (lo.price_overridden) {
+              results[idx] = { ...results[idx], ...lo, fullPrice: Number(lo.total_price || lo.total_amount || results[idx].fullPrice), deposit: Number(lo.deposit_amount || lo.deposit || results[idx].deposit), price_overridden: true };
+            }
+          } else {
+            results.push(this.mapRow(lo));
+          }
+        }
+      }
+    } catch {}
+
+    return results;
   },
+
   mapRow(row: any) {
+    // Parse custom specs if embedded in notes
+    let selectedColor = row.selected_color || row.color || '';
+    let stickerOption = row.sticker_option || '';
+    let customText = row.custom_text || '';
+
+    if (!selectedColor && row.notes && row.notes.includes('สี:')) {
+      const match = row.notes.match(/สี:\s*([^|]+)/);
+      if (match) selectedColor = match[1].trim();
+    }
+    if (!stickerOption && row.notes && row.notes.includes('สติกเกอร์:')) {
+      const match = row.notes.match(/สติกเกอร์:\s*([^|]+)/);
+      if (match) stickerOption = match[1].trim();
+    }
+    if (!customText && row.notes && row.notes.includes('ข้อความสกรีน:')) {
+      const match = row.notes.match(/ข้อความสกรีน:\s*([^|]+)/);
+      if (match && match[1].trim() !== '-') customText = match[1].trim();
+    }
+
+    const fullPrice = Number(row.fullPrice ?? row.full_price ?? row.total_price ?? row.total_amount ?? row.amount ?? 0);
+    const deposit = Number(row.deposit ?? row.deposit_amount ?? Math.min(1000, fullPrice * 0.3));
+
     return {
       id: row.id,
-      customerName: row.customerName || row.customer_name || '',
-      phone: row.phone || '',
-      date: row.date || row.created_at ? new Date(row.date || row.created_at).toISOString().split('T')[0] : '',
-      productName: row.productName || row.product_name || '',
-      color: row.color || '',
+      customerName: row.customerName || row.customer_name || 'ลูกค้าพรีออเดอร์',
+      phone: row.phone || row.customer_phone || '',
+      email: row.email || row.customer_email || '',
+      date: row.date || (row.created_at ? new Date(row.created_at).toISOString().split('T')[0] : new Date().toISOString().split('T')[0]),
+      productName: row.productName || row.product_name || `เรือพลาสติกสั่งทำ (${selectedColor || 'คละสี'})`,
+      color: selectedColor || row.color || 'สีน้ำเงินมาตรฐาน',
+      selected_color: selectedColor || row.color || 'น้ำเงิน',
+      sticker_option: stickerOption || (row.sticker_option ? 'ติดสติกเกอร์' : 'ไม่ติดสติกเกอร์'),
+      custom_text: customText || '',
       quantity: Number(row.quantity || 1),
-      deposit: Number(row.deposit || 0),
-      fullPrice: Number(row.fullPrice || row.full_price || 0),
-      estDelivery: row.estDelivery || row.est_delivery_date || row.est_delivery || '',
-      status: row.status || 'AwaitingDeposit'
+      deposit: deposit,
+      deposit_amount: deposit,
+      fullPrice: fullPrice,
+      total_price: fullPrice,
+      original_price: row.original_price ? Number(row.original_price) : undefined,
+      price_overridden: Boolean(row.price_overridden),
+      estDelivery: row.estDelivery || row.est_delivery_date || row.est_delivery || 'ภายใน 3-5 วันทำการ',
+      status: row.status || row.payment_status || 'AwaitingDeposit',
+      address: row.address || '',
+      notes: row.notes || ''
     };
   },
+
   async listByUserId(userId?: string, phone?: string, name?: string): Promise<any[]> {
-    if (!isSupabaseConfigured || !supabase) return [];
     try {
       const cleanPhone = phone && phone !== 'ไม่ระบุ' ? phone.replace(/\D/g, '') : '';
       const cleanName = name?.toLowerCase().trim() || '';
@@ -1435,16 +1620,96 @@ export const supabasePreOrders = {
       return [];
     }
   },
+
   async updateStatus(id: string, status: string): Promise<boolean> {
-    if (!isSupabaseConfigured || !supabase) return false;
-    try {
-      await supabase.from('preorders').update({ status }).eq('id', id);
-      await supabase.from('pre_orders').update({ status }).eq('id', id);
-      return true;
-    } catch {
-      return false;
+    if (isSupabaseConfigured && supabase) {
+      try {
+        await supabase.from('preorders').update({ status }).eq('id', id);
+        await supabase.from('pre_orders').update({ status }).eq('id', id);
+        await supabase.from('orders').update({ payment_status: status, order_status: status }).eq('id', id);
+      } catch {}
     }
+    try {
+      const localPreorders = JSON.parse(localStorage.getItem('admin_preorders') || '[]');
+      const idx = localPreorders.findIndex((p: any) => p.id === id);
+      if (idx >= 0) {
+        localPreorders[idx].status = status;
+        localStorage.setItem('admin_preorders', JSON.stringify(localPreorders));
+      }
+    } catch {}
+    window.dispatchEvent(new CustomEvent('orders_updated', { detail: { id, status } }));
+    return true;
   },
+
+  async updateOrderPrice(id: string, finalPrice: number, depositAmount?: number): Promise<boolean> {
+    const numPrice = Number(finalPrice);
+    const numDeposit = depositAmount !== undefined ? Number(depositAmount) : Math.round(numPrice * 0.3);
+
+    // 1. Update in Supabase
+    if (isSupabaseConfigured && supabase) {
+      try {
+        await supabase.from('preorders').update({
+          fullPrice: numPrice,
+          full_price: numPrice,
+          deposit: numDeposit,
+          price_overridden: true
+        }).eq('id', id);
+
+        await supabase.from('pre_orders').update({
+          fullPrice: numPrice,
+          full_price: numPrice,
+          deposit: numDeposit,
+          price_overridden: true
+        }).eq('id', id);
+
+        await supabase.from('orders').update({
+          total_price: numPrice,
+          total_amount: numPrice,
+          amount: numPrice,
+          deposit_amount: numDeposit,
+          price_overridden: true
+        }).eq('id', id);
+      } catch (err: any) {
+        console.warn('Supabase price update error:', err.message);
+      }
+    }
+
+    // 2. Update local storage preorders
+    try {
+      const localPreorders = JSON.parse(localStorage.getItem('admin_preorders') || '[]');
+      const idx = localPreorders.findIndex((p: any) => p.id === id);
+      if (idx >= 0) {
+        localPreorders[idx].original_price = localPreorders[idx].original_price || localPreorders[idx].fullPrice;
+        localPreorders[idx].fullPrice = numPrice;
+        localPreorders[idx].total_price = numPrice;
+        localPreorders[idx].deposit = numDeposit;
+        localPreorders[idx].deposit_amount = numDeposit;
+        localPreorders[idx].price_overridden = true;
+        localStorage.setItem('admin_preorders', JSON.stringify(localPreorders));
+      }
+
+      // Also update in admin_orders if present
+      const localOrders = JSON.parse(localStorage.getItem('admin_orders') || '[]');
+      const ordIdx = localOrders.findIndex((o: any) => o.id === id);
+      if (ordIdx >= 0) {
+        localOrders[ordIdx].original_price = localOrders[ordIdx].original_price || localOrders[ordIdx].total_price || localOrders[ordIdx].total_amount;
+        localOrders[ordIdx].total_price = numPrice;
+        localOrders[ordIdx].total_amount = numPrice;
+        localOrders[ordIdx].amount = numPrice;
+        localOrders[ordIdx].deposit_amount = numDeposit;
+        localOrders[ordIdx].price_overridden = true;
+        localStorage.setItem('admin_orders', JSON.stringify(localOrders));
+      }
+    } catch {}
+
+    // 3. Broadcast to all open views & modals
+    window.dispatchEvent(new CustomEvent('orders_updated', {
+      detail: { id, finalPrice: numPrice, depositAmount: numDeposit }
+    }));
+
+    return true;
+  },
+
   async delete(id: string): Promise<boolean> {
     if (!isSupabaseConfigured || !supabase) return true;
     try {
@@ -1459,6 +1724,192 @@ export const supabasePreOrders = {
       console.error('Failed to delete pre-order from Supabase:', err.message);
       return false;
     }
+  },
+  async insert(item: any): Promise<any> {
+    const queueId = 'PRE-' + new Date().getFullYear() + '-' + Math.floor(1000 + Math.random() * 9000);
+    const preOrderItem = {
+      id: queueId,
+      customerName: item.customerName || '',
+      phone: item.phone || '',
+      email: item.email || '',
+      date: new Date().toISOString().split('T')[0],
+      productName: item.productName || '',
+      color: item.color || '',
+      quantity: Number(item.quantity || 1),
+      deposit: Number(item.deposit || 2000),
+      fullPrice: Number(item.fullPrice || 0),
+      estDelivery: item.estDelivery || 'ภายใน 5-7 วันทำการ',
+      status: 'AwaitingDeposit',
+      address: item.address || '',
+      notes: item.notes || ''
+    };
+    if (isSupabaseConfigured && supabase) {
+      try {
+        const { error } = await supabase.from('preorders').insert([preOrderItem]);
+        if (error) {
+          await supabase.from('pre_orders').insert([preOrderItem]);
+        }
+      } catch (e: any) {
+        console.warn('Could not insert preorder to Supabase:', e.message);
+      }
+    }
+    try {
+      const existing = JSON.parse(localStorage.getItem('admin_preorders') || '[]');
+      existing.unshift(preOrderItem);
+      localStorage.setItem('admin_preorders', JSON.stringify(existing));
+    } catch {}
+    return preOrderItem;
+  }
+};
+
+// -------------------------------------------------------------
+// PRE-ORDER SETTINGS (Prices & Color Management)
+// -------------------------------------------------------------
+export interface PreOrderColorConfig {
+  id: string;
+  name: string;
+  english?: string;
+  swatchHex: string;
+  enabled: boolean;
+}
+
+export interface PreOrderSettings {
+  basePrice: number;
+  stickerPrice: number;
+  customTextPrice: number;
+  depositPerBoat: number;
+  colors: PreOrderColorConfig[];
+  updatedAt?: string;
+}
+
+export const DEFAULT_PREORDER_SETTINGS: PreOrderSettings = {
+  basePrice: 3000,
+  stickerPrice: 300,
+  customTextPrice: 200,
+  depositPerBoat: 1000,
+  colors: [
+    { id: 'น้ำเงิน', name: 'สีน้ำเงิน', english: 'Royal Ocean Blue', swatchHex: '#2563eb', enabled: true },
+    { id: 'แดง', name: 'สีแดง', english: 'Rescue Vivid Red', swatchHex: '#dc2626', enabled: true },
+    { id: 'เขียว', name: 'สีเขียว', english: 'Forest Green', swatchHex: '#16a34a', enabled: true },
+    { id: 'ส้ม', name: 'สีส้ม', english: 'Hi-Vis Safety Orange', swatchHex: '#ea580c', enabled: true }
+  ],
+  updatedAt: new Date().toISOString()
+};
+
+export const supabasePreOrderSettings = {
+  async get(): Promise<PreOrderSettings> {
+    let localData: PreOrderSettings | null = null;
+    try {
+      const raw = localStorage.getItem('pre_order_settings');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed.basePrice === 'number') {
+          localData = {
+            ...DEFAULT_PREORDER_SETTINGS,
+            ...parsed,
+            colors: Array.isArray(parsed.colors) && parsed.colors.length > 0 ? parsed.colors : DEFAULT_PREORDER_SETTINGS.colors
+          };
+        }
+      }
+    } catch {}
+
+    if (isSupabaseConfigured && supabase) {
+      try {
+        // 1. Try pre_order_settings table
+        const { data: posData, error: posErr } = await supabase
+          .from('pre_order_settings')
+          .select('*')
+          .limit(1);
+
+        if (!posErr && posData && posData.length > 0) {
+          const row = posData[0];
+          const settings: PreOrderSettings = {
+            basePrice: Number(row.base_price ?? row.basePrice ?? DEFAULT_PREORDER_SETTINGS.basePrice),
+            stickerPrice: Number(row.sticker_price ?? row.stickerPrice ?? DEFAULT_PREORDER_SETTINGS.stickerPrice),
+            customTextPrice: Number(row.custom_text_price ?? row.customTextPrice ?? DEFAULT_PREORDER_SETTINGS.customTextPrice),
+            depositPerBoat: Number(row.deposit_per_boat ?? row.depositPerBoat ?? DEFAULT_PREORDER_SETTINGS.depositPerBoat),
+            colors: Array.isArray(row.colors) ? row.colors : (typeof row.colors === 'string' ? JSON.parse(row.colors) : DEFAULT_PREORDER_SETTINGS.colors),
+            updatedAt: row.updated_at || row.updatedAt || new Date().toISOString()
+          };
+          try {
+            localStorage.setItem('pre_order_settings', JSON.stringify(settings));
+          } catch {}
+          return settings;
+        }
+
+        // 2. Try app_config table fallback
+        const { data: cfgData, error: cfgErr } = await supabase
+          .from('app_config')
+          .select('*')
+          .eq('key', 'pre_order_settings')
+          .limit(1);
+
+        if (!cfgErr && cfgData && cfgData.length > 0) {
+          const row = cfgData[0];
+          const val = typeof row.value === 'string' ? JSON.parse(row.value) : row.value;
+          const settings: PreOrderSettings = {
+            ...DEFAULT_PREORDER_SETTINGS,
+            ...val
+          };
+          try {
+            localStorage.setItem('pre_order_settings', JSON.stringify(settings));
+          } catch {}
+          return settings;
+        }
+      } catch (err) {
+        console.warn('Could not fetch pre_order_settings from Supabase:', err);
+      }
+    }
+
+    return localData || DEFAULT_PREORDER_SETTINGS;
+  },
+
+  async save(settings: PreOrderSettings): Promise<boolean> {
+    const updatedSettings: PreOrderSettings = {
+      ...settings,
+      basePrice: Number(settings.basePrice || 3000),
+      stickerPrice: Number(settings.stickerPrice || 0),
+      customTextPrice: Number(settings.customTextPrice || 0),
+      depositPerBoat: Number(settings.depositPerBoat || 1000),
+      updatedAt: new Date().toISOString()
+    };
+
+    // 1. Save locally and dispatch event
+    try {
+      localStorage.setItem('pre_order_settings', JSON.stringify(updatedSettings));
+      window.dispatchEvent(new CustomEvent('preorder_settings_changed', { detail: updatedSettings }));
+    } catch {}
+
+    // 2. Persist to Supabase if configured
+    if (isSupabaseConfigured && supabase) {
+      try {
+        // Try table pre_order_settings
+        const payloadA = {
+          id: 'default',
+          base_price: Number(updatedSettings.basePrice),
+          sticker_price: Number(updatedSettings.stickerPrice),
+          custom_text_price: Number(updatedSettings.customTextPrice),
+          deposit_per_boat: Number(updatedSettings.depositPerBoat),
+          colors: updatedSettings.colors,
+          updated_at: updatedSettings.updatedAt
+        };
+        const { error: errA } = await supabase.from('pre_order_settings').upsert([payloadA]);
+        if (!errA) return true;
+
+        // Try table app_config
+        const payloadB = {
+          key: 'pre_order_settings',
+          value: updatedSettings,
+          updated_at: updatedSettings.updatedAt
+        };
+        const { error: errB } = await supabase.from('app_config').upsert([payloadB]);
+        if (!errB) return true;
+      } catch (err) {
+        console.warn('Failed to persist pre_order_settings to Supabase:', err);
+      }
+    }
+
+    return true;
   }
 };
 

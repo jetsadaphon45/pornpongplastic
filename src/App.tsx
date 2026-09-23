@@ -38,6 +38,7 @@ import { ResetPasswordPage } from './components/ResetPasswordPage';
 
 import HomeSection from './components/HomeSection';
 import AboutSection from './components/AboutSection';
+import PreorderSection from './components/PreorderSection';
 import FAQSection from './components/FAQSection';
 import ContactSection from './components/ContactSection';
 
@@ -73,7 +74,17 @@ export default function App() {
   }, [fetchSupabaseProducts]);
 
   // Navigation & View States
-  const [activeTab, setActiveTab ] = React.useState<string>('home');
+  const [activeTab, setActiveTab ] = React.useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      const p = window.location.pathname;
+      if (p === '/pre-order' || p === '/preorder') return 'preorder';
+      if (p === '/products') return 'products';
+      if (p === '/about') return 'about';
+      if (p === '/contact') return 'contact';
+      if (p === '/faq') return 'faq';
+    }
+    return 'home';
+  });
   const [selectedProduct, setSelectedProduct] = React.useState<Product | null>(null);
   const [isAdminMode, setIsAdminMode] = React.useState<boolean>(() => {
     // If initially landed on admin dashboard, activate admin mode
@@ -98,6 +109,23 @@ export default function App() {
       if (path === '/admin-dashboard') {
         setIsAdminMode(true);
       } else if (path === '/admin-login') {
+        setIsAdminMode(false);
+      } else if (path === '/pre-order' || path === '/preorder') {
+        setIsAdminMode(false);
+        setActiveTab('preorder');
+      } else if (path === '/products') {
+        setIsAdminMode(false);
+        setActiveTab('products');
+      } else if (path === '/about') {
+        setIsAdminMode(false);
+        setActiveTab('about');
+      } else if (path === '/contact') {
+        setIsAdminMode(false);
+        setActiveTab('contact');
+      } else if (path === '/faq') {
+        setIsAdminMode(false);
+        setActiveTab('faq');
+      } else if (path === '/' || path === '') {
         setIsAdminMode(false);
       } else {
         setIsAdminMode(false);
@@ -619,6 +647,31 @@ export default function App() {
 
               {/* Filter by Status & Sort selector dropdowns */}
               <div className="flex flex-wrap items-center gap-2.5 w-full md:w-auto shrink-0 justify-end">
+                {/* Search in catalog */}
+                <div className="relative flex-1 sm:w-52 min-w-[180px] flex items-center">
+                  <div className="absolute inset-y-0 left-0 flex items-center pl-2.5 pointer-events-none text-slate-400">
+                    <Search size={13} />
+                  </div>
+                  <input
+                    type="text"
+                    placeholder="ค้นหาชื่อเรือ, ไซส์..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="w-full h-8 pl-8 pr-7 bg-slate-55 border border-slate-150 rounded-lg text-xs leading-normal text-slate-700 placeholder-slate-400 outline-none focus:bg-white focus:border-brand-blue focus:ring-1 focus:ring-sky-100 transition-all"
+                    id="catalog-search-input"
+                  />
+                  {searchTerm && (
+                    <button
+                      type="button"
+                      onClick={() => setSearchTerm('')}
+                      className="absolute inset-y-0 right-0 flex items-center pr-2 text-slate-400 hover:text-slate-600 cursor-pointer"
+                      title="ล้างคำค้นหา"
+                    >
+                      <X size={12} />
+                    </button>
+                  )}
+                </div>
+
                 {/* Status Dropdown */}
                 <div className="relative flex items-center bg-slate-55 border border-slate-150 rounded-lg px-3 py-1.5 text-xs text-slate-600 gap-1.5 focus-within:border-brand-blue">
                   <span className="text-slate-400 font-bold shrink-0 text-[11px]">สถานะ:</span>
@@ -690,6 +743,23 @@ export default function App() {
         {/* About Section Window */}
         {activeTab === 'about' && (
           <AboutSection />
+        )}
+
+        {/* Pre-order Section Window */}
+        {activeTab === 'preorder' && (
+          <PreorderSection
+            products={products}
+            onSelectProduct={(prod) => {
+              setSelectedProduct(prod);
+            }}
+            onAddToCart={(prod, col) => handleAddToCart(prod, col, 1)}
+            currentUser={currentUser}
+            onOpenLogin={() => setIsLoginOpen(true)}
+            setActiveTab={(tab) => {
+              setActiveTab(tab);
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            }}
+          />
         )}
 
         {/* FAQ Section Window */}

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Search, ChevronDown, ChevronUp, Sparkles, HelpCircle } from 'lucide-react';
+import { Search, ChevronDown, ChevronUp, Sparkles, HelpCircle, X } from 'lucide-react';
 import { FAQS } from '../data';
 
 export default function FAQSection() {
@@ -43,18 +43,28 @@ export default function FAQSection() {
       </div>
 
       {/* Instant Search Bar */}
-      <div className="relative mb-6 max-w-md mx-auto">
+      <div className="relative mb-6 max-w-md mx-auto flex items-center">
+        <div className="absolute inset-y-0 left-0 flex items-center pl-3.5 pointer-events-none text-slate-400">
+          <Search size={16} />
+        </div>
         <input
           type="text"
           placeholder="ค้นหาข้อสงสัย เช่น แดด, เครื่องยนต์, จัดส่ง..."
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
-          className="w-full text-sm rounded-xl border border-sky-100 bg-white shadow-xs p-3.5 pl-10 text-slate-705 outline-hidden focus:border-brand-blue focus:ring-2 focus:ring-sky-100 placeholder:text-slate-400"
+          className="w-full h-11 text-sm rounded-xl border border-sky-100 bg-white shadow-xs px-4 pl-10 pr-9 text-slate-700 leading-normal outline-hidden focus:border-brand-blue focus:ring-2 focus:ring-sky-100 placeholder:text-slate-400 transition-all"
           id="faq-search-bar"
         />
-        <div className="absolute left-3.5 top-4 text-slate-450 text-slate-400">
-          <Search size={16} />
-        </div>
+        {searchTerm && (
+          <button
+            type="button"
+            onClick={() => setSearchTerm('')}
+            className="absolute inset-y-0 right-0 flex items-center pr-3 text-slate-400 hover:text-slate-600 transition-colors cursor-pointer"
+            title="ล้างคำค้นหา"
+          >
+            <X size={14} />
+          </button>
+        )}
       </div>
 
       {/* Category Slider Tabs */}
