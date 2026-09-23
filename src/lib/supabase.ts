@@ -1219,6 +1219,8 @@ export const supabaseOrders = {
     customer_email?: string;
     customer_phone: string;
     selected_color: string;
+    boat_size?: string;
+    boat_model_name?: string;
     sticker_option: string | boolean;
     custom_text: string;
     total_price: number;
@@ -1233,6 +1235,11 @@ export const supabaseOrders = {
       ? (item.sticker_option ? 'ติดสติกเกอร์ลายพิเศษ (+300 บาท)' : 'ไม่ติดสติกเกอร์ (+0 บาท)')
       : String(item.sticker_option);
 
+    const sizeName = item.boat_size || 'ขนาด 2 ที่นั่ง (รุ่นมาตรฐาน)';
+    const prodName = item.boat_model_name 
+      ? `${item.boat_model_name} (สี${item.selected_color})` 
+      : `เรือพลาสติกสั่งทำพิเศษ ${sizeName} (สี${item.selected_color})`;
+
     const fullPayload: any = {
       id: orderId,
       customer_id: item.customer_id || null,
@@ -1240,6 +1247,7 @@ export const supabaseOrders = {
       customer_email: item.customer_email || 'guest@example.com',
       customer_phone: item.customer_phone || '',
       selected_color: item.selected_color,
+      boat_size: sizeName,
       sticker_option: stickerText,
       custom_text: item.custom_text || '',
       total_price: Number(item.total_price),
@@ -1248,10 +1256,10 @@ export const supabaseOrders = {
       total_amount: Number(item.total_price),
       payment_status: 'pending_deposit',
       order_status: 'pending_deposit',
-      product_name: `เรือพลาสติกสั่งทำพิเศษ (สี${item.selected_color})`,
+      product_name: prodName,
       color: item.selected_color,
       address: item.address || '',
-      notes: `[Custom Pre-Order] สี: ${item.selected_color} | สติกเกอร์: ${stickerText} | ข้อความสกรีน: ${item.custom_text || '-'} | จำนวน: ${item.quantity || 1} ลำ`,
+      notes: `[Custom Pre-Order] ขนาด: ${sizeName} | สี: ${item.selected_color} | สติกเกอร์: ${stickerText} | ข้อความสกรีน: ${item.custom_text || '-'} | จำนวน: ${item.quantity || 1} ลำ`,
       created_at: new Date().toISOString()
     };
 
@@ -1560,7 +1568,12 @@ export const supabasePreOrders = {
     let selectedColor = row.selected_color || row.color || '';
     let stickerOption = row.sticker_option || '';
     let customText = row.custom_text || '';
+    let boatSize = row.boat_size || row.boat_model_name || '';
 
+    if (!boatSize && row.notes && row.notes.includes('[ขนาด:')) {
+      const match = row.notes.match(/\[ขนาด:\s*([^\]]+)\]/);
+      if (match) boatSize = match[1].trim();
+    }
     if (!selectedColor && row.notes && row.notes.includes('สี:')) {
       const match = row.notes.match(/สี:\s*([^|]+)/);
       if (match) selectedColor = match[1].trim();
@@ -1583,7 +1596,9 @@ export const supabasePreOrders = {
       phone: row.phone || row.customer_phone || '',
       email: row.email || row.customer_email || '',
       date: row.date || (row.created_at ? new Date(row.created_at).toISOString().split('T')[0] : new Date().toISOString().split('T')[0]),
-      productName: row.productName || row.product_name || `เรือพลาสติกสั่งทำ (${selectedColor || 'คละสี'})`,
+      productName: row.productName || row.product_name || (boatSize ? `${boatSize} (${selectedColor || 'คละสี'})` : `เรือพลาสติกสั่งทำ (${selectedColor || 'คละสี'})`),
+      boat_size: boatSize || 'ขนาด 2 ที่นั่ง (รุ่นมาตรฐาน)',
+      boat_model_name: row.boat_model_name || boatSize || 'รุ่นมาตรฐาน 2 ที่นั่ง',
       color: selectedColor || row.color || 'สีน้ำเงินมาตรฐาน',
       selected_color: selectedColor || row.color || 'น้ำเงิน',
       sticker_option: stickerOption || (row.sticker_option ? 'ติดสติกเกอร์' : 'ไม่ติดสติกเกอร์'),
@@ -1775,15 +1790,74 @@ export interface PreOrderColorConfig {
 
 export interface PreOrderSettings {
   basePrice: number;
+  basePrice1Seat?: number;
+  basePrice2Seat?: number;
+  basePrice3Seat?: number;
   stickerPrice: number;
   customTextPrice: number;
   depositPerBoat: number;
   colors: PreOrderColorConfig[];
+  galleryPhotos?: Record<string, string>;
   updatedAt?: string;
 }
 
+export const DEFAULT_BOAT_GALLERY_PHOTOS: Record<string, string> = {
+  '1_seat_น้ำเงิน': 'https://images.unsplash.com/photo-1544551763-46a013bb70d5?q=80&w=900&auto=format&fit=crop',
+  '1_seat_แดง': 'https://images.unsplash.com/photo-1510312305653-8ed496efae75?q=80&w=900&auto=format&fit=crop',
+  '1_seat_เขียว': 'https://images.unsplash.com/photo-1508873696983-2df570464756?q=80&w=900&auto=format&fit=crop',
+  '1_seat_ส้ม': 'https://images.unsplash.com/photo-1540959733332-eab4deceeaf7?q=80&w=900&auto=format&fit=crop',
+
+  '2_seat_น้ำเงิน': 'https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?q=80&w=900&auto=format&fit=crop',
+  '2_seat_แดง': 'https://images.unsplash.com/photo-1510312305653-8ed496efae75?q=80&w=900&auto=format&fit=crop',
+  '2_seat_เขียว': 'https://images.unsplash.com/photo-1508873696983-2df570464756?q=80&w=900&auto=format&fit=crop',
+  '2_seat_ส้ม': 'https://images.unsplash.com/photo-1540959733332-eab4deceeaf7?q=80&w=900&auto=format&fit=crop',
+
+  '3_seat_น้ำเงิน': 'https://images.unsplash.com/photo-1476514525535-07fb3b4ae5f1?q=80&w=900&auto=format&fit=crop',
+  '3_seat_แดง': 'https://images.unsplash.com/photo-1510312305653-8ed496efae75?q=80&w=900&auto=format&fit=crop',
+  '3_seat_เขียว': 'https://images.unsplash.com/photo-1508873696983-2df570464756?q=80&w=900&auto=format&fit=crop',
+  '3_seat_ส้ม': 'https://images.unsplash.com/photo-1540959733332-eab4deceeaf7?q=80&w=900&auto=format&fit=crop',
+};
+
+export const compressImageFile = async (file: File, maxWidth = 1200, maxHeight = 800, quality = 0.85): Promise<string> => {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
+        if (width > maxWidth) {
+          height = Math.round((height * maxWidth) / width);
+          width = maxWidth;
+        }
+        if (height > maxHeight) {
+          width = Math.round((width * maxHeight) / height);
+          height = maxHeight;
+        }
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL('image/jpeg', quality));
+        } else {
+          resolve(e.target?.result as string);
+        }
+      };
+      img.onerror = () => resolve(e.target?.result as string || '');
+      img.src = e.target?.result as string;
+    };
+    reader.onerror = () => resolve('');
+    reader.readAsDataURL(file);
+  });
+};
+
 export const DEFAULT_PREORDER_SETTINGS: PreOrderSettings = {
   basePrice: 3000,
+  basePrice1Seat: 2500,
+  basePrice2Seat: 3000,
+  basePrice3Seat: 4500,
   stickerPrice: 300,
   customTextPrice: 200,
   depositPerBoat: 1000,
@@ -1793,6 +1867,7 @@ export const DEFAULT_PREORDER_SETTINGS: PreOrderSettings = {
     { id: 'เขียว', name: 'สีเขียว', english: 'Forest Green', swatchHex: '#16a34a', enabled: true },
     { id: 'ส้ม', name: 'สีส้ม', english: 'Hi-Vis Safety Orange', swatchHex: '#ea580c', enabled: true }
   ],
+  galleryPhotos: { ...DEFAULT_BOAT_GALLERY_PHOTOS },
   updatedAt: new Date().toISOString()
 };
 
@@ -1807,7 +1882,8 @@ export const supabasePreOrderSettings = {
           localData = {
             ...DEFAULT_PREORDER_SETTINGS,
             ...parsed,
-            colors: Array.isArray(parsed.colors) && parsed.colors.length > 0 ? parsed.colors : DEFAULT_PREORDER_SETTINGS.colors
+            colors: Array.isArray(parsed.colors) && parsed.colors.length > 0 ? parsed.colors : DEFAULT_PREORDER_SETTINGS.colors,
+            galleryPhotos: parsed.galleryPhotos || DEFAULT_PREORDER_SETTINGS.galleryPhotos
           };
         }
       }
@@ -1823,12 +1899,23 @@ export const supabasePreOrderSettings = {
 
         if (!posErr && posData && posData.length > 0) {
           const row = posData[0];
+          let parsedPhotos = DEFAULT_PREORDER_SETTINGS.galleryPhotos;
+          if (row.gallery_photos) {
+            parsedPhotos = typeof row.gallery_photos === 'string' ? JSON.parse(row.gallery_photos) : row.gallery_photos;
+          } else if (row.galleryPhotos) {
+            parsedPhotos = row.galleryPhotos;
+          }
+
           const settings: PreOrderSettings = {
             basePrice: Number(row.base_price ?? row.basePrice ?? DEFAULT_PREORDER_SETTINGS.basePrice),
+            basePrice1Seat: Number(row.base_price_1_seat ?? row.basePrice1Seat ?? DEFAULT_PREORDER_SETTINGS.basePrice1Seat),
+            basePrice2Seat: Number(row.base_price_2_seat ?? row.basePrice2Seat ?? DEFAULT_PREORDER_SETTINGS.basePrice2Seat),
+            basePrice3Seat: Number(row.base_price_3_seat ?? row.basePrice3Seat ?? DEFAULT_PREORDER_SETTINGS.basePrice3Seat),
             stickerPrice: Number(row.sticker_price ?? row.stickerPrice ?? DEFAULT_PREORDER_SETTINGS.stickerPrice),
             customTextPrice: Number(row.custom_text_price ?? row.customTextPrice ?? DEFAULT_PREORDER_SETTINGS.customTextPrice),
             depositPerBoat: Number(row.deposit_per_boat ?? row.depositPerBoat ?? DEFAULT_PREORDER_SETTINGS.depositPerBoat),
             colors: Array.isArray(row.colors) ? row.colors : (typeof row.colors === 'string' ? JSON.parse(row.colors) : DEFAULT_PREORDER_SETTINGS.colors),
+            galleryPhotos: parsedPhotos || DEFAULT_PREORDER_SETTINGS.galleryPhotos,
             updatedAt: row.updated_at || row.updatedAt || new Date().toISOString()
           };
           try {
@@ -1849,7 +1936,8 @@ export const supabasePreOrderSettings = {
           const val = typeof row.value === 'string' ? JSON.parse(row.value) : row.value;
           const settings: PreOrderSettings = {
             ...DEFAULT_PREORDER_SETTINGS,
-            ...val
+            ...val,
+            galleryPhotos: val.galleryPhotos || DEFAULT_PREORDER_SETTINGS.galleryPhotos
           };
           try {
             localStorage.setItem('pre_order_settings', JSON.stringify(settings));
@@ -1868,9 +1956,13 @@ export const supabasePreOrderSettings = {
     const updatedSettings: PreOrderSettings = {
       ...settings,
       basePrice: Number(settings.basePrice || 3000),
+      basePrice1Seat: Number(settings.basePrice1Seat || 2500),
+      basePrice2Seat: Number(settings.basePrice2Seat || settings.basePrice || 3000),
+      basePrice3Seat: Number(settings.basePrice3Seat || 4500),
       stickerPrice: Number(settings.stickerPrice || 0),
       customTextPrice: Number(settings.customTextPrice || 0),
       depositPerBoat: Number(settings.depositPerBoat || 1000),
+      galleryPhotos: settings.galleryPhotos || DEFAULT_PREORDER_SETTINGS.galleryPhotos,
       updatedAt: new Date().toISOString()
     };
 
@@ -1884,13 +1976,17 @@ export const supabasePreOrderSettings = {
     if (isSupabaseConfigured && supabase) {
       try {
         // Try table pre_order_settings
-        const payloadA = {
+        const payloadA: any = {
           id: 'default',
           base_price: Number(updatedSettings.basePrice),
+          base_price_1_seat: Number(updatedSettings.basePrice1Seat),
+          base_price_2_seat: Number(updatedSettings.basePrice2Seat),
+          base_price_3_seat: Number(updatedSettings.basePrice3Seat),
           sticker_price: Number(updatedSettings.stickerPrice),
           custom_text_price: Number(updatedSettings.customTextPrice),
           deposit_per_boat: Number(updatedSettings.depositPerBoat),
           colors: updatedSettings.colors,
+          gallery_photos: updatedSettings.galleryPhotos,
           updated_at: updatedSettings.updatedAt
         };
         const { error: errA } = await supabase.from('pre_order_settings').upsert([payloadA]);
@@ -1910,6 +2006,31 @@ export const supabasePreOrderSettings = {
     }
 
     return true;
+  },
+
+  async uploadBoatPhoto(file: File, sizeId: string, colorId: string): Promise<string> {
+    const compressed = await compressImageFile(file, 1280, 850, 0.85);
+
+    if (isSupabaseConfigured && supabase) {
+      try {
+        const fileExt = file.name.split('.').pop() || 'jpg';
+        const cleanFileName = `boat_gallery/${sizeId}_${Date.now()}.${fileExt}`;
+
+        // Attempt upload to 'products' or 'payment-slips'
+        const { data, error } = await supabase.storage
+          .from('products')
+          .upload(cleanFileName, file, { cacheControl: '3600', upsert: true });
+
+        if (!error && data) {
+          const { data: { publicUrl } } = supabase.storage.from('products').getPublicUrl(cleanFileName);
+          if (publicUrl) return publicUrl;
+        }
+      } catch (err) {
+        console.warn('Supabase storage upload fallback to compressed image:', err);
+      }
+    }
+
+    return compressed;
   }
 };
 

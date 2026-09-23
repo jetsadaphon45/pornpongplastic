@@ -43,7 +43,12 @@ import {
   Sliders,
   Palette,
   Check,
-  Save
+  Save,
+  Camera,
+  UploadCloud,
+  Image as ImageIcon,
+  ZoomIn,
+  Link as LinkIcon
 } from 'lucide-react';
 import { Product } from '../types';
 import { 
@@ -59,6 +64,7 @@ import {
   PreOrderSettings,
   PreOrderColorConfig,
   DEFAULT_PREORDER_SETTINGS,
+  DEFAULT_BOAT_GALLERY_PHOTOS,
   getLocalStoredProducts
 } from '../lib/supabase';
 import { AppNotification } from './NotificationDropdown';
@@ -165,6 +171,13 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
   const [editFinalPrice, setEditFinalPrice] = React.useState<number>(3000);
   const [editDepositPrice, setEditDepositPrice] = React.useState<number>(1000);
   const [isSavingPriceOverride, setIsSavingPriceOverride] = React.useState(false);
+
+  // Photo Gallery Management States
+  const [selectedGallerySizeTab, setSelectedGallerySizeTab] = React.useState<'1_seat' | '2_seat' | '3_seat'>('2_seat');
+  const [uploadingPhotoKey, setUploadingPhotoKey] = React.useState<string | null>(null);
+  const [zoomedPhotoUrl, setZoomedPhotoUrl] = React.useState<string | null>(null);
+  const [editingPhotoUrlKey, setEditingPhotoUrlKey] = React.useState<string | null>(null);
+  const [customPhotoUrlInput, setCustomPhotoUrlInput] = React.useState<string>('');
 
   // Editing modal / drawer states
   const [isProductAddOpen, setIsProductAddOpen] = React.useState(false);
@@ -466,14 +479,89 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
     if (e) e.preventDefault();
     setIsSavingPreOrderSettings(true);
     try {
-      await supabasePreOrderSettings.save(preOrderSettings);
-      triggerToast('บันทึกการตั้งค่าราคาและสีพรีออเดอร์ลงระบบเรียบร้อยแล้ว');
+      const p1 = Number(preOrderSettings.basePrice1Seat || 2500);
+      const p2 = Number(preOrderSettings.basePrice2Seat || preOrderSettings.basePrice || 3000);
+      const p3 = Number(preOrderSettings.basePrice3Seat || 4500);
+      const cleanSettings: PreOrderSettings = {
+        ...preOrderSettings,
+        basePrice1Seat: p1,
+        basePrice2Seat: p2,
+        basePrice3Seat: p3,
+        basePrice: p2,
+        stickerPrice: Number(preOrderSettings.stickerPrice || 300),
+        customTextPrice: Number(preOrderSettings.customTextPrice || 200),
+        depositPerBoat: Number(preOrderSettings.depositPerBoat || 1000),
+        galleryPhotos: preOrderSettings.galleryPhotos || DEFAULT_BOAT_GALLERY_PHOTOS
+      };
+      await supabasePreOrderSettings.save(cleanSettings);
+      setPreOrderSettings(cleanSettings);
+      triggerToast('บันทึกการตั้งค่าราคา สี และรูปภาพพรีออเดอร์ลงระบบเรียบร้อยแล้ว');
     } catch (err) {
       console.error('Failed to save preorder settings:', err);
       triggerToast('ไม่สามารถบันทึกการตั้งค่าได้ กรุณาลองใหม่อีกครั้ง');
     } finally {
       setIsSavingPreOrderSettings(false);
     }
+  };
+
+  // Real Boat Photo Handlers
+  const handleUploadBoatPhoto = async (sizeId: '1_seat' | '2_seat' | '3_seat', colorId: string, file: File) => {
+    if (!file) return;
+    const photoKey = `${sizeId}_${colorId}`;
+    setUploadingPhotoKey(photoKey);
+    try {
+      const publicUrl = await supabasePreOrderSettings.uploadBoatPhoto(file, sizeId, colorId);
+      const updatedGallery = {
+        ...(preOrderSettings.galleryPhotos || DEFAULT_BOAT_GALLERY_PHOTOS),
+        [photoKey]: publicUrl
+      };
+      const newSettings: PreOrderSettings = {
+        ...preOrderSettings,
+        galleryPhotos: updatedGallery
+      };
+      setPreOrderSettings(newSettings);
+      await supabasePreOrderSettings.save(newSettings);
+      triggerToast(`อัปโหลดรูปภาพเรือจริง (${colorId}) เรียบร้อยแล้ว`);
+    } catch (err: any) {
+      console.error('Failed to upload boat photo:', err);
+      triggerToast('เกิดข้อผิดพลาดในการอัปโหลดรูปภาพ');
+    } finally {
+      setUploadingPhotoKey(null);
+    }
+  };
+
+  const handleResetBoatPhoto = async (sizeId: '1_seat' | '2_seat' | '3_seat', colorId: string) => {
+    const photoKey = `${sizeId}_${colorId}`;
+    const defaultUrl = DEFAULT_BOAT_GALLERY_PHOTOS[photoKey] || 'https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?q=80&w=900&auto=format&fit=crop';
+    const updatedGallery = {
+      ...(preOrderSettings.galleryPhotos || DEFAULT_BOAT_GALLERY_PHOTOS),
+      [photoKey]: defaultUrl
+    };
+    const newSettings: PreOrderSettings = {
+      ...preOrderSettings,
+      galleryPhotos: updatedGallery
+    };
+    setPreOrderSettings(newSettings);
+    await supabasePreOrderSettings.save(newSettings);
+    triggerToast(`รีเซ็ตรูปภาพเรือ (${colorId}) กลับเป็นภาพเริ่มต้นแล้ว`);
+  };
+
+  const handleSetBoatPhotoUrl = async (sizeId: '1_seat' | '2_seat' | '3_seat', colorId: string, url: string) => {
+    if (!url.trim()) return;
+    const photoKey = `${sizeId}_${colorId}`;
+    const updatedGallery = {
+      ...(preOrderSettings.galleryPhotos || DEFAULT_BOAT_GALLERY_PHOTOS),
+      [photoKey]: url.trim()
+    };
+    const newSettings: PreOrderSettings = {
+      ...preOrderSettings,
+      galleryPhotos: updatedGallery
+    };
+    setPreOrderSettings(newSettings);
+    await supabasePreOrderSettings.save(newSettings);
+    setEditingPhotoUrlKey(null);
+    setCustomPhotoUrlInput('');
+    triggerToast(`บันทึก URL รูปภาพเรือ (${colorId}) เรียบร้อยแล้ว`);
   };
 
   // Toggle Color in Pre-Order Settings
@@ -2068,8 +2156,14 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                             </td>
                             <td className="py-3.5 px-3">
                               <span className="block font-semibold text-slate-800">{pre.productName}</span>
-                              {/* CUSTOM SPECS (Color, Sticker, Custom Text) */}
+                              {/* CUSTOM SPECS (Size, Color, Sticker, Custom Text) */}
                               <div className="flex flex-wrap items-center gap-1 mt-1">
+                                {pre.boat_size && (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-sky-50 text-sky-800 text-[10px] font-bold border border-sky-200">
+                                    🛶 {pre.boat_model_name || pre.boat_size}
+                                  </span>
+                                )}
+
                                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-slate-100 text-slate-700 text-[10px] font-medium border border-slate-200">
                                   <span className={`w-2 h-2 rounded-full shrink-0 ${
                                     pre.selected_color?.includes('แดง') || pre.color?.includes('แดง') ? 'bg-red-500' :
@@ -2189,99 +2283,185 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                 <form onSubmit={handleSavePreOrderSettings} className="space-y-6">
                   
                   {/* Part 1: Pricing Matrix */}
-                  <div>
-                    <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 mb-3 flex items-center gap-2">
-                      <DollarSign size={15} className="text-sky-600" />
-                      <span>กำหนดโครงสร้างราคาพรีออเดอร์ (Pricing Structure)</span>
-                    </h4>
-                    
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                      {/* Base Price */}
-                      <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/60 hover:bg-white hover:border-sky-300 transition-all shadow-2xs space-y-2">
-                        <div className="flex items-center justify-between">
-                          <label className="text-xs font-bold text-slate-700">ราคาเริ่มต้นของเรือ</label>
-                          <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded bg-sky-100 text-sky-800">Base Price</span>
-                        </div>
-                        <div className="relative">
-                          <span className="absolute left-3 top-2.5 text-xs font-bold text-slate-400">฿</span>
-                          <input
-                            type="number"
-                            min="0"
-                            step="100"
-                            value={preOrderSettings.basePrice}
-                            onChange={(e) => setPreOrderSettings(prev => ({ ...prev, basePrice: Number(e.target.value) || 0 }))}
-                            className="w-full bg-white border border-slate-200 rounded-lg pl-7 pr-3 py-2 text-sm font-bold text-slate-800 focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
-                            placeholder="3000"
-                            required
-                          />
-                        </div>
-                        <p className="text-[10px] text-slate-400">ราคาเรือตัวเปล่ามาตรฐาน 4 ที่นั่ง</p>
+                  <div className="space-y-4">
+                    {/* Section 1A: Base Prices by Boat Size */}
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-2">
+                          <DollarSign size={15} className="text-sky-600" />
+                          <span>1. กำหนดราคาเริ่มต้นแยกตามขนาดและประเภทเรือ (Base Price by Boat Size)</span>
+                        </h4>
+                        <span className="text-[10px] text-sky-700 font-bold bg-sky-50 px-2.5 py-0.5 rounded-md border border-sky-200">
+                          รองรับ 3 ขนาด
+                        </span>
                       </div>
+                      <p className="text-[11px] text-slate-500 mb-3">
+                        กำหนดราคาเริ่มต้น (Base Price) สำหรับแต่ละโมเดลเรือ เพื่อให้หน้าออกแบบเรือคำนวณราคาทันทีที่ลูกค้าเลือกขนาด:
+                      </p>
 
-                      {/* Sticker Option Price */}
-                      <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/60 hover:bg-white hover:border-sky-300 transition-all shadow-2xs space-y-2">
-                        <div className="flex items-center justify-between">
-                          <label className="text-xs font-bold text-slate-700">ค่าสติกเกอร์ตกแต่ง</label>
-                          <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded bg-amber-100 text-amber-800">Sticker</span>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                        {/* 1 Seat Model */}
+                        <div className="p-4 rounded-2xl border border-sky-200 bg-sky-50/40 hover:bg-white hover:border-sky-400 transition-all shadow-2xs space-y-2 relative">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-md bg-sky-200 text-sky-900">
+                              ขนาด 1 ที่นั่ง
+                            </span>
+                            <span className="text-[9.5px] font-mono text-slate-500">basePrice1Seat</span>
+                          </div>
+                          <div>
+                            <label className="text-xs font-bold text-slate-850 block">เรือเดี่ยว / เรือเล็ก (6 ฟุต)</label>
+                            <span className="text-[10.5px] text-slate-500 block">ยาว 1.8 - 2.0 ม. | กว้าง 78 ซม.</span>
+                          </div>
+                          <div className="relative pt-1">
+                            <span className="absolute left-3 top-3.5 text-xs font-bold text-slate-400">฿</span>
+                            <input
+                              type="number"
+                              min="0"
+                              step="100"
+                              value={preOrderSettings.basePrice1Seat ?? 2500}
+                              onChange={(e) => setPreOrderSettings(prev => ({ ...prev, basePrice1Seat: Number(e.target.value) || 0 }))}
+                              className="w-full bg-white border border-slate-200 rounded-xl pl-7 pr-3 py-2 text-sm font-black text-brand-blue focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
+                              placeholder="2500"
+                              required
+                            />
+                          </div>
+                          <p className="text-[10px] text-slate-400">ราคามาตรฐานเริ่มต้น: 2,500 บาท</p>
                         </div>
-                        <div className="relative">
-                          <span className="absolute left-3 top-2.5 text-xs font-bold text-slate-400">฿</span>
-                          <input
-                            type="number"
-                            min="0"
-                            step="50"
-                            value={preOrderSettings.stickerPrice}
-                            onChange={(e) => setPreOrderSettings(prev => ({ ...prev, stickerPrice: Number(e.target.value) || 0 }))}
-                            className="w-full bg-white border border-slate-200 rounded-lg pl-7 pr-3 py-2 text-sm font-bold text-slate-800 focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
-                            placeholder="300"
-                            required
-                          />
+
+                        {/* 2 Seats Model */}
+                        <div className="p-4 rounded-2xl border border-sky-300 bg-sky-50/60 hover:bg-white hover:border-sky-400 transition-all shadow-2xs space-y-2 relative ring-1 ring-sky-200">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-md bg-amber-200 text-amber-950">
+                              ขนาด 2 ที่นั่ง (ยอดนิยม)
+                            </span>
+                            <span className="text-[9.5px] font-mono text-slate-500">basePrice2Seat</span>
+                          </div>
+                          <div>
+                            <label className="text-xs font-bold text-slate-850 block">รุ่นมาตรฐาน (8 ฟุต)</label>
+                            <span className="text-[10.5px] text-slate-500 block">ยาว 1.98 - 2.5 ม. | กว้าง 88-96 ซม.</span>
+                          </div>
+                          <div className="relative pt-1">
+                            <span className="absolute left-3 top-3.5 text-xs font-bold text-slate-400">฿</span>
+                            <input
+                              type="number"
+                              min="0"
+                              step="100"
+                              value={preOrderSettings.basePrice2Seat ?? preOrderSettings.basePrice ?? 3000}
+                              onChange={(e) => {
+                                const val = Number(e.target.value) || 0;
+                                setPreOrderSettings(prev => ({ ...prev, basePrice2Seat: val, basePrice: val }));
+                              }}
+                              className="w-full bg-white border border-slate-200 rounded-xl pl-7 pr-3 py-2 text-sm font-black text-brand-blue focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
+                              placeholder="3000"
+                              required
+                            />
+                          </div>
+                          <p className="text-[10px] text-slate-400">ราคามาตรฐานเริ่มต้น: 3,000 บาท</p>
                         </div>
-                        <p className="text-[10px] text-slate-400">ค่าติดลายสติกเกอร์กันน้ำรอบลำเรือ</p>
+
+                        {/* 3+ Seats Model */}
+                        <div className="p-4 rounded-2xl border border-sky-200 bg-sky-50/40 hover:bg-white hover:border-sky-400 transition-all shadow-2xs space-y-2 relative">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-md bg-indigo-200 text-indigo-950">
+                              ขนาด 3 ที่นั่งขึ้นไป
+                            </span>
+                            <span className="text-[9.5px] font-mono text-slate-500">basePrice3Seat</span>
+                          </div>
+                          <div>
+                            <label className="text-xs font-bold text-slate-850 block">เรือใหญ่ / ทรงอีแปะ (10-12 ฟุต)</label>
+                            <span className="text-[10.5px] text-slate-500 block">ยาว 3.0 - 3.6 ม. | กว้าง 100-110 ซม.</span>
+                          </div>
+                          <div className="relative pt-1">
+                            <span className="absolute left-3 top-3.5 text-xs font-bold text-slate-400">฿</span>
+                            <input
+                              type="number"
+                              min="0"
+                              step="100"
+                              value={preOrderSettings.basePrice3Seat ?? 4500}
+                              onChange={(e) => setPreOrderSettings(prev => ({ ...prev, basePrice3Seat: Number(e.target.value) || 0 }))}
+                              className="w-full bg-white border border-slate-200 rounded-xl pl-7 pr-3 py-2 text-sm font-black text-brand-blue focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
+                              placeholder="4500"
+                              required
+                            />
+                          </div>
+                          <p className="text-[10px] text-slate-400">ราคามาตรฐานเริ่มต้น: 4,500 บาท</p>
+                        </div>
                       </div>
+                    </div>
 
-                      {/* Custom Text Price */}
-                      <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/60 hover:bg-white hover:border-sky-300 transition-all shadow-2xs space-y-2">
-                        <div className="flex items-center justify-between">
-                          <label className="text-xs font-bold text-slate-700">ค่าสกรีนข้อความข้างเรือ</label>
-                          <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded bg-indigo-100 text-indigo-800">Custom Text</span>
-                        </div>
-                        <div className="relative">
-                          <span className="absolute left-3 top-2.5 text-xs font-bold text-slate-400">฿</span>
-                          <input
-                            type="number"
-                            min="0"
-                            step="50"
-                            value={preOrderSettings.customTextPrice}
-                            onChange={(e) => setPreOrderSettings(prev => ({ ...prev, customTextPrice: Number(e.target.value) || 0 }))}
-                            className="w-full bg-white border border-slate-200 rounded-lg pl-7 pr-3 py-2 text-sm font-bold text-slate-800 focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
-                            placeholder="200"
-                            required
-                          />
-                        </div>
-                        <p className="text-[10px] text-slate-400">ค่าบล็อกสกรีนชื่อบุคคลหรือหน่วยงาน</p>
-                      </div>
+                    {/* Section 1B: Add-on Accessories & Deposit */}
+                    <div className="pt-2">
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 mb-3 flex items-center gap-2">
+                        <DollarSign size={15} className="text-amber-600" />
+                        <span>2. ค่าอุปกรณ์เสริมและเงินมัดจำ (Add-ons & Deposit Configuration)</span>
+                      </h4>
 
-                      {/* Deposit Amount */}
-                      <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/60 hover:bg-white hover:border-sky-300 transition-all shadow-2xs space-y-2">
-                        <div className="flex items-center justify-between">
-                          <label className="text-xs font-bold text-slate-700">ยอดเงินมัดจำต่อลำ</label>
-                          <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">Deposit</span>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                        {/* Sticker Option Price */}
+                        <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/60 hover:bg-white hover:border-amber-300 transition-all shadow-2xs space-y-2">
+                          <div className="flex items-center justify-between">
+                            <label className="text-xs font-bold text-slate-700">ค่าสติกเกอร์ตกแต่ง</label>
+                            <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded bg-amber-100 text-amber-800">Sticker</span>
+                          </div>
+                          <div className="relative">
+                            <span className="absolute left-3 top-2.5 text-xs font-bold text-slate-400">฿</span>
+                            <input
+                              type="number"
+                              min="0"
+                              step="50"
+                              value={preOrderSettings.stickerPrice}
+                              onChange={(e) => setPreOrderSettings(prev => ({ ...prev, stickerPrice: Number(e.target.value) || 0 }))}
+                              className="w-full bg-white border border-slate-200 rounded-lg pl-7 pr-3 py-2 text-sm font-bold text-slate-800 focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500"
+                              placeholder="300"
+                              required
+                            />
+                          </div>
+                          <p className="text-[10px] text-slate-400">ค่าติดลายสติกเกอร์กันน้ำรอบลำเรือ (ปกติ 300฿)</p>
                         </div>
-                        <div className="relative">
-                          <span className="absolute left-3 top-2.5 text-xs font-bold text-slate-400">฿</span>
-                          <input
-                            type="number"
-                            min="0"
-                            step="100"
-                            value={preOrderSettings.depositPerBoat}
-                            onChange={(e) => setPreOrderSettings(prev => ({ ...prev, depositPerBoat: Number(e.target.value) || 0 }))}
-                            className="w-full bg-white border border-slate-200 rounded-lg pl-7 pr-3 py-2 text-sm font-bold text-slate-800 focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
-                            placeholder="1000"
-                            required
-                          />
+
+                        {/* Custom Text Price */}
+                        <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/60 hover:bg-white hover:border-indigo-300 transition-all shadow-2xs space-y-2">
+                          <div className="flex items-center justify-between">
+                            <label className="text-xs font-bold text-slate-700">ค่าสกรีนข้อความข้างเรือ</label>
+                            <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded bg-indigo-100 text-indigo-800">Custom Text</span>
+                          </div>
+                          <div className="relative">
+                            <span className="absolute left-3 top-2.5 text-xs font-bold text-slate-400">฿</span>
+                            <input
+                              type="number"
+                              min="0"
+                              step="50"
+                              value={preOrderSettings.customTextPrice}
+                              onChange={(e) => setPreOrderSettings(prev => ({ ...prev, customTextPrice: Number(e.target.value) || 0 }))}
+                              className="w-full bg-white border border-slate-200 rounded-lg pl-7 pr-3 py-2 text-sm font-bold text-slate-800 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+                              placeholder="200"
+                              required
+                            />
+                          </div>
+                          <p className="text-[10px] text-slate-400">ค่าบล็อกสกรีนชื่อบุคคลหรือหน่วยงาน (ปกติ 200฿)</p>
                         </div>
-                        <p className="text-[10px] text-slate-400">ยอดเงินมัดจำขั้นต่ำในการลงคิวผลิต</p>
+
+                        {/* Deposit Amount */}
+                        <div className="p-4 rounded-xl border border-slate-200 bg-slate-50/60 hover:bg-white hover:border-emerald-300 transition-all shadow-2xs space-y-2">
+                          <div className="flex items-center justify-between">
+                            <label className="text-xs font-bold text-slate-700">ยอดเงินมัดจำต่อลำ</label>
+                            <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">Deposit</span>
+                          </div>
+                          <div className="relative">
+                            <span className="absolute left-3 top-2.5 text-xs font-bold text-slate-400">฿</span>
+                            <input
+                              type="number"
+                              min="0"
+                              step="100"
+                              value={preOrderSettings.depositPerBoat}
+                              onChange={(e) => setPreOrderSettings(prev => ({ ...prev, depositPerBoat: Number(e.target.value) || 0 }))}
+                              className="w-full bg-white border border-slate-200 rounded-lg pl-7 pr-3 py-2 text-sm font-bold text-slate-800 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500"
+                              placeholder="1000"
+                              required
+                            />
+                          </div>
+                          <p className="text-[10px] text-slate-400">ยอดเงินมัดจำขั้นต่ำในการลงคิวผลิต (ปกติ 1,000฿)</p>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -2346,7 +2526,199 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                     </div>
                   </div>
 
-                  {/* Part 3: Live Preview Simulation Card */}
+                  {/* Part 3: Real Boat Photos Gallery Management */}
+                  <div className="pt-4 border-t border-slate-150">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+                      <div>
+                        <h4 className="text-xs font-bold uppercase tracking-wider text-slate-800 flex items-center gap-2">
+                          <Camera size={16} className="text-amber-600" />
+                          <span>3. จัดการภาพถ่ายเรือจริง (Real Boat Photos Gallery Management)</span>
+                        </h4>
+                        <p className="text-[11px] text-slate-500 mt-0.5">
+                          อัปโหลดภาพถ่ายเรือจริงของแต่ละรุ่นและสี หรือระบุ URL รูปภาพ เพื่อนำไปแสดงในแถบ "ภาพถ่ายเรือจริง" ใน Live Preview ของลูกค้า
+                        </p>
+                      </div>
+
+                      {/* Size selector subtabs */}
+                      <div className="flex items-center p-1 bg-slate-100 rounded-xl border border-slate-200 self-start sm:self-auto">
+                        {[
+                          { id: '1_seat', label: '1 ที่นั่ง (6 ฟุต)' },
+                          { id: '2_seat', label: '2 ที่นั่ง (8 ฟุต)' },
+                          { id: '3_seat', label: '3 ที่นั่งขึ้นไป (10-12 ฟุต)' }
+                        ].map((sz) => (
+                          <button
+                            key={sz.id}
+                            type="button"
+                            onClick={() => setSelectedGallerySizeTab(sz.id as any)}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                              selectedGallerySizeTab === sz.id
+                                ? 'bg-white text-brand-blue shadow-xs'
+                                : 'text-slate-600 hover:text-slate-900'
+                            }`}
+                          >
+                            {sz.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* 4 Color Photo Cards for current selected size tab */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                      {preOrderSettings.colors.map((color) => {
+                        const photoKey = `${selectedGallerySizeTab}_${color.id}`;
+                        const currentPhotoUrl = preOrderSettings.galleryPhotos?.[photoKey] 
+                          || DEFAULT_BOAT_GALLERY_PHOTOS[photoKey] 
+                          || 'https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?q=80&w=900&auto=format&fit=crop';
+                        const isCustom = Boolean(preOrderSettings.galleryPhotos?.[photoKey] && preOrderSettings.galleryPhotos[photoKey] !== DEFAULT_BOAT_GALLERY_PHOTOS[photoKey]);
+                        const isUploading = uploadingPhotoKey === photoKey;
+                        const isEditingUrl = editingPhotoUrlKey === photoKey;
+
+                        return (
+                          <div 
+                            key={color.id}
+                            className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-2xs hover:shadow-sm transition-all flex flex-col justify-between"
+                          >
+                            {/* Card Header */}
+                            <div className="p-3 pb-2 flex items-center justify-between border-b border-slate-100 bg-slate-50/70">
+                              <div className="flex items-center gap-2">
+                                <span 
+                                  className="w-3.5 h-3.5 rounded-full border border-black/10 shadow-xs" 
+                                  style={{ backgroundColor: color.swatchHex }} 
+                                />
+                                <span className="text-xs font-bold text-slate-800">{color.name}</span>
+                              </div>
+                              <span className={`text-[9.5px] font-bold px-2 py-0.5 rounded-full border ${
+                                isCustom 
+                                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
+                                  : 'bg-slate-100 text-slate-500 border-slate-200'
+                              }`}>
+                                {isCustom ? '✓ อัปโหลดเอง' : 'ค่าตั้งต้น'}
+                              </span>
+                            </div>
+
+                            {/* Thumbnail Preview with Overlay */}
+                            <div className="relative aspect-16/10 bg-slate-900 group overflow-hidden">
+                              <img
+                                src={currentPhotoUrl}
+                                alt={`รูปเรือ ${color.name}`}
+                                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                              />
+
+                              {/* Uploading overlay */}
+                              {isUploading && (
+                                <div className="absolute inset-0 bg-black/70 backdrop-blur-xs flex flex-col items-center justify-center text-white gap-1 z-10">
+                                  <RefreshCw size={20} className="animate-spin text-sky-400" />
+                                  <span className="text-[11px] font-bold">กำลังอัปโหลด...</span>
+                                </div>
+                              )}
+
+                              {/* Quick Action overlay */}
+                              <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => setZoomedPhotoUrl(currentPhotoUrl)}
+                                  className="p-2 rounded-xl bg-white/90 hover:bg-white text-slate-900 transition-transform hover:scale-110 shadow-md cursor-pointer"
+                                  title="ดูรูปภาพขนาดใหญ่"
+                                >
+                                  <Eye size={15} />
+                                </button>
+                                {isCustom && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleResetBoatPhoto(selectedGallerySizeTab, color.id)}
+                                    className="p-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white transition-transform hover:scale-110 shadow-md cursor-pointer"
+                                    title="รีเซ็ตกลับเป็นภาพเริ่มต้น"
+                                  >
+                                    <Trash2 size={15} />
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Controls and upload buttons */}
+                            <div className="p-3 space-y-2.5">
+                              {/* File Upload Button */}
+                              <label className="w-full inline-flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 text-xs font-bold transition-all cursor-pointer shadow-2xs hover:shadow-xs">
+                                <UploadCloud size={14} />
+                                <span>อัปโหลดรูปภาพใหม่</span>
+                                <input
+                                  type="file"
+                                  accept="image/*"
+                                  className="hidden"
+                                  disabled={isUploading}
+                                  onChange={(e) => {
+                                    const file = e.target.files?.[0];
+                                    if (file) {
+                                      handleUploadBoatPhoto(selectedGallerySizeTab, color.id, file);
+                                      e.target.value = '';
+                                    }
+                                  }}
+                                />
+                              </label>
+
+                              {/* URL edit toggle */}
+                              {isEditingUrl ? (
+                                <div className="space-y-1.5 pt-1">
+                                  <input
+                                    type="url"
+                                    placeholder="https://..."
+                                    value={customPhotoUrlInput}
+                                    onChange={(e) => setCustomPhotoUrlInput(e.target.value)}
+                                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 outline-none focus:border-sky-500 focus:bg-white"
+                                  />
+                                  <div className="flex items-center gap-1.5">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleSetBoatPhotoUrl(selectedGallerySizeTab, color.id, customPhotoUrlInput)}
+                                      className="flex-1 py-1 px-2 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white text-[10.5px] font-bold cursor-pointer"
+                                    >
+                                      บันทึก URL
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setEditingPhotoUrlKey(null);
+                                        setCustomPhotoUrlInput('');
+                                      }}
+                                      className="py-1 px-2 rounded-md bg-slate-100 hover:bg-slate-200 text-slate-600 text-[10.5px] font-bold cursor-pointer"
+                                    >
+                                      ยกเลิก
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="flex items-center justify-between pt-0.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setEditingPhotoUrlKey(photoKey);
+                                      setCustomPhotoUrlInput(currentPhotoUrl);
+                                    }}
+                                    className="text-[10px] text-slate-500 hover:text-sky-600 flex items-center gap-1 font-semibold cursor-pointer"
+                                  >
+                                    <LinkIcon size={11} />
+                                    <span>ระบุ URL ตรง</span>
+                                  </button>
+
+                                  {isCustom && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleResetBoatPhoto(selectedGallerySizeTab, color.id)}
+                                      className="text-[10px] text-rose-500 hover:text-rose-700 font-semibold cursor-pointer"
+                                    >
+                                      ลบรูป / รีเซ็ต
+                                    </button>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Part 4: Live Preview Simulation Card */}
                   <div className="p-5 rounded-2xl bg-gradient-to-br from-sky-50/70 via-white to-sky-50/40 border border-sky-100 shadow-2xs space-y-3">
                     <div className="flex items-center justify-between flex-wrap gap-2">
                       <span className="text-xs font-bold text-sky-900 flex items-center gap-1.5">
@@ -3275,6 +3647,37 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
             </div>
             <p className="text-slate-300 text-center text-xs mt-3 font-semibold">
               คลิกบริเวณรอบนอกรูป หรือคลิกปุ่มด้านบนเพื่อปิดหน้าต่าง
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* ZOOMED BOAT PHOTO FULL-SCREEN MODAL PREVIEW */}
+      {zoomedPhotoUrl && (
+        <div 
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/85 backdrop-blur-sm p-4 animate-fadeIn"
+          onClick={() => setZoomedPhotoUrl(null)}
+        >
+          <div 
+            className="relative max-w-4xl w-full flex flex-col items-center justify-center"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              onClick={() => setZoomedPhotoUrl(null)}
+              className="absolute -top-10 right-0 text-white hover:text-slate-200 transition-colors cursor-pointer text-xs font-bold flex items-center gap-1.5"
+            >
+              <X size={16} />
+              <span>ปิดหน้าต่างภาพ</span>
+            </button>
+            <div className="bg-slate-950 border border-slate-700 rounded-3xl overflow-hidden p-2 shadow-2xl flex items-center justify-center w-full">
+              <img 
+                src={zoomedPhotoUrl} 
+                alt="Boat Photo Fullsize Preview" 
+                className="max-h-[80vh] w-full object-contain rounded-2xl"
+              />
+            </div>
+            <p className="text-slate-300 text-center text-xs mt-3 font-semibold">
+              ภาพถ่ายเรือจริงความละเอียดสูง • คลิกที่ใดก็ได้ด้านนอกเพื่อปิด
             </p>
           </div>
         </div>

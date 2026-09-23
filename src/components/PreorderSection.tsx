@@ -22,7 +22,10 @@ import {
   Eye,
   Info,
   Layers,
-  Sparkle
+  Sparkle,
+  Camera,
+  Maximize2,
+  ZoomIn
 } from 'lucide-react';
 import { Product, User } from '../types';
 import { supabaseOrders, supabasePreOrderSettings, PreOrderSettings, DEFAULT_PREORDER_SETTINGS } from '../lib/supabase';
@@ -38,6 +41,96 @@ interface PreorderSectionProps {
 
 // 4 Color options specified in user prompt
 export type BoatColorId = 'น้ำเงิน' | 'แดง' | 'เขียว' | 'ส้ม';
+
+// 3 Boat Size models specified in user prompt
+export type BoatSizeId = '1_seat' | '2_seat' | '3_seat';
+
+export interface BoatSizeConfig {
+  id: BoatSizeId;
+  name: string;
+  shortName: string;
+  badge: string;
+  subtitle: string;
+  dimensions: string;
+  lengthLabel: string;
+  widthLabel: string;
+  capacityWeight: string;
+  seatsLabel: string;
+  defaultBasePrice: number;
+  description: string;
+  idealFor: string;
+  scaleBadge: string;
+  photoUrl: Record<BoatColorId, string>;
+}
+
+export const BOAT_SIZE_CONFIGS: Record<BoatSizeId, BoatSizeConfig> = {
+  '1_seat': {
+    id: '1_seat',
+    name: 'ขนาด 1 ที่นั่ง (เรือเดี่ยว / เรือเล็ก)',
+    shortName: 'เรือเดี่ยว 1 ที่นั่ง',
+    badge: 'คล่องตัวสูง • 1 ที่นั่ง',
+    subtitle: 'ความยาว 1.8 - 2.0 เมตร (ราว 6 ฟุต) | กว้างประมาณ 78 ซม.',
+    dimensions: 'ยาว 1.80 - 2.00 ม. × กว้าง 0.78 ม.',
+    lengthLabel: 'ยาว 1.8 - 2.0 ม. (ราว 6 ฟุต)',
+    widthLabel: 'กว้าง 78 ซม.',
+    capacityWeight: '90 - 120 กก.',
+    seatsLabel: '1 ที่นั่ง (เรือเดี่ยว)',
+    defaultBasePrice: 2500,
+    description: 'เรือขนาดเล็กกะทัดรัด น้ำหนักเบา ยกคนเดียวได้ พายคล่องตัวสูงในร่องสวน คูคลองแคบ หรือสระน้ำ',
+    idealFor: 'พายคนเดียว ตรวจร่องสวน ท้องร่อง ลำคลองแคบ พกพาสะดวก',
+    scaleBadge: 'สเกลจริง 1.90 x 0.78 ม. • ขนาด 1 ที่นั่ง',
+    photoUrl: {
+      'น้ำเงิน': 'https://images.unsplash.com/photo-1544551763-46a013bb70d5?q=80&w=900&auto=format&fit=crop',
+      'แดง': 'https://images.unsplash.com/photo-1510312305653-8ed496efae75?q=80&w=900&auto=format&fit=crop',
+      'เขียว': 'https://images.unsplash.com/photo-1508873696983-2df570464756?q=80&w=900&auto=format&fit=crop',
+      'ส้ม': 'https://images.unsplash.com/photo-1540959733332-eab4deceeaf7?q=80&w=900&auto=format&fit=crop',
+    }
+  },
+  '2_seat': {
+    id: '2_seat',
+    name: 'ขนาด 2 ที่นั่ง (รุ่นมาตรฐาน)',
+    shortName: 'รุ่นมาตรฐาน 2 ที่นั่ง',
+    badge: 'รุ่นยอดนิยม • 2 ที่นั่ง',
+    subtitle: 'ความยาว 1.98 - 2.5 เมตร (ราว 8 ฟุต) | กว้างประมาณ 88 - 96 ซม.',
+    dimensions: 'ยาว 1.98 - 2.50 ม. × กว้าง 0.88 - 0.96 ม.',
+    lengthLabel: 'ยาว 1.98 - 2.5 ม. (ราว 8 ฟุต)',
+    widthLabel: 'กว้าง 88 - 96 ซม.',
+    capacityWeight: '180 - 220 กก.',
+    seatsLabel: '2 ที่นั่ง (รุ่นมาตรฐาน)',
+    defaultBasePrice: 3000,
+    description: 'เรือพลาสติกทรงท้องแบนมาตรฐานยอดนิยม เสถียรภาพสูง ไม่โคลงเคลง นั่ง 2 คนสบาย มั่นคงปลอดภัยในทุกผืนน้ำ',
+    idealFor: 'ใช้งานทั่วไป สวนอาหาร รีสอร์ท กู้ภัย อพยพน้ำท่วม ตกปลา',
+    scaleBadge: 'สเกลจริง 2.50 x 0.90 ม. • รุ่นมาตรฐาน 2 ที่นั่ง',
+    photoUrl: {
+      'น้ำเงิน': 'https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?q=80&w=900&auto=format&fit=crop',
+      'แดง': 'https://images.unsplash.com/photo-1510312305653-8ed496efae75?q=80&w=900&auto=format&fit=crop',
+      'เขียว': 'https://images.unsplash.com/photo-1508873696983-2df570464756?q=80&w=900&auto=format&fit=crop',
+      'ส้ม': 'https://images.unsplash.com/photo-1540959733332-eab4deceeaf7?q=80&w=900&auto=format&fit=crop',
+    }
+  },
+  '3_seat': {
+    id: '3_seat',
+    name: 'ขนาด 3 ที่นั่งขึ้นไป (เรือขนาดใหญ่ / เรืออีแปะ / เรือเกษตร)',
+    shortName: 'เรืออีแปะเกษตร 3 ที่นั่ง+',
+    badge: 'บรรทุกหนัก • 3 ที่นั่งขึ้นไป',
+    subtitle: 'ความยาว 3.3 เมตรขึ้นไป (ราว 10-11 ฟุต) | กว้างประมาณ 90 ซม. ขึ้นไป',
+    dimensions: 'ยาว 3.30+ ม. × กว้าง 0.90+ ม.',
+    lengthLabel: 'ยาว 3.3 ม. ขึ้นไป (ราว 10-11 ฟุต)',
+    widthLabel: 'กว้าง 90 ซม. ขึ้นไป',
+    capacityWeight: '300 - 380 กก.',
+    seatsLabel: '3 ที่นั่งขึ้นไป (เรือเกษตร/อีแปะ)',
+    defaultBasePrice: 4500,
+    description: 'เรือขนาดใหญ่ทรงเรืออีแปะการเกษตร ท้องแบนกว้างพิเศษ ทรงตัวดีเยี่ยม ลอยตัวสูง จุสัมภาระและผลผลิตการเกษตรได้มาก',
+    idealFor: 'งานเกษตรกรรม ขนผลไม้ บรรทุกของหนัก ครอบครัว 3-4 คน',
+    scaleBadge: 'สเกลจริง 3.30 x 0.95 ม. • เรือใหญ่ 3 ที่นั่งขึ้นไป',
+    photoUrl: {
+      'น้ำเงิน': 'https://images.unsplash.com/photo-1476514525535-07fb3b4ae5f1?q=80&w=900&auto=format&fit=crop',
+      'แดง': 'https://images.unsplash.com/photo-1510312305653-8ed496efae75?q=80&w=900&auto=format&fit=crop',
+      'เขียว': 'https://images.unsplash.com/photo-1508873696983-2df570464756?q=80&w=900&auto=format&fit=crop',
+      'ส้ม': 'https://images.unsplash.com/photo-1540959733332-eab4deceeaf7?q=80&w=900&auto=format&fit=crop',
+    }
+  }
+};
 
 interface ColorConfig {
   id: BoatColorId;
@@ -154,7 +247,15 @@ export default function PreorderSection({
     return () => window.removeEventListener('preorder_settings_changed', handleSettingsUpdated);
   }, []);
 
-  const BASE_PRICE = settings.basePrice || 3000;
+  const [selectedSize, setSelectedSize] = React.useState<BoatSizeId>('2_seat');
+
+  const getBasePrice = (sizeId: BoatSizeId): number => {
+    if (sizeId === '1_seat') return settings.basePrice1Seat ?? 2500;
+    if (sizeId === '3_seat') return settings.basePrice3Seat ?? 4500;
+    return settings.basePrice2Seat ?? settings.basePrice ?? 3000;
+  };
+
+  const BASE_PRICE = getBasePrice(selectedSize);
   const STICKER_PRICE = settings.stickerPrice ?? 300;
   const CUSTOM_TEXT_PRICE = settings.customTextPrice ?? 200;
   const depositPerBoat = settings.depositPerBoat ?? 1000;
@@ -165,6 +266,7 @@ export default function PreorderSection({
   const [customText, setCustomText] = React.useState<string>('');
   const [quantity, setQuantity] = React.useState<number>(1);
   const [previewMode, setPreviewMode] = React.useState<'3d_hull' | 'real_photo'>('3d_hull');
+  const [isZoomingPhoto, setIsZoomingPhoto] = React.useState(false);
 
   // Customer Contact Info
   const [customerName, setCustomerName] = React.useState(currentUser?.name || '');
@@ -213,12 +315,15 @@ export default function PreorderSection({
 
     setIsSubmitting(true);
     try {
+      const activeSizeConfig = BOAT_SIZE_CONFIGS[selectedSize];
       const stickerOptionValue = hasSticker ? `ติดสติกเกอร์ลายพิเศษ (+${STICKER_PRICE.toLocaleString()} บาท)` : 'ไม่ติดสติกเกอร์ (+0 บาท)';
       const payload = {
         customer_id: currentUser?.id || null,
         customer_name: customerName.trim(),
         customer_email: customerEmail.trim() || (currentUser?.email || 'guest@example.com'),
         customer_phone: customerPhone.trim(),
+        boat_size: activeSizeConfig.name,
+        boat_model_name: activeSizeConfig.shortName,
         selected_color: selectedColor,
         sticker_option: stickerOptionValue,
         custom_text: hasCustomText ? customText.trim() : '',
@@ -227,7 +332,7 @@ export default function PreorderSection({
         deposit_amount: depositAmount,
         quantity: quantity,
         address: customerAddress.trim(),
-        notes: customerNotes.trim()
+        notes: `[ขนาด: ${activeSizeConfig.name}] ` + (customerNotes.trim() ? `หมายเหตุ: ${customerNotes.trim()}` : '')
       };
 
       const result = await supabaseOrders.createCustomPreOrder(payload);
@@ -240,14 +345,17 @@ export default function PreorderSection({
       setShowOrderModal(true);
     } catch (err: any) {
       console.error('Error submitting pre-order:', err);
+      const activeSizeConfig = BOAT_SIZE_CONFIGS[selectedSize];
       // Even if network blips, show confirmation modal with reliable fallback ID
       const fallbackOrder = {
         id: 'ORD-PRE-' + new Date().getFullYear() + '-' + Math.floor(1000 + Math.random() * 9000),
         customer_name: customerName.trim(),
         customer_phone: customerPhone.trim(),
         customer_email: customerEmail.trim(),
+        boat_size: activeSizeConfig.name,
+        boat_model_name: activeSizeConfig.shortName,
         selected_color: selectedColor,
-        sticker_option: hasSticker ? 'ติดสติกเกอร์ลายพิเศษ (+300 บาท)' : 'ไม่ติดสติกเกอร์ (+0 บาท)',
+        sticker_option: hasSticker ? `ติดสติกเกอร์ลายพิเศษ (+${STICKER_PRICE} บาท)` : 'ไม่ติดสติกเกอร์ (+0 บาท)',
         custom_text: hasCustomText ? customText.trim() : '',
         total_price: totalPrice,
         status: 'pending_deposit',
@@ -272,6 +380,7 @@ export default function PreorderSection({
   };
 
   const activeColorConfig = COLOR_CONFIGS[selectedColor];
+  const activeSizeConfig = BOAT_SIZE_CONFIGS[selectedSize];
 
   // Other catalog products for browsing below
   const preorderProducts = products.filter(
@@ -300,11 +409,11 @@ export default function PreorderSection({
             <div className="flex flex-wrap items-center gap-4 text-xs sm:text-sm text-sky-200">
               <div className="flex items-center gap-1.5">
                 <CheckCircle2 size={16} className="text-emerald-400" />
-                <span>ราคาเริ่มต้นเพียง ฿3,000</span>
+                <span>ราคาเริ่มต้นเพียง ฿{getBasePrice('1_seat').toLocaleString()} (มี 3 ขนาดให้เลือก)</span>
               </div>
               <div className="flex items-center gap-1.5">
                 <CheckCircle2 size={16} className="text-emerald-400" />
-                <span>มัดจำล็อกคิว ฿1,000 / ลำ</span>
+                <span>มัดจำล็อกคิว ฿{depositPerBoat.toLocaleString()} / ลำ</span>
               </div>
               <div className="flex items-center gap-1.5">
                 <CheckCircle2 size={16} className="text-emerald-400" />
@@ -325,10 +434,10 @@ export default function PreorderSection({
                 Interactive Customizer UI
               </span>
               <h2 className="font-display text-lg sm:text-xl font-bold text-slate-850">
-                1. ปรับแต่งเรือของคุณ (เรือพลาสติกมาตรฐาน 2.5 เมตร)
+                ปรับแต่งเรือของคุณ ({activeSizeConfig.shortName} • {activeColorConfig.name})
               </h2>
               <p className="text-xs text-slate-500 mt-0.5">
-                คลิกเลือกสี สติกเกอร์ และข้อความ เพื่อดูตัวอย่างเรือแบบ Real-time
+                คลิกเลือกขนาดเรือ สี สติกเกอร์ และข้อความ เพื่อดูตัวอย่างเรือแบบ Real-time
               </p>
             </div>
 
@@ -363,7 +472,7 @@ export default function PreorderSection({
 
           <div className="grid grid-cols-1 lg:grid-cols-12">
             
-            {/* LEFT COLUMN: INTERACTIVE BOAT PREVIEW (5 cols) */}
+            {/* LEFT COLUMN: INTERACTIVE BOAT PREVIEW (6 cols) */}
             <div className="lg:col-span-6 p-6 sm:p-8 bg-slate-900/95 text-white flex flex-col justify-between relative overflow-hidden">
               
               {/* Background Ambient Glow matching boat color */}
@@ -378,11 +487,11 @@ export default function PreorderSection({
                   <div className="flex items-center gap-2">
                     <span className="w-2.5 h-2.5 rounded-full animate-ping" style={{ backgroundColor: activeColorConfig.swatchHex }}></span>
                     <span className="text-xs font-bold tracking-wide uppercase text-slate-300">
-                      Live Preview • {activeColorConfig.name}
+                      Live Preview • {activeSizeConfig.shortName} ({activeColorConfig.name})
                     </span>
                   </div>
-                  <span className="text-[11px] font-semibold text-slate-400 bg-slate-800/90 border border-slate-700 px-2.5 py-0.5 rounded-md">
-                    สเกลจริง 2.50 x 0.90 ม.
+                  <span className="text-[11px] font-semibold text-sky-300 bg-slate-800/90 border border-slate-700 px-2.5 py-0.5 rounded-md">
+                    {activeSizeConfig.scaleBadge}
                   </span>
                 </div>
 
@@ -390,7 +499,7 @@ export default function PreorderSection({
                 <div className="relative aspect-16/10 rounded-2xl bg-gradient-to-b from-slate-800/80 to-slate-950 border border-slate-700/80 shadow-2xl overflow-hidden flex items-center justify-center p-4">
                   
                   {previewMode === '3d_hull' ? (
-                    /* SVG INTERACTIVE BOAT VECTOR WITH LIVE COLOR & LIVE TEXT OVERLAY */
+                    /* SVG INTERACTIVE BOAT VECTOR WITH DYNAMIC SIZE GEOMETRY & LIVE TEXT OVERLAY */
                     <div className="w-full h-full flex flex-col items-center justify-center relative">
                       
                       {/* Water reflection ripples */}
@@ -422,128 +531,224 @@ export default function PreorderSection({
                           </linearGradient>
                         </defs>
 
-                        {/* Keel Shadow */}
-                        <ellipse cx="270" cy="188" rx="220" ry="12" fill="#030712" opacity="0.6" />
+                        {/* RENDER HULL ACCORDING TO SELECTED BOAT SIZE */}
+                        {selectedSize === '1_seat' && (
+                          /* MODEL 1: ขนาด 1 ที่นั่ง (เรือเดี่ยว / เรือเล็ก 1.8-2.0 ม.) */
+                          <g className="transition-all duration-500">
+                            {/* Keel Shadow */}
+                            <ellipse cx="270" cy="182" rx="165" ry="10" fill="#030712" opacity="0.6" />
 
-                        {/* Outer Main Hull */}
-                        <path 
-                          d="M 45 92 
-                             C 80 160, 160 176, 270 178 
-                             C 380 176, 460 160, 495 92 
-                             C 440 98, 270 102, 45 92 Z" 
-                          fill="url(#boatHullGrad)"
-                          stroke={activeColorConfig.gradient.start}
-                          strokeWidth="2"
-                        />
-
-                        {/* Hull lighting & gloss shine overlay */}
-                        <path 
-                          d="M 45 92 
-                             C 80 160, 160 176, 270 178 
-                             C 380 176, 460 160, 495 92 
-                             C 440 98, 270 102, 45 92 Z" 
-                          fill="url(#boatShine)"
-                        />
-
-                        {/* Interior cockpit & bench seat rim */}
-                        <path 
-                          d="M 58 92 
-                             C 120 115, 420 115, 482 92 
-                             C 430 84, 110 84, 58 92 Z" 
-                          fill="#1e293b" 
-                          opacity="0.9"
-                        />
-
-                        {/* Interior wood/composite center seat */}
-                        <path 
-                          d="M 220 95 L 320 95 L 325 106 L 215 106 Z" 
-                          fill="#475569" 
-                          stroke="#334155" 
-                          strokeWidth="1"
-                        />
-
-                        {/* Gunwale Rub Rail (Top edge rim) */}
-                        <path 
-                          d="M 40 90 
-                             C 120 104, 420 104, 500 90 
-                             C 490 85, 430 80, 270 80 
-                             C 110 80, 50 85, 40 90 Z" 
-                          fill="#0f172a" 
-                          stroke="#334155" 
-                          strokeWidth="1.5"
-                        />
-
-                        {/* Bow handle / Mooring ring loop */}
-                        <circle cx="43" cy="90" r="5" fill="#94a3b8" stroke="#334155" strokeWidth="1.5" />
-                        <circle cx="497" cy="90" r="5" fill="#94a3b8" stroke="#334155" strokeWidth="1.5" />
-
-                        {/* OPTION 1: SPECIAL STICKER OVERLAY */}
-                        {hasSticker && (
-                          <g className="transition-opacity duration-300">
-                            {/* Aerodynamic wave decal graphic */}
+                            {/* Outer Main Hull */}
                             <path 
-                              d="M 90 120 
-                                 C 180 145, 360 140, 450 115 
-                                 C 420 122, 280 128, 120 112 Z" 
-                              fill="url(#stickerStripe)" 
-                              opacity="0.95"
-                              filter="drop-shadow(0 1px 2px rgba(0,0,0,0.5))"
+                              d="M 85 96 C 115 156, 175 174, 270 176 C 365 174, 425 156, 455 96 C 415 102, 270 105, 85 96 Z" 
+                              fill="url(#boatHullGrad)"
+                              stroke={activeColorConfig.gradient.start}
+                              strokeWidth="2"
                             />
+                            {/* Hull lighting & gloss shine */}
                             <path 
-                              d="M 110 132 
-                                 C 200 152, 340 148, 430 126 
-                                 C 390 132, 260 136, 140 124 Z" 
-                              fill="#ffffff" 
-                              opacity="0.8"
+                              d="M 85 96 C 115 156, 175 174, 270 176 C 365 174, 425 156, 455 96 C 415 102, 270 105, 85 96 Z" 
+                              fill="url(#boatShine)"
                             />
-                            {/* Graphic emblem icon */}
-                            <polygon points="105,116 115,112 110,124" fill="#fbbf24" />
-                            <text 
-                              x="430" 
-                              y="124" 
-                              fill="#ffffff" 
-                              fontSize="8" 
-                              fontWeight="bold" 
-                              letterSpacing="1"
+                            {/* Interior Cockpit */}
+                            <path 
+                              d="M 98 96 C 145 116, 395 116, 442 96 C 400 88, 140 88, 98 96 Z" 
+                              fill="#1e293b" 
                               opacity="0.9"
-                            >
-                              EDITION
-                            </text>
+                            />
+                            {/* Single Center Seat Bench */}
+                            <path 
+                              d="M 230 98 L 310 98 L 314 108 L 226 108 Z" 
+                              fill="#475569" 
+                              stroke="#334155" 
+                              strokeWidth="1"
+                            />
+                            {/* Gunwale Rub Rail */}
+                            <path 
+                              d="M 80 94 C 150 106, 390 106, 460 94 C 450 88, 390 84, 270 84 C 150 84, 90 88, 80 94 Z" 
+                              fill="#0f172a" 
+                              stroke="#334155" 
+                              strokeWidth="1.5"
+                            />
+                            {/* Bow & Stern Mooring Rings */}
+                            <circle cx="83" cy="94" r="4.5" fill="#94a3b8" stroke="#334155" strokeWidth="1.5" />
+                            <circle cx="457" cy="94" r="4.5" fill="#94a3b8" stroke="#334155" strokeWidth="1.5" />
+
+                            {/* Sticker Option */}
+                            {hasSticker && (
+                              <g className="transition-opacity duration-300">
+                                <path 
+                                  d="M 135 120 C 195 142, 345 138, 405 117 C 380 123, 270 127, 155 114 Z" 
+                                  fill="url(#stickerStripe)" 
+                                  opacity="0.95"
+                                  filter="drop-shadow(0 1px 2px rgba(0,0,0,0.5))"
+                                />
+                                <polygon points="145,116 155,112 150,123" fill="#fbbf24" />
+                                <text x="390" y="123" fill="#ffffff" fontSize="7.5" fontWeight="bold" opacity="0.9">1-SEAT SPORT</text>
+                              </g>
+                            )}
+
+                            {/* Custom Text */}
+                            {hasCustomText && (
+                              <g className="transition-all duration-200">
+                                <text x="270" y="150" textAnchor="middle" fill="#000000" opacity="0.6" fontSize="13" fontWeight="900" letterSpacing="1.2">
+                                  {customText.trim() || 'พิมพ์ชื่อเรือของคุณ'}
+                                </text>
+                                <text x="270" y="148" textAnchor="middle" fill="#ffffff" fontSize="13" fontWeight="900" letterSpacing="1.2" stroke="#0f172a" strokeWidth="0.5">
+                                  {customText.trim() || 'พิมพ์ชื่อเรือของคุณ'}
+                                </text>
+                              </g>
+                            )}
                           </g>
                         )}
 
-                        {/* OPTION 2: CUSTOM PRINTED TEXT ON HULL */}
-                        {hasCustomText && (
-                          <g className="transition-all duration-200">
-                            {/* Drop shadow for custom text */}
-                            <text 
-                              x="270" 
-                              y="149" 
-                              textAnchor="middle" 
-                              fill="#000000" 
-                              opacity="0.6"
-                              fontSize="14" 
-                              fontWeight="900" 
-                              fontFamily="sans-serif"
-                              letterSpacing="1.5"
-                            >
-                              {customText.trim() || 'พิมพ์ชื่อเรือของคุณ'}
-                            </text>
-                            {/* Primary Stencil text */}
-                            <text 
-                              x="270" 
-                              y="147" 
-                              textAnchor="middle" 
-                              fill="#ffffff" 
-                              fontSize="14" 
-                              fontWeight="900" 
-                              fontFamily="sans-serif"
-                              letterSpacing="1.5"
-                              stroke="#0f172a"
-                              strokeWidth="0.5"
-                            >
-                              {customText.trim() || 'พิมพ์ชื่อเรือของคุณ'}
-                            </text>
+                        {selectedSize === '2_seat' && (
+                          /* MODEL 2: ขนาด 2 ที่นั่ง (รุ่นมาตรฐาน 1.98-2.5 ม.) */
+                          <g className="transition-all duration-500">
+                            {/* Keel Shadow */}
+                            <ellipse cx="270" cy="188" rx="220" ry="12" fill="#030712" opacity="0.6" />
+
+                            {/* Outer Main Hull */}
+                            <path 
+                              d="M 45 92 C 80 160, 160 176, 270 178 C 380 176, 460 160, 495 92 C 440 98, 270 102, 45 92 Z" 
+                              fill="url(#boatHullGrad)"
+                              stroke={activeColorConfig.gradient.start}
+                              strokeWidth="2"
+                            />
+                            {/* Hull lighting & gloss shine */}
+                            <path 
+                              d="M 45 92 C 80 160, 160 176, 270 178 C 380 176, 460 160, 495 92 C 440 98, 270 102, 45 92 Z" 
+                              fill="url(#boatShine)"
+                            />
+                            {/* Interior Cockpit */}
+                            <path 
+                              d="M 58 92 C 120 115, 420 115, 482 92 C 430 84, 110 84, 58 92 Z" 
+                              fill="#1e293b" 
+                              opacity="0.9"
+                            />
+                            {/* Front Bench Seat */}
+                            <path 
+                              d="M 130 96 L 195 96 L 198 105 L 127 105 Z" 
+                              fill="#334155" 
+                              stroke="#1e293b" 
+                              strokeWidth="1"
+                            />
+                            {/* Center Bench Seat */}
+                            <path 
+                              d="M 275 96 L 360 96 L 365 106 L 270 106 Z" 
+                              fill="#475569" 
+                              stroke="#334155" 
+                              strokeWidth="1"
+                            />
+                            {/* Gunwale Rub Rail */}
+                            <path 
+                              d="M 40 90 C 120 104, 420 104, 500 90 C 490 85, 430 80, 270 80 C 110 80, 50 85, 40 90 Z" 
+                              fill="#0f172a" 
+                              stroke="#334155" 
+                              strokeWidth="1.5"
+                            />
+                            {/* Bow & Stern Mooring Rings */}
+                            <circle cx="43" cy="90" r="5" fill="#94a3b8" stroke="#334155" strokeWidth="1.5" />
+                            <circle cx="497" cy="90" r="5" fill="#94a3b8" stroke="#334155" strokeWidth="1.5" />
+
+                            {/* Sticker Option */}
+                            {hasSticker && (
+                              <g className="transition-opacity duration-300">
+                                <path 
+                                  d="M 90 120 C 180 145, 360 140, 450 115 C 420 122, 280 128, 120 112 Z" 
+                                  fill="url(#stickerStripe)" 
+                                  opacity="0.95"
+                                  filter="drop-shadow(0 1px 2px rgba(0,0,0,0.5))"
+                                />
+                                <path 
+                                  d="M 110 132 C 200 152, 340 148, 430 126 C 390 132, 260 136, 140 124 Z" 
+                                  fill="#ffffff" 
+                                  opacity="0.8"
+                                />
+                                <polygon points="105,116 115,112 110,124" fill="#fbbf24" />
+                                <text x="430" y="124" fill="#ffffff" fontSize="8" fontWeight="bold" letterSpacing="1" opacity="0.9">STANDARD</text>
+                              </g>
+                            )}
+
+                            {/* Custom Text */}
+                            {hasCustomText && (
+                              <g className="transition-all duration-200">
+                                <text x="270" y="149" textAnchor="middle" fill="#000000" opacity="0.6" fontSize="14" fontWeight="900" letterSpacing="1.5">
+                                  {customText.trim() || 'พิมพ์ชื่อเรือของคุณ'}
+                                </text>
+                                <text x="270" y="147" textAnchor="middle" fill="#ffffff" fontSize="14" fontWeight="900" letterSpacing="1.5" stroke="#0f172a" strokeWidth="0.5">
+                                  {customText.trim() || 'พิมพ์ชื่อเรือของคุณ'}
+                                </text>
+                              </g>
+                            )}
+                          </g>
+                        )}
+
+                        {selectedSize === '3_seat' && (
+                          /* MODEL 3: ขนาด 3 ที่นั่งขึ้นไป (เรือขนาดใหญ่ / เรืออีแปะเกษตร 3.3 ม.+) */
+                          <g className="transition-all duration-500">
+                            {/* Keel Shadow (Wider) */}
+                            <ellipse cx="270" cy="192" rx="255" ry="14" fill="#030712" opacity="0.65" />
+
+                            {/* Outer Main Hull (Flat bottom, wide flare) */}
+                            <path 
+                              d="M 18 86 C 55 166, 145 184, 270 186 C 395 184, 485 166, 522 86 C 465 96, 270 101, 18 86 Z" 
+                              fill="url(#boatHullGrad)"
+                              stroke={activeColorConfig.gradient.start}
+                              strokeWidth="2"
+                            />
+                            {/* Hull lighting & gloss shine */}
+                            <path 
+                              d="M 18 86 C 55 166, 145 184, 270 186 C 395 184, 485 166, 522 86 C 465 96, 270 101, 18 86 Z" 
+                              fill="url(#boatShine)"
+                            />
+                            {/* Extended Cockpit */}
+                            <path 
+                              d="M 32 86 C 95 116, 445 116, 508 86 C 455 78, 85 78, 32 86 Z" 
+                              fill="#1e293b" 
+                              opacity="0.9"
+                            />
+                            {/* 3 Bench Seats (Bow, Mid, Stern) */}
+                            <path d="M 85 91 L 155 91 L 158 101 L 82 101 Z" fill="#334155" stroke="#1e293b" strokeWidth="1" />
+                            <path d="M 230 93 L 310 93 L 314 103 L 226 103 Z" fill="#475569" stroke="#334155" strokeWidth="1" />
+                            <path d="M 385 91 L 455 91 L 458 101 L 382 101 Z" fill="#334155" stroke="#1e293b" strokeWidth="1" />
+
+                            {/* Gunwale Rub Rail */}
+                            <path 
+                              d="M 12 84 C 95 102, 445 102, 528 84 C 516 78, 445 74, 270 74 C 95 74, 24 78, 12 84 Z" 
+                              fill="#0f172a" 
+                              stroke="#334155" 
+                              strokeWidth="1.5"
+                            />
+                            {/* Heavy Duty Mooring Rings */}
+                            <circle cx="16" cy="84" r="5.5" fill="#94a3b8" stroke="#334155" strokeWidth="1.5" />
+                            <circle cx="524" cy="84" r="5.5" fill="#94a3b8" stroke="#334155" strokeWidth="1.5" />
+
+                            {/* Sticker Option */}
+                            {hasSticker && (
+                              <g className="transition-opacity duration-300">
+                                <path 
+                                  d="M 65 115 C 165 146, 375 142, 475 110 C 440 118, 280 126, 95 107 Z" 
+                                  fill="url(#stickerStripe)" 
+                                  opacity="0.95"
+                                  filter="drop-shadow(0 1px 2px rgba(0,0,0,0.5))"
+                                />
+                                <polygon points="80,111 90,107 85,119" fill="#fbbf24" />
+                                <text x="450" y="120" fill="#ffffff" fontSize="8" fontWeight="bold" letterSpacing="1" opacity="0.9">HEAVY-DUTY</text>
+                              </g>
+                            )}
+
+                            {/* Custom Text */}
+                            {hasCustomText && (
+                              <g className="transition-all duration-200">
+                                <text x="270" y="150" textAnchor="middle" fill="#000000" opacity="0.6" fontSize="15" fontWeight="900" letterSpacing="1.5">
+                                  {customText.trim() || 'พิมพ์ชื่อเรือของคุณ'}
+                                </text>
+                                <text x="270" y="148" textAnchor="middle" fill="#ffffff" fontSize="15" fontWeight="900" letterSpacing="1.5" stroke="#0f172a" strokeWidth="0.5">
+                                  {customText.trim() || 'พิมพ์ชื่อเรือของคุณ'}
+                                </text>
+                              </g>
+                            )}
                           </g>
                         )}
                       </svg>
@@ -552,7 +757,7 @@ export default function PreorderSection({
                       <div className="absolute bottom-2 inset-x-4 flex items-center justify-between text-[11px] text-slate-300 bg-slate-950/80 backdrop-blur-md px-3 py-1.5 rounded-xl border border-slate-800">
                         <div className="flex items-center gap-1.5">
                           <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: activeColorConfig.swatchHex }}></span>
-                          <span className="font-bold text-white">{activeColorConfig.name}</span>
+                          <span className="font-bold text-white">{activeSizeConfig.shortName} • {activeColorConfig.name}</span>
                         </div>
                         <div className="flex items-center gap-2">
                           {hasSticker ? (
@@ -576,21 +781,93 @@ export default function PreorderSection({
 
                     </div>
                   ) : (
-                    /* REAL PHOTO REFERENCE */
-                    <div className="w-full h-full relative rounded-xl overflow-hidden">
-                      <img
-                        src={activeColorConfig.photoUrl}
-                        alt={`เรือพลาสติก ${activeColorConfig.name}`}
-                        className="w-full h-full object-cover rounded-xl"
-                      />
-                      <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/20"></div>
-                      <div className="absolute bottom-3 left-3 right-3 text-xs text-white bg-black/60 backdrop-blur-md p-2.5 rounded-xl border border-white/10">
-                        <p className="font-bold text-sm text-amber-400">ภาพถ่ายตัวอย่างเรือจริง ({activeColorConfig.name})</p>
-                        <p className="text-[11px] text-slate-200 mt-0.5">
-                          หลอมขึ้นรูปด้วยโพลีเอทิลีนความหนาแน่นสูง (HDPE) ไร้รอยต่อ ทนแดด ทนกรด-ด่าง และไม่แตกกรอบ
-                        </p>
-                      </div>
-                    </div>
+                    /* REAL PHOTO REFERENCE DYNAMICALLY SYNCED FROM ADMIN GALLERY */
+                    (() => {
+                      const photoKey = `${selectedSize}_${selectedColor}`;
+                      const customPhotoUrl = settings.galleryPhotos?.[photoKey];
+                      const realPhotoSrc = customPhotoUrl || activeSizeConfig.photoUrl[selectedColor] || activeColorConfig.photoUrl || 'https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?q=80&w=900&auto=format&fit=crop';
+                      const isFactoryUploaded = Boolean(customPhotoUrl);
+
+                      return (
+                        <div className="w-full h-full relative rounded-xl overflow-hidden group">
+                          <img
+                            src={realPhotoSrc}
+                            alt={`เรือพลาสติก ${activeSizeConfig.name} ${activeColorConfig.name}`}
+                            className="w-full h-full object-cover rounded-xl transition-transform duration-500 group-hover:scale-105"
+                          />
+                          <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/20 to-black/30 pointer-events-none"></div>
+
+                          {/* Top floating badges & zoom button */}
+                          <div className="absolute top-2.5 inset-x-3 flex items-center justify-between pointer-events-auto">
+                            <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-bold shadow-md backdrop-blur-md border ${
+                              isFactoryUploaded 
+                                ? 'bg-emerald-500/90 text-white border-emerald-400/50' 
+                                : 'bg-slate-900/80 text-sky-300 border-slate-700/80'
+                            }`}>
+                              <Camera size={11} />
+                              <span>{isFactoryUploaded ? 'ภาพถ่ายจริงจากโรงงาน (อัปเดตล่าสุด)' : 'ภาพถ่ายตัวอย่างเรือจริง'}</span>
+                            </span>
+
+                            <button
+                              type="button"
+                              onClick={() => setIsZoomingPhoto(true)}
+                              className="p-1.5 rounded-lg bg-black/60 hover:bg-black/80 text-white border border-white/20 backdrop-blur-md transition-all cursor-pointer shadow-md hover:scale-105"
+                              title="ดูภาพขยายใหญ่"
+                            >
+                              <Maximize2 size={13} />
+                            </button>
+                          </div>
+
+                          {/* Bottom info & mini color photo switcher */}
+                          <div className="absolute bottom-2.5 left-3 right-3 text-xs text-white bg-black/65 backdrop-blur-md p-2.5 rounded-xl border border-white/15 space-y-2 pointer-events-auto">
+                            <div className="flex items-center justify-between">
+                              <div>
+                                <p className="font-bold text-xs sm:text-sm text-amber-400 flex items-center gap-1.5">
+                                  <span>{activeSizeConfig.shortName}</span>
+                                  <span className="text-white/60">•</span>
+                                  <span>{activeColorConfig.name}</span>
+                                </p>
+                                <p className="text-[10px] text-slate-300 line-clamp-1 mt-0.5">
+                                  {activeSizeConfig.description}
+                                </p>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => setIsZoomingPhoto(true)}
+                                className="hidden sm:inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-lg bg-white/15 hover:bg-white/25 text-white border border-white/20 cursor-pointer"
+                              >
+                                <ZoomIn size={11} />
+                                <span>ขยายรูป</span>
+                              </button>
+                            </div>
+
+                            {/* Color Photo Quick Switcher */}
+                            <div className="flex items-center gap-1.5 pt-1 border-t border-white/10">
+                              <span className="text-[9.5px] text-slate-300 shrink-0">ดูสีอื่น:</span>
+                              {(['น้ำเงิน', 'แดง', 'เขียว', 'ส้ม'] as BoatColorId[]).map((cId) => {
+                                const cConfig = COLOR_CONFIGS[cId];
+                                const isCur = selectedColor === cId;
+                                return (
+                                  <button
+                                    key={cId}
+                                    type="button"
+                                    onClick={() => setSelectedColor(cId)}
+                                    className={`px-2 py-0.5 rounded-md text-[9.5px] font-bold flex items-center gap-1 transition-all cursor-pointer ${
+                                      isCur 
+                                        ? 'bg-white text-slate-900 shadow-xs ring-1 ring-white' 
+                                        : 'bg-white/10 text-white hover:bg-white/20'
+                                    }`}
+                                  >
+                                    <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: cConfig.swatchHex }}></span>
+                                    <span>{cConfig.name.replace('สี', '')}</span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })()
                   )}
 
                 </div>
@@ -600,47 +877,127 @@ export default function PreorderSection({
               <div className="mt-6 pt-5 border-t border-slate-800 grid grid-cols-3 gap-3 text-center">
                 <div className="bg-slate-800/60 p-2.5 rounded-xl border border-slate-700/50">
                   <span className="text-[10px] text-slate-400 block">ขนาดมิติ</span>
-                  <span className="text-xs font-bold text-white">ยาว 2.50 ม.</span>
+                  <span className="text-xs font-bold text-white">{activeSizeConfig.lengthLabel}</span>
+                  <span className="text-[9.5px] text-slate-400 block mt-0.5">{activeSizeConfig.widthLabel}</span>
                 </div>
                 <div className="bg-slate-800/60 p-2.5 rounded-xl border border-slate-700/50">
                   <span className="text-[10px] text-slate-400 block">รับน้ำหนักปลอดภัย</span>
-                  <span className="text-xs font-bold text-white">180 - 220 กก.</span>
+                  <span className="text-xs font-bold text-emerald-400">{activeSizeConfig.capacityWeight}</span>
+                  <span className="text-[9.5px] text-slate-400 block mt-0.5">ลอยตัวสูงพิเศษ</span>
                 </div>
                 <div className="bg-slate-800/60 p-2.5 rounded-xl border border-slate-700/50">
-                  <span className="text-[10px] text-slate-400 block">วัสดุตัวเรือ</span>
-                  <span className="text-xs font-bold text-white">Virgin HDPE</span>
+                  <span className="text-[10px] text-slate-400 block">จำนวนที่นั่ง</span>
+                  <span className="text-xs font-bold text-white">{activeSizeConfig.seatsLabel}</span>
+                  <span className="text-[9.5px] text-slate-400 block mt-0.5">Virgin HDPE</span>
                 </div>
               </div>
 
             </div>
 
-            {/* RIGHT COLUMN: CONFIGURATION CONTROLS & SELECTION (7 cols) */}
+            {/* RIGHT COLUMN: CONFIGURATION CONTROLS & SELECTION (6 cols) */}
             <div className="lg:col-span-6 p-6 sm:p-8 flex flex-col justify-between space-y-6">
               
-              {/* ITEM A: BASE PRICE INDICATION */}
-              <div className="bg-sky-50/70 border border-sky-100 rounded-2xl p-4 flex items-center justify-between">
-                <div>
-                  <span className="text-[11px] font-bold text-brand-blue uppercase tracking-wider block">
-                    โมเดลหลัก (Standard Model)
+              {/* ITEM 1: BOAT SIZE SELECTOR (3 SIZES) */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-xs sm:text-sm font-bold text-slate-800 flex items-center gap-2">
+                    <Layers size={16} className="text-brand-blue" />
+                    <span>1. เลือกประเภทและขนาดเรือ (Boat Size Models)</span>
+                  </label>
+                  <span className="text-[11px] text-brand-blue font-bold bg-sky-50 px-2 py-0.5 rounded-md border border-sky-100">
+                    มี 3 ขนาดให้เลือก
                   </span>
-                  <h4 className="font-display font-extrabold text-slate-800 text-sm sm:text-base">
-                    เรือพลาสติกทรงท้องแบน 2.5 เมตร ตราพรพงศ์
-                  </h4>
                 </div>
-                <div className="text-right">
-                  <span className="text-[10px] text-slate-400 block">ราคาเริ่มต้น (Base Price)</span>
-                  <span className="font-display text-lg font-black text-brand-blue">
-                    ฿{BASE_PRICE.toLocaleString()}
-                  </span>
+                <p className="text-xs text-slate-500 mb-3">
+                  คลิกเลือกขนาดมิติเรือและจำนวนที่นั่งตามการใช้งาน (ระบบจะคำนวณราคาและปรับโมเดลจำลองทันที):
+                </p>
+
+                {/* 3 Size Cards */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  {(Object.keys(BOAT_SIZE_CONFIGS) as BoatSizeId[]).map((sizeKey) => {
+                    const cfg = BOAT_SIZE_CONFIGS[sizeKey];
+                    const isSelected = selectedSize === sizeKey;
+                    const sizeBasePrice = getBasePrice(sizeKey);
+
+                    return (
+                      <button
+                        type="button"
+                        key={sizeKey}
+                        onClick={() => setSelectedSize(sizeKey)}
+                        className={`p-3.5 rounded-2xl border-2 transition-all flex flex-col justify-between text-left relative cursor-pointer ${
+                          isSelected
+                            ? 'border-brand-blue bg-sky-50/50 shadow-md ring-2 ring-sky-200'
+                            : 'border-slate-200 hover:border-slate-300 bg-white hover:bg-slate-50/70'
+                        }`}
+                      >
+                        {isSelected && (
+                          <div className="absolute top-2.5 right-2.5 w-4 h-4 rounded-full bg-brand-blue text-white flex items-center justify-center shadow-xs">
+                            <Check size={11} strokeWidth={3} />
+                          </div>
+                        )}
+
+                        <div>
+                          <span className={`inline-block px-2 py-0.5 rounded-md text-[9.5px] font-bold mb-1.5 ${
+                            isSelected ? 'bg-sky-200 text-sky-900' : 'bg-slate-100 text-slate-600'
+                          }`}>
+                            {cfg.badge}
+                          </span>
+
+                          <h5 className="font-display text-xs font-extrabold text-slate-850 leading-snug mb-2">
+                            {cfg.name}
+                          </h5>
+
+                          <div className="space-y-1 text-[10.5px] text-slate-600">
+                            <div className="flex items-baseline justify-between border-b border-dashed border-slate-100 pb-0.5">
+                              <span className="text-slate-400">ความยาว:</span>
+                              <span className="font-semibold text-slate-800">{cfg.lengthLabel}</span>
+                            </div>
+                            <div className="flex items-baseline justify-between border-b border-dashed border-slate-100 pb-0.5">
+                              <span className="text-slate-400">ความกว้าง:</span>
+                              <span className="font-semibold text-slate-800">{cfg.widthLabel}</span>
+                            </div>
+                            <div className="flex items-baseline justify-between">
+                              <span className="text-slate-400">รับน้ำหนัก:</span>
+                              <span className="font-bold text-emerald-600">{cfg.capacityWeight}</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="pt-2.5 mt-2.5 border-t border-slate-100 flex items-baseline justify-between">
+                          <span className="text-[10px] text-slate-400">ราคาเริ่มต้น</span>
+                          <span className="font-display font-black text-sm text-brand-blue">
+                            ฿{sizeBasePrice.toLocaleString()}
+                          </span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Selected Model Highlight Card */}
+                <div className="mt-3 bg-sky-50/70 border border-sky-100 rounded-xl p-3 flex items-center justify-between text-xs">
+                  <div>
+                    <span className="text-[10px] text-slate-500 block font-semibold">โมเดลที่เลือกขณะนี้:</span>
+                    <span className="font-bold text-brand-blue">{activeSizeConfig.name}</span>
+                    <span className="text-[11px] text-slate-500 block mt-0.5">
+                      {activeSizeConfig.idealFor}
+                    </span>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <span className="text-[10px] text-slate-400 block">ราคาเริ่มต้นของขนาดนี้</span>
+                    <span className="font-display text-base font-black text-brand-blue">
+                      ฿{BASE_PRICE.toLocaleString()}
+                    </span>
+                  </div>
                 </div>
               </div>
 
-              {/* ITEM B: COLOR OPTIONS (4 COLORS) */}
+              {/* ITEM 2: COLOR OPTIONS (4 COLORS) */}
               <div>
                 <div className="flex items-center justify-between mb-2.5">
                   <label className="text-xs sm:text-sm font-bold text-slate-800 flex items-center gap-2">
                     <Palette size={16} className="text-brand-blue" />
-                    <span>ตัวเลือกสีเรือ (Color Options - มี 4 สี)</span>
+                    <span>2. ตัวเลือกสีเรือ (Color Options - มี 4 สี)</span>
                   </label>
                   <span className="text-[11px] text-emerald-600 font-bold bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-100">
                     ไม่มีค่าใช้จ่ายเพิ่ม (+฿0)
@@ -910,7 +1267,7 @@ export default function PreorderSection({
               </div>
 
               <div className="flex flex-wrap items-baseline gap-2 sm:gap-3 text-xs text-slate-300">
-                <span>เรือเปล่า <strong className="text-white">฿{BASE_PRICE.toLocaleString()}</strong></span>
+                <span>เรือเปล่า <strong className="text-white">฿{BASE_PRICE.toLocaleString()}</strong> ({activeSizeConfig.shortName})</span>
                 <span>+</span>
                 <span>สติกเกอร์ <strong className={hasSticker ? 'text-amber-400' : 'text-slate-400'}>+{stickerCost}฿</strong></span>
                 <span>+</span>
@@ -982,10 +1339,18 @@ export default function PreorderSection({
                 <span>สรุปสเปกเรือที่คุณออกแบบ (Order Configuration Summary)</span>
               </h4>
 
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-xs">
+                <div className="bg-white p-3 rounded-xl border border-slate-200/70">
+                  <span className="text-[10px] text-slate-400 block">ขนาด/โมเดลเรือ</span>
+                  <div className="mt-0.5">
+                    <strong className="text-brand-blue block text-[11px] font-bold leading-tight">{activeSizeConfig.shortName}</strong>
+                    <span className="text-[10px] text-slate-500">{activeSizeConfig.lengthLabel}</span>
+                  </div>
+                </div>
+
                 <div className="bg-white p-3 rounded-xl border border-slate-200/70">
                   <span className="text-[10px] text-slate-400 block">สีเนื้อเรือ</span>
-                  <div className="flex items-center gap-1.5 mt-0.5">
+                  <div className="flex items-center gap-1.5 mt-1">
                     <span className="w-3 h-3 rounded-full" style={{ backgroundColor: activeColorConfig.swatchHex }}></span>
                     <strong className="text-slate-800">{activeColorConfig.name}</strong>
                   </div>
@@ -993,23 +1358,24 @@ export default function PreorderSection({
 
                 <div className="bg-white p-3 rounded-xl border border-slate-200/70">
                   <span className="text-[10px] text-slate-400 block">สติกเกอร์</span>
-                  <strong className={hasSticker ? 'text-amber-600' : 'text-slate-700'}>
-                    {hasSticker ? 'ลายพิเศษ (+300฿)' : 'ไม่ติด (+0฿)'}
+                  <strong className={`block mt-1 ${hasSticker ? 'text-amber-600' : 'text-slate-700'}`}>
+                    {hasSticker ? `ลายพิเศษ (+${STICKER_PRICE}฿)` : 'ไม่ติด (+0฿)'}
                   </strong>
                 </div>
 
                 <div className="bg-white p-3 rounded-xl border border-slate-200/70">
                   <span className="text-[10px] text-slate-400 block">สกรีนข้อความ</span>
-                  <strong className={hasCustomText ? 'text-indigo-600' : 'text-slate-700'} title={customText}>
-                    {hasCustomText ? `"${customText || 'ระบุ'}" (+200฿)` : 'ไม่สกรีน (+0฿)'}
+                  <strong className={`block mt-1 ${hasCustomText ? 'text-indigo-600' : 'text-slate-700'}`} title={customText}>
+                    {hasCustomText ? `"${customText || 'ระบุ'}" (+${CUSTOM_TEXT_PRICE}฿)` : 'ไม่สกรีน (+0฿)'}
                   </strong>
                 </div>
 
-                <div className="bg-white p-3 rounded-xl border border-slate-200/70">
+                <div className="bg-white p-3 rounded-xl border border-slate-200/70 col-span-2 sm:col-span-1">
                   <span className="text-[10px] text-slate-400 block">ยอดรวมสุทธิ</span>
-                  <strong className="text-brand-blue font-extrabold text-sm">
-                    ฿{totalPrice.toLocaleString()} ({quantity} ลำ)
+                  <strong className="text-brand-blue font-extrabold text-sm block mt-0.5">
+                    ฿{totalPrice.toLocaleString()}
                   </strong>
+                  <span className="text-[10px] text-slate-500">({quantity} ลำ)</span>
                 </div>
               </div>
             </div>
@@ -1185,8 +1551,10 @@ export default function PreorderSection({
                 </h5>
 
                 <div className="flex justify-between py-1 border-b border-dashed border-slate-100">
-                  <span className="text-slate-500">โมเดลเรือ:</span>
-                  <span className="font-bold text-slate-800">เรือพลาสติกทรงท้องแบน 2.5 ม.</span>
+                  <span className="text-slate-500">ประเภท/ขนาดเรือ:</span>
+                  <span className="font-bold text-slate-800 text-right">
+                    {confirmedOrder.boat_size || confirmedOrder.boat_model_name || 'ขนาด 2 ที่นั่ง (รุ่นมาตรฐาน)'}
+                  </span>
                 </div>
 
                 <div className="flex justify-between py-1 border-b border-dashed border-slate-100">
@@ -1428,6 +1796,76 @@ export default function PreorderSection({
           </div>
         </div>
       </section>
+
+      {/* 8. FULLSCREEN REAL PHOTO ZOOM MODAL */}
+      {isZoomingPhoto && (
+        <div 
+          className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-4 animate-fadeIn"
+          onClick={() => setIsZoomingPhoto(false)}
+        >
+          <div 
+            className="relative max-w-4xl w-full bg-slate-900 rounded-3xl overflow-hidden border border-slate-700 shadow-2xl flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="p-4 px-6 bg-slate-950/80 border-b border-slate-800 flex items-center justify-between text-white">
+              <div className="flex items-center gap-2">
+                <Camera size={16} className="text-amber-400" />
+                <span className="font-bold text-sm">ภาพถ่ายเรือจริง: {activeSizeConfig.shortName} ({activeColorConfig.name})</span>
+                <span className="text-[10px] text-sky-400 bg-sky-950 px-2 py-0.5 rounded border border-sky-800">
+                  {activeSizeConfig.scaleBadge}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsZoomingPhoto(false)}
+                className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Modal Image */}
+            <div className="relative aspect-16/10 bg-black flex items-center justify-center overflow-hidden">
+              <img
+                src={settings.galleryPhotos?.[`${selectedSize}_${selectedColor}`] || activeSizeConfig.photoUrl[selectedColor] || activeColorConfig.photoUrl}
+                alt={`เรือจริง ${activeSizeConfig.name}`}
+                className="w-full h-full object-contain max-h-[70vh]"
+              />
+            </div>
+
+            {/* Modal Footer with quick color switcher */}
+            <div className="p-4 bg-slate-950 border-t border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-3 text-slate-300 text-xs">
+              <div>
+                <span className="font-bold text-white block">{activeSizeConfig.name}</span>
+                <span className="text-[11px] text-slate-400">{activeSizeConfig.lengthLabel} | {activeSizeConfig.widthLabel} | รับน้ำหนัก {activeSizeConfig.capacityLabel}</span>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] text-slate-400">สลับดูสี:</span>
+                {(['น้ำเงิน', 'แดง', 'เขียว', 'ส้ม'] as BoatColorId[]).map((cId) => {
+                  const cConfig = COLOR_CONFIGS[cId];
+                  return (
+                    <button
+                      key={cId}
+                      type="button"
+                      onClick={() => setSelectedColor(cId)}
+                      className={`px-3 py-1 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-all ${
+                        selectedColor === cId
+                          ? 'bg-white text-slate-900 shadow-md ring-2 ring-sky-500'
+                          : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                      }`}
+                    >
+                      <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: cConfig.swatchHex }}></span>
+                      <span>{cConfig.name}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );
