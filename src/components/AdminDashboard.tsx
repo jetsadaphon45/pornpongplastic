@@ -63,6 +63,10 @@ import {
   supabasePreOrderSettings,
   PreOrderSettings,
   PreOrderColorConfig,
+  PreOrderStickerOption,
+  PreOrderBoatSize,
+  DEFAULT_BOAT_SIZES,
+  DEFAULT_STICKER_OPTIONS,
   DEFAULT_PREORDER_SETTINGS,
   DEFAULT_BOAT_GALLERY_PHOTOS,
   getLocalStoredProducts
@@ -173,7 +177,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
   const [isSavingPriceOverride, setIsSavingPriceOverride] = React.useState(false);
 
   // Photo Gallery Management States
-  const [selectedGallerySizeTab, setSelectedGallerySizeTab] = React.useState<'1_seat' | '2_seat' | '3_seat'>('2_seat');
+  const [selectedGallerySizeTab, setSelectedGallerySizeTab] = React.useState<string>('2_seat');
   const [uploadingPhotoKey, setUploadingPhotoKey] = React.useState<string | null>(null);
   const [zoomedPhotoUrl, setZoomedPhotoUrl] = React.useState<string | null>(null);
   const [editingPhotoUrlKey, setEditingPhotoUrlKey] = React.useState<string | null>(null);
@@ -474,16 +478,116 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
     }
   };
 
+  // Boat Sizes Dynamic CRUD Handlers
+  const handleAddBoatSize = () => {
+    const existing = preOrderSettings.boatSizes || DEFAULT_BOAT_SIZES;
+    const nextNum = existing.length + 1;
+    const newId = `model_${nextNum}_seat_${Date.now().toString().slice(-4)}`;
+    
+    // Auto-calculate suggested specs based on seat count
+    const suggestedName = `ขนาด ${nextNum} ที่นั่ง (เรือท่องเที่ยว / เรือครอบครัว)`;
+    const suggestedShortName = `เรือ ${nextNum} ที่นั่ง`;
+    const suggestedBadge = 'ใหม่ล่าสุด • ขนาดพิเศษ';
+    const suggestedLength = `ยาว ${(2.4 + (nextNum * 0.4)).toFixed(1)} - ${(2.7 + (nextNum * 0.4)).toFixed(1)} ม.`;
+    const suggestedWidth = `กว้าง ${85 + (nextNum * 5)} ซม.`;
+    const suggestedCapacity = `${150 + (nextNum * 70)} - ${200 + (nextNum * 80)} กก.`;
+    const suggestedSeats = `${nextNum} ที่นั่ง`;
+    const suggestedPrice = Math.round(2500 + ((nextNum - 1) * 1200));
+
+    const newBoatSize: PreOrderBoatSize = {
+      id: newId,
+      name: suggestedName,
+      shortName: suggestedShortName,
+      badge: suggestedBadge,
+      lengthLabel: suggestedLength,
+      widthLabel: suggestedWidth,
+      capacityWeight: suggestedCapacity,
+      seatsLabel: suggestedSeats,
+      basePrice: suggestedPrice,
+      description: `เรือพลาสติกหลอมหนาพิเศษ สำหรับการท่องเที่ยว กิจการครอบครัว หรือบรรทุกงานหนัก`,
+      scaleBadge: `สเกลจริง ${suggestedLength} • ${suggestedShortName}`,
+      enabled: true
+    };
+
+    const updatedSizes = [...existing, newBoatSize];
+    setPreOrderSettings(prev => ({
+      ...prev,
+      boatSizes: updatedSizes
+    }));
+    triggerToast(`เพิ่มขนาดเรือ "${suggestedShortName}" เรียบร้อยแล้ว (สามารถแก้ไขข้อมูลและกดบันทึก)`);
+  };
+
+  const handleDeleteBoatSize = (sizeId: string) => {
+    const existing = preOrderSettings.boatSizes || DEFAULT_BOAT_SIZES;
+    if (existing.length <= 1) {
+      triggerToast('ไม่สามารถลบได้ ต้องมีขนาดเรืออย่างน้อย 1 ขนาดในระบบ');
+      return;
+    }
+    const target = existing.find(s => s.id === sizeId);
+    const confirmed = window.confirm(`คุณแน่ใจหรือไม่ว่าต้องการลบขนาดเรือ "${target?.name || sizeId}" ออกจากระบบ?`);
+    if (!confirmed) return;
+
+    const updatedSizes = existing.filter(s => s.id !== sizeId);
+    setPreOrderSettings(prev => ({
+      ...prev,
+      boatSizes: updatedSizes
+    }));
+    if (selectedGallerySizeTab === sizeId && updatedSizes.length > 0) {
+      setSelectedGallerySizeTab(updatedSizes[0].id);
+    }
+    triggerToast(`ลบขนาดเรือเรียบร้อยแล้ว (อย่าลืมกดบันทึกการตั้งค่า)`);
+  };
+
+  const handleUpdateBoatSize = (sizeId: string, field: keyof PreOrderBoatSize, value: any) => {
+    setPreOrderSettings(prev => {
+      const existing = prev.boatSizes || DEFAULT_BOAT_SIZES;
+      return {
+        ...prev,
+        boatSizes: existing.map(item => {
+          if (item.id === sizeId) {
+            return { ...item, [field]: value };
+          }
+          return item;
+        })
+      };
+    });
+  };
+
+  const handleToggleBoatSizeEnabled = (sizeId: string) => {
+    setPreOrderSettings(prev => {
+      const existing = prev.boatSizes || DEFAULT_BOAT_SIZES;
+      return {
+        ...prev,
+        boatSizes: existing.map(item => {
+          if (item.id === sizeId) {
+            const nextState = !item.enabled;
+            triggerToast(`${nextState ? '✓ เปิดใช้งาน' : '✕ ปิดชั่วคราว'} ขนาดเรือ "${item.shortName || item.name}"`);
+            return { ...item, enabled: nextState };
+          }
+          return item;
+        })
+      };
+    });
+  };
+
   // Pre-Order Settings Save Action
   const handleSavePreOrderSettings = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     setIsSavingPreOrderSettings(true);
     try {
-      const p1 = Number(preOrderSettings.basePrice1Seat || 2500);
-      const p2 = Number(preOrderSettings.basePrice2Seat || preOrderSettings.basePrice || 3000);
-      const p3 = Number(preOrderSettings.basePrice3Seat || 4500);
+      const sizes = (Array.isArray(preOrderSettings.boatSizes) && preOrderSettings.boatSizes.length > 0)
+        ? preOrderSettings.boatSizes
+        : DEFAULT_BOAT_SIZES;
+
+      const p1 = Number(sizes.find(s => s.id === '1_seat')?.basePrice ?? sizes[0]?.basePrice ?? 2500);
+      const p2 = Number(sizes.find(s => s.id === '2_seat')?.basePrice ?? sizes[1]?.basePrice ?? 3000);
+      const p3 = Number(sizes.find(s => s.id === '3_seat')?.basePrice ?? sizes[2]?.basePrice ?? 4500);
+
       const cleanSettings: PreOrderSettings = {
         ...preOrderSettings,
+        boatSizes: sizes,
+        colors: preOrderSettings.colors || DEFAULT_PREORDER_SETTINGS.colors,
+        stickerOptions: preOrderSettings.stickerOptions || DEFAULT_STICKER_OPTIONS,
         basePrice1Seat: p1,
         basePrice2Seat: p2,
         basePrice3Seat: p3,
@@ -491,11 +595,12 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
         stickerPrice: Number(preOrderSettings.stickerPrice || 300),
         customTextPrice: Number(preOrderSettings.customTextPrice || 200),
         depositPerBoat: Number(preOrderSettings.depositPerBoat || 1000),
-        galleryPhotos: preOrderSettings.galleryPhotos || DEFAULT_BOAT_GALLERY_PHOTOS
+        galleryPhotos: preOrderSettings.galleryPhotos || DEFAULT_BOAT_GALLERY_PHOTOS,
+        updatedAt: new Date().toISOString()
       };
       await supabasePreOrderSettings.save(cleanSettings);
       setPreOrderSettings(cleanSettings);
-      triggerToast('บันทึกการตั้งค่าราคา สี และรูปภาพพรีออเดอร์ลงระบบเรียบร้อยแล้ว');
+      triggerToast('บันทึกการตั้งค่าขนาดเรือ ราคา สี และรูปภาพพรีออเดอร์ลงระบบเรียบร้อยแล้ว');
     } catch (err) {
       console.error('Failed to save preorder settings:', err);
       triggerToast('ไม่สามารถบันทึกการตั้งค่าได้ กรุณาลองใหม่อีกครั้ง');
@@ -505,7 +610,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
   };
 
   // Real Boat Photo Handlers
-  const handleUploadBoatPhoto = async (sizeId: '1_seat' | '2_seat' | '3_seat', colorId: string, file: File) => {
+  const handleUploadBoatPhoto = async (sizeId: string, colorId: string, file: File) => {
     if (!file) return;
     const photoKey = `${sizeId}_${colorId}`;
     setUploadingPhotoKey(photoKey);
@@ -530,7 +635,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
     }
   };
 
-  const handleResetBoatPhoto = async (sizeId: '1_seat' | '2_seat' | '3_seat', colorId: string) => {
+  const handleResetBoatPhoto = async (sizeId: string, colorId: string) => {
     const photoKey = `${sizeId}_${colorId}`;
     const defaultUrl = DEFAULT_BOAT_GALLERY_PHOTOS[photoKey] || 'https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?q=80&w=900&auto=format&fit=crop';
     const updatedGallery = {
@@ -546,7 +651,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
     triggerToast(`รีเซ็ตรูปภาพเรือ (${colorId}) กลับเป็นภาพเริ่มต้นแล้ว`);
   };
 
-  const handleSetBoatPhotoUrl = async (sizeId: '1_seat' | '2_seat' | '3_seat', colorId: string, url: string) => {
+  const handleSetBoatPhotoUrl = async (sizeId: string, colorId: string, url: string) => {
     if (!url.trim()) return;
     const photoKey = `${sizeId}_${colorId}`;
     const updatedGallery = {
@@ -581,6 +686,116 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
       colors: prev.colors.map((c) => 
         c.id === colorId ? { ...c, name: newName } : c
       )
+    }));
+  };
+
+  // Dynamic Color CRUD Handlers
+  const handleAddPreOrderColor = () => {
+    const existing = preOrderSettings.colors || DEFAULT_PREORDER_SETTINGS.colors;
+    const nextIdx = existing.length + 1;
+    const newColorId = `สีใหม่_${nextIdx}`;
+    const newColor: PreOrderColorConfig = {
+      id: newColorId,
+      name: `สีใหม่ ${nextIdx}`,
+      english: `Custom Color ${nextIdx}`,
+      swatchHex: '#3b82f6',
+      extraPrice: 0,
+      enabled: true
+    };
+    setPreOrderSettings(prev => ({
+      ...prev,
+      colors: [...existing, newColor]
+    }));
+    triggerToast(`เพิ่มสีใหม่ "${newColor.name}" เรียบร้อยแล้ว (กรุณาเลือกโค้ดสีและกดบันทึก)`);
+  };
+
+  const handleDeletePreOrderColor = (colorId: string) => {
+    const existing = preOrderSettings.colors || DEFAULT_PREORDER_SETTINGS.colors;
+    if (existing.length <= 1) {
+      triggerToast('ไม่สามารถลบสีได้ ต้องมีตัวเลือกสีอย่างน้อย 1 สีในระบบ');
+      return;
+    }
+    const target = existing.find(c => c.id === colorId);
+    if (!window.confirm(`คุณแน่ใจหรือไม่ว่าต้องการลบสี "${target?.name || colorId}" ออกจากระบบ?`)) return;
+
+    setPreOrderSettings(prev => ({
+      ...prev,
+      colors: existing.filter(c => c.id !== colorId)
+    }));
+    triggerToast(`ลบสี "${target?.name || colorId}" เรียบร้อยแล้ว (อย่าลืมกดบันทึกการตั้งค่า)`);
+  };
+
+  const handleUpdatePreOrderColor = (colorId: string, field: keyof PreOrderColorConfig, val: any) => {
+    setPreOrderSettings(prev => ({
+      ...prev,
+      colors: (prev.colors || []).map(c => {
+        if (c.id === colorId) {
+          return { ...c, [field]: val };
+        }
+        return c;
+      })
+    }));
+  };
+
+  // Dynamic Sticker Options CRUD Handlers
+  const handleAddStickerOption = () => {
+    const existing = preOrderSettings.stickerOptions || DEFAULT_STICKER_OPTIONS;
+    const nextIdx = existing.length + 1;
+    const newSticker: PreOrderStickerOption = {
+      id: `sticker_custom_${nextIdx}_${Date.now().toString().slice(-4)}`,
+      name: `ลายสติกเกอร์ใหม่ ${nextIdx}`,
+      price: 350,
+      badge: 'ลายใหม่ • พรีเมียม',
+      description: 'สติกเกอร์เกรด Outdoor กันน้ำ ทนแดด UV สูง',
+      imageUrl: 'https://images.unsplash.com/photo-1559136555-9303baea8ebd?q=80&w=400&auto=format&fit=crop',
+      enabled: true
+    };
+    setPreOrderSettings(prev => ({
+      ...prev,
+      stickerOptions: [...existing, newSticker]
+    }));
+    triggerToast(`เพิ่มลายสติกเกอร์ใหม่ "${newSticker.name}" เรียบร้อยแล้ว`);
+  };
+
+  const handleDeleteStickerOption = (stickerId: string) => {
+    const existing = preOrderSettings.stickerOptions || DEFAULT_STICKER_OPTIONS;
+    if (existing.length <= 1) {
+      triggerToast('ไม่สามารถลบได้ ต้องมีตัวเลือกสติกเกอร์อย่างน้อย 1 รายการ');
+      return;
+    }
+    const target = existing.find(s => s.id === stickerId);
+    if (!window.confirm(`คุณแน่ใจหรือไม่ว่าต้องการลบลายสติกเกอร์ "${target?.name || stickerId}"?`)) return;
+
+    setPreOrderSettings(prev => ({
+      ...prev,
+      stickerOptions: existing.filter(s => s.id !== stickerId)
+    }));
+    triggerToast(`ลบลายสติกเกอร์เรียบร้อยแล้ว (อย่าลืมกดบันทึกการตั้งค่า)`);
+  };
+
+  const handleUpdateStickerOption = (stickerId: string, field: keyof PreOrderStickerOption, val: any) => {
+    setPreOrderSettings(prev => ({
+      ...prev,
+      stickerOptions: (prev.stickerOptions || DEFAULT_STICKER_OPTIONS).map(s => {
+        if (s.id === stickerId) {
+          return { ...s, [field]: val };
+        }
+        return s;
+      })
+    }));
+  };
+
+  const handleToggleStickerOption = (stickerId: string) => {
+    setPreOrderSettings(prev => ({
+      ...prev,
+      stickerOptions: (prev.stickerOptions || DEFAULT_STICKER_OPTIONS).map(s => {
+        if (s.id === stickerId) {
+          const next = !s.enabled;
+          triggerToast(`${next ? '✓ เปิดใช้งาน' : '✕ ปิดชั่วคราว'} ลาย "${s.name}"`);
+          return { ...s, enabled: next };
+        }
+        return s;
+      })
     }));
   };
 
@@ -2284,108 +2499,260 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                   
                   {/* Part 1: Pricing Matrix */}
                   <div className="space-y-4">
-                    {/* Section 1A: Base Prices by Boat Size */}
+                    {/* Section 1A: Dynamic CRUD for Boat Size Models */}
                     <div>
-                      <div className="flex items-center justify-between mb-2">
-                        <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-2">
-                          <DollarSign size={15} className="text-sky-600" />
-                          <span>1. กำหนดราคาเริ่มต้นแยกตามขนาดและประเภทเรือ (Base Price by Boat Size)</span>
-                        </h4>
-                        <span className="text-[10px] text-sky-700 font-bold bg-sky-50 px-2.5 py-0.5 rounded-md border border-sky-200">
-                          รองรับ 3 ขนาด
-                        </span>
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
+                        <div>
+                          <h4 className="text-xs font-bold uppercase tracking-wider text-slate-800 flex items-center gap-2">
+                            <Sliders size={16} className="text-sky-600" />
+                            <span>1. จัดการประเภทและขนาดเรือ (Dynamic Boat Size Models Management)</span>
+                          </h4>
+                          <p className="text-[11px] text-slate-500 mt-0.5">
+                            เพิ่ม แก้ไข ลบขนาดเรือ สเปกความยาว-ความกว้าง ป้ายกำกับ ราคาเริ่มต้น และเปิด/ปิดการจำหน่าย โดยระบบจะซิงก์ไปยังหน้าออกแบบเรือของลูกค้าอัตโนมัติ
+                          </p>
+                        </div>
+
+                        <div className="flex items-center gap-2 self-start sm:self-auto">
+                          <span className="text-[11px] font-bold text-slate-600 bg-slate-100 px-2.5 py-1 rounded-lg border border-slate-200">
+                            เปิดใช้งาน {preOrderSettings.boatSizes?.filter(s => s.enabled).length || 0} จาก {preOrderSettings.boatSizes?.length || 0} รุ่น
+                          </span>
+                          <button
+                            type="button"
+                            onClick={handleAddBoatSize}
+                            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-sky-600 to-brand-blue hover:from-sky-700 hover:to-blue-800 text-white font-bold text-xs shadow-xs hover:shadow-sm transition-all cursor-pointer"
+                          >
+                            <Plus size={15} />
+                            <span>+ เพิ่มขนาดเรือใหม่</span>
+                          </button>
+                        </div>
                       </div>
-                      <p className="text-[11px] text-slate-500 mb-3">
-                        กำหนดราคาเริ่มต้น (Base Price) สำหรับแต่ละโมเดลเรือ เพื่อให้หน้าออกแบบเรือคำนวณราคาทันทีที่ลูกค้าเลือกขนาด:
-                      </p>
 
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                        {/* 1 Seat Model */}
-                        <div className="p-4 rounded-2xl border border-sky-200 bg-sky-50/40 hover:bg-white hover:border-sky-400 transition-all shadow-2xs space-y-2 relative">
-                          <div className="flex items-center justify-between">
-                            <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-md bg-sky-200 text-sky-900">
-                              ขนาด 1 ที่นั่ง
-                            </span>
-                            <span className="text-[9.5px] font-mono text-slate-500">basePrice1Seat</span>
-                          </div>
-                          <div>
-                            <label className="text-xs font-bold text-slate-850 block">เรือเดี่ยว / เรือเล็ก (6 ฟุต)</label>
-                            <span className="text-[10.5px] text-slate-500 block">ยาว 1.8 - 2.0 ม. | กว้าง 78 ซม.</span>
-                          </div>
-                          <div className="relative pt-1">
-                            <span className="absolute left-3 top-3.5 text-xs font-bold text-slate-400">฿</span>
-                            <input
-                              type="number"
-                              min="0"
-                              step="100"
-                              value={preOrderSettings.basePrice1Seat ?? 2500}
-                              onChange={(e) => setPreOrderSettings(prev => ({ ...prev, basePrice1Seat: Number(e.target.value) || 0 }))}
-                              className="w-full bg-white border border-slate-200 rounded-xl pl-7 pr-3 py-2 text-sm font-black text-brand-blue focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
-                              placeholder="2500"
-                              required
-                            />
-                          </div>
-                          <p className="text-[10px] text-slate-400">ราคามาตรฐานเริ่มต้น: 2,500 บาท</p>
-                        </div>
+                      {/* Dynamic Boat Sizes Cards Grid */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                        {(preOrderSettings.boatSizes && preOrderSettings.boatSizes.length > 0
+                          ? preOrderSettings.boatSizes
+                          : DEFAULT_BOAT_SIZES
+                        ).map((sizeItem, idx) => (
+                          <div
+                            key={sizeItem.id}
+                            className={`rounded-2xl border transition-all duration-200 shadow-2xs hover:shadow-sm p-4.5 space-y-3 relative flex flex-col justify-between ${
+                              sizeItem.enabled
+                                ? 'bg-white border-slate-200/90 hover:border-sky-300 ring-1 ring-black/3'
+                                : 'bg-slate-50/80 border-slate-200 opacity-70'
+                            }`}
+                          >
+                            {/* Card Top Action Bar */}
+                            <div className="flex items-center justify-between pb-2.5 border-b border-slate-150">
+                              <div className="flex items-center gap-2">
+                                <span className="w-6 h-6 rounded-lg bg-sky-100 text-sky-800 font-black text-xs flex items-center justify-center">
+                                  #{idx + 1}
+                                </span>
+                                <span className="text-[10px] font-mono text-slate-500 font-medium">
+                                  ID: {sizeItem.id}
+                                </span>
+                              </div>
 
-                        {/* 2 Seats Model */}
-                        <div className="p-4 rounded-2xl border border-sky-300 bg-sky-50/60 hover:bg-white hover:border-sky-400 transition-all shadow-2xs space-y-2 relative ring-1 ring-sky-200">
-                          <div className="flex items-center justify-between">
-                            <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-md bg-amber-200 text-amber-950">
-                              ขนาด 2 ที่นั่ง (ยอดนิยม)
-                            </span>
-                            <span className="text-[9.5px] font-mono text-slate-500">basePrice2Seat</span>
-                          </div>
-                          <div>
-                            <label className="text-xs font-bold text-slate-850 block">รุ่นมาตรฐาน (8 ฟุต)</label>
-                            <span className="text-[10.5px] text-slate-500 block">ยาว 1.98 - 2.5 ม. | กว้าง 88-96 ซม.</span>
-                          </div>
-                          <div className="relative pt-1">
-                            <span className="absolute left-3 top-3.5 text-xs font-bold text-slate-400">฿</span>
-                            <input
-                              type="number"
-                              min="0"
-                              step="100"
-                              value={preOrderSettings.basePrice2Seat ?? preOrderSettings.basePrice ?? 3000}
-                              onChange={(e) => {
-                                const val = Number(e.target.value) || 0;
-                                setPreOrderSettings(prev => ({ ...prev, basePrice2Seat: val, basePrice: val }));
-                              }}
-                              className="w-full bg-white border border-slate-200 rounded-xl pl-7 pr-3 py-2 text-sm font-black text-brand-blue focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
-                              placeholder="3000"
-                              required
-                            />
-                          </div>
-                          <p className="text-[10px] text-slate-400">ราคามาตรฐานเริ่มต้น: 3,000 บาท</p>
-                        </div>
+                              <div className="flex items-center gap-1.5">
+                                {/* Toggle Enable / Disable */}
+                                <button
+                                  type="button"
+                                  onClick={() => handleToggleBoatSizeEnabled(sizeItem.id)}
+                                  className={`px-2.5 py-1 rounded-lg text-[10.5px] font-bold cursor-pointer transition-colors border flex items-center gap-1 ${
+                                    sizeItem.enabled
+                                      ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+                                      : 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100'
+                                  }`}
+                                  title={sizeItem.enabled ? 'คลิกเพื่อปิดรับออเดอร์รุ่นนี้ชั่วคราว' : 'คลิกเพื่อเปิดใช้งานรุ่นนี้'}
+                                >
+                                  {sizeItem.enabled ? '✓ เปิดใช้งาน' : '✕ ปิดชั่วคราว'}
+                                </button>
 
-                        {/* 3+ Seats Model */}
-                        <div className="p-4 rounded-2xl border border-sky-200 bg-sky-50/40 hover:bg-white hover:border-sky-400 transition-all shadow-2xs space-y-2 relative">
-                          <div className="flex items-center justify-between">
-                            <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-md bg-indigo-200 text-indigo-950">
-                              ขนาด 3 ที่นั่งขึ้นไป
-                            </span>
-                            <span className="text-[9.5px] font-mono text-slate-500">basePrice3Seat</span>
+                                {/* Delete Model Button */}
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteBoatSize(sizeItem.id)}
+                                  className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer border border-transparent hover:border-rose-200"
+                                  title="ลบขนาดเรือนี้"
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* Editable Fields Grid */}
+                            <div className="space-y-3">
+                              {/* 1. Model Title / Name */}
+                              <div>
+                                <label className="text-[11px] font-bold text-slate-700 block mb-1">
+                                  ชื่อรุ่น / ชื่อขนาดเรือ (Model Title) <span className="text-rose-500">*</span>
+                                </label>
+                                <input
+                                  type="text"
+                                  value={sizeItem.name}
+                                  onChange={(e) => handleUpdateBoatSize(sizeItem.id, 'name', e.target.value)}
+                                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-bold text-slate-850 focus:bg-white focus:border-sky-500 focus:ring-1 focus:ring-sky-500 outline-none transition-all"
+                                  placeholder="เช่น ขนาด 4 ที่นั่ง (เรือท่องเที่ยว / เรือครอบครัว)"
+                                  required
+                                />
+                              </div>
+
+                              {/* 2. Badge / Tag */}
+                              <div>
+                                <div className="flex items-center justify-between mb-1">
+                                  <label className="text-[11px] font-bold text-slate-700 block">
+                                    ป้ายกำกับ (Badge/Tag)
+                                  </label>
+                                  <div className="flex items-center gap-1 text-[9.5px]">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleUpdateBoatSize(sizeItem.id, 'badge', 'รุ่นยอดนิยม • ขายดี')}
+                                      className="text-sky-600 hover:underline cursor-pointer"
+                                    >
+                                      +ยอดนิยม
+                                    </button>
+                                    <span>•</span>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleUpdateBoatSize(sizeItem.id, 'badge', 'ใหม่ล่าสุด • พิเศษ')}
+                                      className="text-sky-600 hover:underline cursor-pointer"
+                                    >
+                                      +ใหม่
+                                    </button>
+                                    <span>•</span>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleUpdateBoatSize(sizeItem.id, 'badge', 'บรรทุกหนัก • งานเกษตร')}
+                                      className="text-sky-600 hover:underline cursor-pointer"
+                                    >
+                                      +บรรทุกหนัก
+                                    </button>
+                                  </div>
+                                </div>
+                                <input
+                                  type="text"
+                                  value={sizeItem.badge}
+                                  onChange={(e) => handleUpdateBoatSize(sizeItem.id, 'badge', e.target.value)}
+                                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs text-slate-750 focus:bg-white focus:border-sky-500 focus:ring-1 focus:ring-sky-500 outline-none transition-all"
+                                  placeholder="เช่น รุ่นยอดนิยม • 2 ที่นั่ง หรือ ใหม่ล่าสุด"
+                                />
+                              </div>
+
+                              {/* 3 & 4. Dimensions: Length & Width */}
+                              <div className="grid grid-cols-2 gap-2">
+                                <div>
+                                  <label className="text-[10.5px] font-bold text-slate-700 block mb-1">
+                                    สเปกความยาว (Length)
+                                  </label>
+                                  <input
+                                    type="text"
+                                    value={sizeItem.lengthLabel}
+                                    onChange={(e) => handleUpdateBoatSize(sizeItem.id, 'lengthLabel', e.target.value)}
+                                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs text-slate-750 focus:bg-white focus:border-sky-500 outline-none transition-all"
+                                    placeholder="เช่น ยาว 1.8 - 2.0 ม."
+                                  />
+                                </div>
+
+                                <div>
+                                  <label className="text-[10.5px] font-bold text-slate-700 block mb-1">
+                                    สเปกความกว้าง (Width)
+                                  </label>
+                                  <input
+                                    type="text"
+                                    value={sizeItem.widthLabel}
+                                    onChange={(e) => handleUpdateBoatSize(sizeItem.id, 'widthLabel', e.target.value)}
+                                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs text-slate-750 focus:bg-white focus:border-sky-500 outline-none transition-all"
+                                    placeholder="เช่น กว้าง 78 ซม."
+                                  />
+                                </div>
+                              </div>
+
+                              {/* 5. Base Price & Short Name */}
+                              <div className="grid grid-cols-2 gap-2">
+                                <div>
+                                  <label className="text-[10.5px] font-bold text-brand-blue block mb-1">
+                                    ราคาเริ่มต้น (Base Price) <span className="text-rose-500">*</span>
+                                  </label>
+                                  <div className="relative">
+                                    <span className="absolute left-2.5 top-2 text-xs font-bold text-slate-400">฿</span>
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      step="100"
+                                      value={sizeItem.basePrice}
+                                      onChange={(e) => handleUpdateBoatSize(sizeItem.id, 'basePrice', Number(e.target.value) || 0)}
+                                      className="w-full bg-white border border-sky-300 rounded-xl pl-6 pr-2 py-1.5 text-sm font-black text-brand-blue focus:outline-none focus:border-sky-600 focus:ring-1 focus:ring-sky-600"
+                                      placeholder="3000"
+                                      required
+                                    />
+                                  </div>
+                                </div>
+
+                                <div>
+                                  <label className="text-[10.5px] font-bold text-slate-700 block mb-1">
+                                    ชื่อย่อ (Short Name)
+                                  </label>
+                                  <input
+                                    type="text"
+                                    value={sizeItem.shortName}
+                                    onChange={(e) => handleUpdateBoatSize(sizeItem.id, 'shortName', e.target.value)}
+                                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs text-slate-750 focus:bg-white focus:border-sky-500 outline-none transition-all"
+                                    placeholder="เช่น เรือ 4 ที่นั่ง"
+                                  />
+                                </div>
+                              </div>
+
+                              {/* 6. Extra specs: Capacity Weight & Description */}
+                              <div className="grid grid-cols-2 gap-2">
+                                <div>
+                                  <label className="text-[10.5px] font-bold text-slate-600 block mb-1">
+                                    รับน้ำหนัก (Capacity)
+                                  </label>
+                                  <input
+                                    type="text"
+                                    value={sizeItem.capacityWeight || ''}
+                                    onChange={(e) => handleUpdateBoatSize(sizeItem.id, 'capacityWeight', e.target.value)}
+                                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1 text-xs text-slate-700 focus:bg-white focus:border-sky-500 outline-none"
+                                    placeholder="เช่น 180 - 220 กก."
+                                  />
+                                </div>
+
+                                <div>
+                                  <label className="text-[10.5px] font-bold text-slate-600 block mb-1">
+                                    จำนวนที่นั่ง (Seats)
+                                  </label>
+                                  <input
+                                    type="text"
+                                    value={sizeItem.seatsLabel || ''}
+                                    onChange={(e) => handleUpdateBoatSize(sizeItem.id, 'seatsLabel', e.target.value)}
+                                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1 text-xs text-slate-700 focus:bg-white focus:border-sky-500 outline-none"
+                                    placeholder="เช่น 4 ที่นั่ง"
+                                  />
+                                </div>
+                              </div>
+
+                              <div>
+                                <label className="text-[10.5px] font-bold text-slate-600 block mb-1">
+                                  คำอธิบายจุดเด่น / การใช้งาน
+                                </label>
+                                <input
+                                  type="text"
+                                  value={sizeItem.description || ''}
+                                  onChange={(e) => handleUpdateBoatSize(sizeItem.id, 'description', e.target.value)}
+                                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1 text-xs text-slate-600 focus:bg-white focus:border-sky-500 outline-none"
+                                  placeholder="เช่น เรือขนาดใหญ่ ท้องกว้าง ทรงตัวดีเยี่ยม..."
+                                />
+                              </div>
+                            </div>
+
+                            {/* Card Footer Live Summary */}
+                            <div className="pt-2 mt-1 border-t border-slate-100 flex items-center justify-between text-[10.5px]">
+                              <span className="text-slate-400">สถานะหน้าร้าน:</span>
+                              <span className={`font-bold ${sizeItem.enabled ? 'text-emerald-600' : 'text-slate-400'}`}>
+                                {sizeItem.enabled ? `แสดงในการ์ดเลือก (฿${sizeItem.basePrice.toLocaleString()})` : 'ซ่อนจากหน้าร้าน'}
+                              </span>
+                            </div>
                           </div>
-                          <div>
-                            <label className="text-xs font-bold text-slate-850 block">เรือใหญ่ / ทรงอีแปะ (10-12 ฟุต)</label>
-                            <span className="text-[10.5px] text-slate-500 block">ยาว 3.0 - 3.6 ม. | กว้าง 100-110 ซม.</span>
-                          </div>
-                          <div className="relative pt-1">
-                            <span className="absolute left-3 top-3.5 text-xs font-bold text-slate-400">฿</span>
-                            <input
-                              type="number"
-                              min="0"
-                              step="100"
-                              value={preOrderSettings.basePrice3Seat ?? 4500}
-                              onChange={(e) => setPreOrderSettings(prev => ({ ...prev, basePrice3Seat: Number(e.target.value) || 0 }))}
-                              className="w-full bg-white border border-slate-200 rounded-xl pl-7 pr-3 py-2 text-sm font-black text-brand-blue focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
-                              placeholder="4500"
-                              required
-                            />
-                          </div>
-                          <p className="text-[10px] text-slate-400">ราคามาตรฐานเริ่มต้น: 4,500 บาท</p>
-                        </div>
+                        ))}
                       </div>
                     </div>
 
@@ -2466,97 +2833,382 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                     </div>
                   </div>
 
-                  {/* Part 2: Boat Colors Management */}
-                  <div>
-                    <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 mb-3 flex items-center gap-2">
-                      <Palette size={15} className="text-sky-600" />
-                      <span>ระบบจัดการสีเรือ (Manage Colors: เปิด/ปิดการใช้งาน และเปลี่ยนชื่อสี)</span>
-                    </h4>
+                  {/* Part 2: Dynamic Boat Colors Management */}
+                  <div className="pt-2 border-t border-slate-150">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
+                      <div>
+                        <h4 className="text-xs font-bold uppercase tracking-wider text-slate-800 flex items-center gap-2">
+                          <Palette size={16} className="text-sky-600" />
+                          <span>2. จัดการตัวเลือกสีเรือ (Dynamic Boat Color Management)</span>
+                        </h4>
+                        <p className="text-[11px] text-slate-500 mt-0.5">
+                          เพิ่ม แก้ไข ลบสีเรือ เลือกโค้ดสี Hex ด้วย Color Picker กำหนดราคาบวกเพิ่ม และเปิด/ปิดการใช้งานสีเรือ
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-2 self-start sm:self-auto">
+                        <span className="text-[11px] font-bold text-slate-600 bg-slate-100 px-2.5 py-1 rounded-lg border border-slate-200">
+                          เปิดใช้งาน {preOrderSettings.colors?.filter(c => c.enabled).length || 0} จาก {preOrderSettings.colors?.length || 0} สี
+                        </span>
+                        <button
+                          type="button"
+                          onClick={handleAddPreOrderColor}
+                          className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-700 hover:to-indigo-700 text-white font-bold text-xs shadow-xs hover:shadow-sm transition-all cursor-pointer"
+                        >
+                          <Plus size={15} />
+                          <span>+ เพิ่มสีใหม่</span>
+                        </button>
+                      </div>
+                    </div>
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                      {preOrderSettings.colors.map((color) => (
+                      {preOrderSettings.colors.map((color, idx) => (
                         <div 
                           key={color.id}
-                          className={`p-4 rounded-2xl border transition-all shadow-2xs space-y-3 ${
+                          className={`p-4 rounded-2xl border transition-all shadow-2xs space-y-3.5 relative flex flex-col justify-between ${
                             color.enabled 
-                              ? 'border-slate-200 bg-white' 
-                              : 'border-slate-200 bg-slate-50 opacity-60'
+                              ? 'border-slate-200/90 bg-white hover:border-sky-300 ring-1 ring-black/3' 
+                              : 'border-slate-200 bg-slate-50/80 opacity-70'
                           }`}
                         >
-                          <div className="flex items-center justify-between">
+                          {/* Card Header & Controls */}
+                          <div className="flex items-center justify-between pb-2 border-b border-slate-100">
                             <div className="flex items-center gap-2">
-                              <span 
-                                className="w-5 h-5 rounded-full border border-black/10 shadow-xs shrink-0"
-                                style={{ backgroundColor: color.swatchHex }}
-                              />
-                              <span className="text-xs font-bold text-slate-800">{color.id}</span>
+                              <span className="w-5 h-5 rounded-md bg-slate-100 text-slate-700 font-bold text-[10px] flex items-center justify-center">
+                                #{idx + 1}
+                              </span>
+                              <div className="flex items-center gap-1.5">
+                                <span 
+                                  className="w-4 h-4 rounded-full border border-black/15 shadow-xs shrink-0 ring-1 ring-black/5"
+                                  style={{ backgroundColor: color.swatchHex }}
+                                />
+                                <span className="text-[10px] font-mono text-slate-500 font-semibold truncate max-w-[80px]">
+                                  {color.id}
+                                </span>
+                              </div>
                             </div>
 
-                            {/* Toggle Switch */}
-                            <button
-                              type="button"
-                              onClick={() => togglePreOrderColor(color.id)}
-                              className={`px-2.5 py-1 rounded-full text-[10px] font-bold cursor-pointer transition-colors border ${
-                                color.enabled
-                                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
-                                  : 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100'
-                              }`}
-                            >
-                              {color.enabled ? '✓ เปิดใช้งาน' : '✕ ปิดชั่วคราว'}
-                            </button>
+                            <div className="flex items-center gap-1">
+                              {/* Toggle Switch */}
+                              <button
+                                type="button"
+                                onClick={() => togglePreOrderColor(color.id)}
+                                className={`px-2 py-0.5 rounded-md text-[10px] font-bold cursor-pointer transition-colors border ${
+                                  color.enabled
+                                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+                                    : 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100'
+                                }`}
+                              >
+                                {color.enabled ? '✓ เปิด' : '✕ ปิด'}
+                              </button>
+
+                              {/* Delete Color */}
+                              <button
+                                type="button"
+                                onClick={() => handleDeletePreOrderColor(color.id)}
+                                className="p-1 rounded-md text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                                title="ลบสีนี้"
+                              >
+                                <Trash2 size={13} />
+                              </button>
+                            </div>
                           </div>
 
-                          {/* Editable Display Name */}
-                          <div className="space-y-1">
-                            <label className="text-[10px] text-slate-400 font-bold block">ชื่อสีที่แสดงหน้าร้าน</label>
-                            <input
-                              type="text"
-                              value={color.name}
-                              onChange={(e) => renamePreOrderColor(color.id, e.target.value)}
-                              className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 font-semibold focus:bg-white focus:border-sky-500 outline-none"
-                              placeholder="เช่น สีน้ำเงินพรีเมียม"
-                            />
+                          {/* Editable Color Fields */}
+                          <div className="space-y-2.5">
+                            {/* 1. Color Name */}
+                            <div>
+                              <label className="text-[10.5px] text-slate-700 font-bold block mb-1">
+                                ชื่อสีภาษาไทย (Color Name) <span className="text-rose-500">*</span>
+                              </label>
+                              <input
+                                type="text"
+                                value={color.name}
+                                onChange={(e) => handleUpdatePreOrderColor(color.id, 'name', e.target.value)}
+                                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs text-slate-850 font-bold focus:bg-white focus:border-sky-500 outline-none"
+                                placeholder="เช่น สีน้ำเงินเข้มรอยัล"
+                                required
+                              />
+                            </div>
+
+                            {/* 2. Color Hex Picker */}
+                            <div>
+                              <label className="text-[10.5px] text-slate-700 font-bold block mb-1">
+                                เลือกโค้ดสี (Color Hex Picker)
+                              </label>
+                              <div className="flex items-center gap-2">
+                                <input
+                                  type="color"
+                                  value={color.swatchHex.startsWith('#') ? color.swatchHex : '#2563eb'}
+                                  onChange={(e) => handleUpdatePreOrderColor(color.id, 'swatchHex', e.target.value)}
+                                  className="w-8 h-8 rounded-lg border border-slate-200 cursor-pointer p-0.5 bg-white shrink-0"
+                                />
+                                <input
+                                  type="text"
+                                  value={color.swatchHex}
+                                  onChange={(e) => handleUpdatePreOrderColor(color.id, 'swatchHex', e.target.value)}
+                                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1 text-xs font-mono font-bold text-slate-750 focus:bg-white focus:border-sky-500 outline-none"
+                                  placeholder="#2563eb"
+                                />
+                              </div>
+                            </div>
+
+                            {/* 3. Extra Price (Additional Price) */}
+                            <div>
+                              <label className="text-[10.5px] text-slate-700 font-bold block mb-1">
+                                ราคาบวกเพิ่มของสีนี้ (Additional Price)
+                              </label>
+                              <div className="relative">
+                                <span className="absolute left-2.5 top-1.5 text-xs font-bold text-slate-400">฿</span>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="50"
+                                  value={color.extraPrice || 0}
+                                  onChange={(e) => handleUpdatePreOrderColor(color.id, 'extraPrice', Number(e.target.value) || 0)}
+                                  className="w-full bg-white border border-slate-200 rounded-xl pl-6 pr-2 py-1 text-xs font-bold text-brand-blue focus:border-sky-500 outline-none"
+                                  placeholder="0"
+                                />
+                              </div>
+                              <span className="text-[9.5px] text-slate-400 mt-0.5 block">
+                                {Number(color.extraPrice || 0) === 0 ? 'ฟรี (ไม่มีค่าใช้จ่ายเพิ่ม +฿0)' : `บวกเพิ่ม +฿${Number(color.extraPrice).toLocaleString()}`}
+                              </span>
+                            </div>
+
+                            {/* 4. English Name / Tag */}
+                            <div>
+                              <label className="text-[10.5px] text-slate-500 font-bold block mb-0.5">
+                                ชื่อสีภาษาอังกฤษ / โน้ตย่อ
+                              </label>
+                              <input
+                                type="text"
+                                value={color.english || ''}
+                                onChange={(e) => handleUpdatePreOrderColor(color.id, 'english', e.target.value)}
+                                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-2 py-1 text-[11px] text-slate-600 focus:bg-white focus:border-sky-500 outline-none"
+                                placeholder="เช่น Royal Ocean Blue"
+                              />
+                            </div>
                           </div>
 
-                          <div className="text-[9.5px] text-slate-400 font-mono">
-                            รหัสสี: {color.swatchHex} ({color.english || '-'})
+                          <div className="pt-2 mt-1 border-t border-slate-100 flex items-center justify-between text-[10px]">
+                            <span className="text-slate-400">สถานะ:</span>
+                            <span className={`font-bold ${color.enabled ? 'text-emerald-600' : 'text-slate-400'}`}>
+                              {color.enabled ? `เปิดเลือก (${Number(color.extraPrice || 0) > 0 ? `+฿${Number(color.extraPrice).toLocaleString()}` : 'ฟรี'})` : 'ปิดชั่วคราว'}
+                            </span>
                           </div>
                         </div>
                       ))}
                     </div>
                   </div>
 
-                  {/* Part 3: Real Boat Photos Gallery Management */}
+                  {/* Part 3: Dynamic Sticker Options Management */}
+                  <div className="pt-4 border-t border-slate-150">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
+                      <div>
+                        <h4 className="text-xs font-bold uppercase tracking-wider text-slate-800 flex items-center gap-2">
+                          <Sparkles size={16} className="text-amber-500" />
+                          <span>3. จัดการตัวเลือกสติกเกอร์ (Dynamic Sticker Management)</span>
+                        </h4>
+                        <p className="text-[11px] text-slate-500 mt-0.5">
+                          เพิ่ม แก้ไข ลบลายสติกเกอร์ กำหนดราคาบวกเพิ่ม ป้ายกำกับ คำอธิบาย และใส่รูปภาพตัวอย่างสติกเกอร์
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-2 self-start sm:self-auto">
+                        <span className="text-[11px] font-bold text-slate-600 bg-slate-100 px-2.5 py-1 rounded-lg border border-slate-200">
+                          เปิดใช้งาน {preOrderSettings.stickerOptions?.filter(s => s.enabled).length || 0} จาก {preOrderSettings.stickerOptions?.length || 0} ลาย
+                        </span>
+                        <button
+                          type="button"
+                          onClick={handleAddStickerOption}
+                          className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white font-bold text-xs shadow-xs hover:shadow-sm transition-all cursor-pointer"
+                        >
+                          <Plus size={15} />
+                          <span>+ เพิ่มลายสติกเกอร์</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                      {(preOrderSettings.stickerOptions || DEFAULT_STICKER_OPTIONS).map((sticker, idx) => (
+                        <div
+                          key={sticker.id}
+                          className={`p-4 rounded-2xl border transition-all shadow-2xs space-y-3 relative flex flex-col justify-between ${
+                            sticker.enabled
+                              ? 'bg-white border-slate-200/90 hover:border-amber-300 ring-1 ring-black/3'
+                              : 'bg-slate-50/80 border-slate-200 opacity-70'
+                          }`}
+                        >
+                          {/* Sticker Card Top Header */}
+                          <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                            <div className="flex items-center gap-2">
+                              <span className="w-5 h-5 rounded-md bg-amber-100 text-amber-900 font-bold text-[10px] flex items-center justify-center">
+                                #{idx + 1}
+                              </span>
+                              <span className="text-[10px] font-mono text-slate-500 font-semibold truncate max-w-[120px]">
+                                {sticker.id}
+                              </span>
+                            </div>
+
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => handleToggleStickerOption(sticker.id)}
+                                className={`px-2 py-0.5 rounded-md text-[10px] font-bold cursor-pointer transition-colors border ${
+                                  sticker.enabled
+                                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+                                    : 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100'
+                                }`}
+                              >
+                                {sticker.enabled ? '✓ เปิด' : '✕ ปิด'}
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteStickerOption(sticker.id)}
+                                className="p-1 rounded-md text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                                title="ลบลายสติกเกอร์นี้"
+                              >
+                                <Trash2 size={13} />
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Editable Sticker Fields */}
+                          <div className="space-y-2.5">
+                            {/* Name & Badge */}
+                            <div>
+                              <label className="text-[10.5px] text-slate-700 font-bold block mb-1">
+                                ชื่อลายสติกเกอร์ (Sticker Name) <span className="text-rose-500">*</span>
+                              </label>
+                              <input
+                                type="text"
+                                value={sticker.name}
+                                onChange={(e) => handleUpdateStickerOption(sticker.id, 'name', e.target.value)}
+                                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs text-slate-850 font-bold focus:bg-white focus:border-amber-500 outline-none"
+                                placeholder="เช่น สติกเกอร์ลายสปอร์ต Marine 3M"
+                                required
+                              />
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-2">
+                              {/* Price */}
+                              <div>
+                                <label className="text-[10.5px] text-amber-700 font-bold block mb-1">
+                                  ราคาบวกเพิ่ม (฿) <span className="text-rose-500">*</span>
+                                </label>
+                                <div className="relative">
+                                  <span className="absolute left-2.5 top-1.5 text-xs font-bold text-slate-400">฿</span>
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    step="50"
+                                    value={sticker.price}
+                                    onChange={(e) => handleUpdateStickerOption(sticker.id, 'price', Number(e.target.value) || 0)}
+                                    className="w-full bg-white border border-amber-300 rounded-xl pl-6 pr-2 py-1 text-xs font-black text-amber-700 focus:border-amber-600 outline-none"
+                                    placeholder="300"
+                                    required
+                                  />
+                                </div>
+                              </div>
+
+                              {/* Badge */}
+                              <div>
+                                <label className="text-[10.5px] text-slate-700 font-bold block mb-1">
+                                  ป้ายกำกับ (Badge)
+                                </label>
+                                <input
+                                  type="text"
+                                  value={sticker.badge || ''}
+                                  onChange={(e) => handleUpdateStickerOption(sticker.id, 'badge', e.target.value)}
+                                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1 text-xs text-slate-750 focus:bg-white focus:border-amber-500 outline-none"
+                                  placeholder="เช่น POPULAR หรือ SAFETY"
+                                />
+                              </div>
+                            </div>
+
+                            {/* Description */}
+                            <div>
+                              <label className="text-[10.5px] text-slate-600 font-bold block mb-1">
+                                คำอธิบายสติกเกอร์
+                              </label>
+                              <input
+                                type="text"
+                                value={sticker.description || ''}
+                                onChange={(e) => handleUpdateStickerOption(sticker.id, 'description', e.target.value)}
+                                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1 text-xs text-slate-600 focus:bg-white focus:border-amber-500 outline-none"
+                                placeholder="เช่น ลายคาดข้างสปอร์ตกันน้ำ ทน UV..."
+                              />
+                            </div>
+
+                            {/* Image Preview / URL */}
+                            <div>
+                              <label className="text-[10.5px] text-slate-600 font-bold block mb-1">
+                                ลิงก์รูปภาพตัวอย่างสติกเกอร์ (Image URL)
+                              </label>
+                              <div className="flex items-center gap-2">
+                                {sticker.imageUrl && (
+                                  <img 
+                                    src={sticker.imageUrl} 
+                                    alt="sticker preview"
+                                    className="w-8 h-8 rounded-lg object-cover border border-slate-200 shrink-0"
+                                  />
+                                )}
+                                <input
+                                  type="url"
+                                  value={sticker.imageUrl || ''}
+                                  onChange={(e) => handleUpdateStickerOption(sticker.id, 'imageUrl', e.target.value)}
+                                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-2 py-1 text-[11px] text-slate-700 focus:bg-white focus:border-amber-500 outline-none"
+                                  placeholder="https://..."
+                                />
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="pt-2 mt-1 border-t border-slate-100 flex items-center justify-between text-[10px]">
+                            <span className="text-slate-400">แสดงผลหน้าร้าน:</span>
+                            <span className={`font-bold ${sticker.enabled ? 'text-emerald-600' : 'text-slate-400'}`}>
+                              {sticker.enabled ? (sticker.price > 0 ? `+฿${sticker.price.toLocaleString()}` : 'ฟรี (+฿0)') : 'ปิดใช้งาน'}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Part 4: Real Boat Photos Gallery Management */}
                   <div className="pt-4 border-t border-slate-150">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
                       <div>
                         <h4 className="text-xs font-bold uppercase tracking-wider text-slate-800 flex items-center gap-2">
                           <Camera size={16} className="text-amber-600" />
-                          <span>3. จัดการภาพถ่ายเรือจริง (Real Boat Photos Gallery Management)</span>
+                          <span>4. จัดการภาพถ่ายเรือจริง (Real Boat Photos Gallery Management)</span>
                         </h4>
                         <p className="text-[11px] text-slate-500 mt-0.5">
                           อัปโหลดภาพถ่ายเรือจริงของแต่ละรุ่นและสี หรือระบุ URL รูปภาพ เพื่อนำไปแสดงในแถบ "ภาพถ่ายเรือจริง" ใน Live Preview ของลูกค้า
                         </p>
                       </div>
 
-                      {/* Size selector subtabs */}
-                      <div className="flex items-center p-1 bg-slate-100 rounded-xl border border-slate-200 self-start sm:self-auto">
-                        {[
-                          { id: '1_seat', label: '1 ที่นั่ง (6 ฟุต)' },
-                          { id: '2_seat', label: '2 ที่นั่ง (8 ฟุต)' },
-                          { id: '3_seat', label: '3 ที่นั่งขึ้นไป (10-12 ฟุต)' }
-                        ].map((sz) => (
+                      {/* Size selector subtabs dynamically populated */}
+                      <div className="flex items-center flex-wrap gap-1 p-1 bg-slate-100 rounded-xl border border-slate-200 self-start sm:self-auto max-w-full">
+                        {(preOrderSettings.boatSizes && preOrderSettings.boatSizes.length > 0
+                          ? preOrderSettings.boatSizes
+                          : DEFAULT_BOAT_SIZES
+                        ).map((sz) => (
                           <button
                             key={sz.id}
                             type="button"
-                            onClick={() => setSelectedGallerySizeTab(sz.id as any)}
-                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                            onClick={() => setSelectedGallerySizeTab(sz.id)}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
                               selectedGallerySizeTab === sz.id
-                                ? 'bg-white text-brand-blue shadow-xs'
-                                : 'text-slate-600 hover:text-slate-900'
+                                ? 'bg-white text-brand-blue shadow-xs ring-1 ring-sky-300'
+                                : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
                             }`}
                           >
-                            {sz.label}
+                            <span>{sz.shortName || sz.name}</span>
+                            {!sz.enabled && (
+                              <span className="text-[9.5px] px-1.5 py-0.2 rounded bg-rose-100 text-rose-700 font-semibold">ปิด</span>
+                            )}
                           </button>
                         ))}
                       </div>

@@ -1785,15 +1785,118 @@ export interface PreOrderColorConfig {
   name: string;
   english?: string;
   swatchHex: string;
+  extraPrice?: number;
   enabled: boolean;
 }
+
+export interface PreOrderStickerOption {
+  id: string;
+  name: string;
+  price: number;
+  badge?: string;
+  description?: string;
+  imageUrl?: string;
+  enabled: boolean;
+}
+
+export interface PreOrderBoatSize {
+  id: string;
+  name: string;
+  shortName: string;
+  badge: string;
+  lengthLabel: string;
+  widthLabel: string;
+  capacityWeight?: string;
+  seatsLabel?: string;
+  basePrice: number;
+  description?: string;
+  scaleBadge?: string;
+  enabled: boolean;
+}
+
+export const DEFAULT_STICKER_OPTIONS: PreOrderStickerOption[] = [
+  {
+    id: 'none',
+    name: 'ไม่ติดสติกเกอร์ (สีเนื้อเรือเรียบ)',
+    price: 0,
+    badge: 'คลาสสิก',
+    description: 'เนื้อพลาสติกสีเรียบเงาแบบคลาสสิก ดูแลง่าย',
+    imageUrl: 'https://images.unsplash.com/photo-1544551763-46a013bb70d5?q=80&w=400&auto=format&fit=crop',
+    enabled: true
+  },
+  {
+    id: 'sport_marine_3m',
+    name: 'สติกเกอร์ลายสปอร์ต Marine 3M',
+    price: 300,
+    badge: 'POPULAR • ยอดนิยม',
+    description: 'ลายคาดข้างสปอร์ตกันน้ำ ทน UV เกรด Marine 3M ลายคมชัด',
+    imageUrl: 'https://images.unsplash.com/photo-1559136555-9303baea8ebd?q=80&w=400&auto=format&fit=crop',
+    enabled: true
+  },
+  {
+    id: 'rescue_reflective',
+    name: 'สติกเกอร์แถบสะท้อนแสงกู้ภัย (Hi-Vis Safety)',
+    price: 450,
+    badge: 'SAFETY • กู้ภัย',
+    description: 'แถบสะท้อนแสง Diamond Grade มองเห็นชัดเจนเวลากลางคืน',
+    imageUrl: 'https://images.unsplash.com/photo-1510312305653-8ed496efae75?q=80&w=400&auto=format&fit=crop',
+    enabled: true
+  }
+];
+
+export const DEFAULT_BOAT_SIZES: PreOrderBoatSize[] = [
+  {
+    id: '1_seat',
+    name: 'ขนาด 1 ที่นั่ง (เรือเดี่ยว / เรือเล็ก 6 ฟุต)',
+    shortName: 'เรือเล็ก 1 ที่นั่ง',
+    badge: 'คล่องตัวสูง • 1 ที่นั่ง',
+    lengthLabel: 'ยาว 1.8 - 2.0 ม.',
+    widthLabel: 'กว้าง 78 ซม.',
+    capacityWeight: '90 - 140 กก.',
+    seatsLabel: '1 ที่นั่ง',
+    basePrice: 2500,
+    description: 'เรือขนาดเล็กกะทัดรัด น้ำหนักเบา ยกคนเดียวได้ พายคล่องตัวสูงในร่องสวน คูคลองแคบ หรือสระน้ำ',
+    scaleBadge: 'สเกลจริง 1.90 x 0.78 ม. • ขนาด 1 ที่นั่ง',
+    enabled: true
+  },
+  {
+    id: '2_seat',
+    name: 'ขนาด 2 ที่นั่ง (รุ่นมาตรฐาน 8 ฟุต)',
+    shortName: 'รุ่นมาตรฐาน 2 ที่นั่ง',
+    badge: 'รุ่นยอดนิยม • 2 ที่นั่ง',
+    lengthLabel: 'ยาว 1.98 - 2.5 ม.',
+    widthLabel: 'กว้าง 88 - 96 ซม.',
+    capacityWeight: '180 - 220 กก.',
+    seatsLabel: '2 ที่นั่ง',
+    basePrice: 3000,
+    description: 'เรือพลาสติกทรงท้องแบนมาตรฐานยอดนิยม เสถียรภาพสูง ไม่โคลงเคลง นั่ง 2 คนสบาย มั่นคงปลอดภัยในทุกผืนน้ำ',
+    scaleBadge: 'สเกลจริง 2.50 x 0.90 ม. • รุ่นมาตรฐาน 2 ที่นั่ง',
+    enabled: true
+  },
+  {
+    id: '3_seat',
+    name: 'ขนาด 3 ที่นั่งขึ้นไป (เรือใหญ่ / อีแปะเกษตร 10-12 ฟุต)',
+    shortName: 'เรืออีแปะ 3 ที่นั่ง+',
+    badge: 'บรรทุกหนัก • 3 ที่นั่งขึ้นไป',
+    lengthLabel: 'ยาว 3.3 ม. ขึ้นไป',
+    widthLabel: 'กว้าง 90 ซม. ขึ้นไป',
+    capacityWeight: '300 - 380 กก.',
+    seatsLabel: '3 ที่นั่งขึ้นไป',
+    basePrice: 4500,
+    description: 'เรือขนาดใหญ่ทรงเรืออีแปะการเกษตร ท้องแบนกว้างพิเศษ ทรงตัวดีเยี่ยม ลอยตัวสูง จุสัมภาระและผลผลิตการเกษตรได้มาก',
+    scaleBadge: 'สเกลจริง 3.30 x 0.95 ม. • เรือใหญ่ 3 ที่นั่งขึ้นไป',
+    enabled: true
+  }
+];
 
 export interface PreOrderSettings {
   basePrice: number;
   basePrice1Seat?: number;
   basePrice2Seat?: number;
   basePrice3Seat?: number;
+  boatSizes: PreOrderBoatSize[];
   stickerPrice: number;
+  stickerOptions?: PreOrderStickerOption[];
   customTextPrice: number;
   depositPerBoat: number;
   colors: PreOrderColorConfig[];
@@ -1853,19 +1956,84 @@ export const compressImageFile = async (file: File, maxWidth = 1200, maxHeight =
   });
 };
 
+export const normalizeBoatSizes = (sizesRaw: any, b1?: number, b2?: number, b3?: number): PreOrderBoatSize[] => {
+  if (Array.isArray(sizesRaw) && sizesRaw.length > 0) {
+    return sizesRaw.map((item, idx) => ({
+      id: String(item.id || `size_${idx + 1}`),
+      name: String(item.name || `ขนาดเรือ ${idx + 1}`),
+      shortName: String(item.shortName || item.name || `เรือ ${idx + 1}`),
+      badge: String(item.badge || ''),
+      lengthLabel: String(item.lengthLabel || ''),
+      widthLabel: String(item.widthLabel || ''),
+      capacityWeight: item.capacityWeight ? String(item.capacityWeight) : undefined,
+      seatsLabel: item.seatsLabel ? String(item.seatsLabel) : undefined,
+      basePrice: Number(item.basePrice || 3000),
+      description: item.description ? String(item.description) : undefined,
+      scaleBadge: item.scaleBadge ? String(item.scaleBadge) : undefined,
+      enabled: item.enabled !== false
+    }));
+  }
+  const fallback = DEFAULT_BOAT_SIZES.map(s => ({ ...s }));
+  if (typeof b1 === 'number' && fallback[0]) fallback[0].basePrice = b1;
+  if (typeof b2 === 'number' && fallback[1]) fallback[1].basePrice = b2;
+  if (typeof b3 === 'number' && fallback[2]) fallback[2].basePrice = b3;
+  return fallback;
+};
+
+export const normalizeBoatColors = (colorsRaw: any): PreOrderColorConfig[] => {
+  if (Array.isArray(colorsRaw) && colorsRaw.length > 0) {
+    return colorsRaw.map((c, idx) => ({
+      id: String(c.id || `color_${idx + 1}`),
+      name: String(c.name || `สี ${idx + 1}`),
+      english: c.english ? String(c.english) : undefined,
+      swatchHex: String(c.swatchHex || c.hex || '#2563eb'),
+      extraPrice: Number(c.extraPrice || 0),
+      enabled: c.enabled !== false
+    }));
+  }
+  return [
+    { id: 'น้ำเงิน', name: 'สีน้ำเงิน', english: 'Royal Ocean Blue', swatchHex: '#2563eb', extraPrice: 0, enabled: true },
+    { id: 'แดง', name: 'สีแดง', english: 'Rescue Vivid Red', swatchHex: '#dc2626', extraPrice: 0, enabled: true },
+    { id: 'เขียว', name: 'สีเขียว', english: 'Forest Green', swatchHex: '#16a34a', extraPrice: 0, enabled: true },
+    { id: 'ส้ม', name: 'สีส้ม', english: 'Hi-Vis Safety Orange', swatchHex: '#ea580c', extraPrice: 0, enabled: true }
+  ];
+};
+
+export const normalizeStickerOptions = (stickersRaw: any, fallbackPrice?: number): PreOrderStickerOption[] => {
+  if (Array.isArray(stickersRaw) && stickersRaw.length > 0) {
+    return stickersRaw.map((s, idx) => ({
+      id: String(s.id || `sticker_${idx + 1}`),
+      name: String(s.name || `ลายสติกเกอร์ ${idx + 1}`),
+      price: Number(s.price !== undefined ? s.price : (fallbackPrice || 300)),
+      badge: s.badge ? String(s.badge) : undefined,
+      description: s.description ? String(s.description) : undefined,
+      imageUrl: s.imageUrl ? String(s.imageUrl) : undefined,
+      enabled: s.enabled !== false
+    }));
+  }
+  return DEFAULT_STICKER_OPTIONS.map(s => {
+    if (s.id !== 'none' && typeof fallbackPrice === 'number' && fallbackPrice > 0) {
+      return { ...s, price: fallbackPrice };
+    }
+    return { ...s };
+  });
+};
+
 export const DEFAULT_PREORDER_SETTINGS: PreOrderSettings = {
   basePrice: 3000,
   basePrice1Seat: 2500,
   basePrice2Seat: 3000,
   basePrice3Seat: 4500,
+  boatSizes: [...DEFAULT_BOAT_SIZES],
   stickerPrice: 300,
+  stickerOptions: [...DEFAULT_STICKER_OPTIONS],
   customTextPrice: 200,
   depositPerBoat: 1000,
   colors: [
-    { id: 'น้ำเงิน', name: 'สีน้ำเงิน', english: 'Royal Ocean Blue', swatchHex: '#2563eb', enabled: true },
-    { id: 'แดง', name: 'สีแดง', english: 'Rescue Vivid Red', swatchHex: '#dc2626', enabled: true },
-    { id: 'เขียว', name: 'สีเขียว', english: 'Forest Green', swatchHex: '#16a34a', enabled: true },
-    { id: 'ส้ม', name: 'สีส้ม', english: 'Hi-Vis Safety Orange', swatchHex: '#ea580c', enabled: true }
+    { id: 'น้ำเงิน', name: 'สีน้ำเงิน', english: 'Royal Ocean Blue', swatchHex: '#2563eb', extraPrice: 0, enabled: true },
+    { id: 'แดง', name: 'สีแดง', english: 'Rescue Vivid Red', swatchHex: '#dc2626', extraPrice: 0, enabled: true },
+    { id: 'เขียว', name: 'สีเขียว', english: 'Forest Green', swatchHex: '#16a34a', extraPrice: 0, enabled: true },
+    { id: 'ส้ม', name: 'สีส้ม', english: 'Hi-Vis Safety Orange', swatchHex: '#ea580c', extraPrice: 0, enabled: true }
   ],
   galleryPhotos: { ...DEFAULT_BOAT_GALLERY_PHOTOS },
   updatedAt: new Date().toISOString()
@@ -1882,7 +2050,9 @@ export const supabasePreOrderSettings = {
           localData = {
             ...DEFAULT_PREORDER_SETTINGS,
             ...parsed,
-            colors: Array.isArray(parsed.colors) && parsed.colors.length > 0 ? parsed.colors : DEFAULT_PREORDER_SETTINGS.colors,
+            boatSizes: normalizeBoatSizes(parsed.boatSizes, parsed.basePrice1Seat, parsed.basePrice2Seat, parsed.basePrice3Seat),
+            colors: normalizeBoatColors(parsed.colors),
+            stickerOptions: normalizeStickerOptions(parsed.stickerOptions, parsed.stickerPrice),
             galleryPhotos: parsed.galleryPhotos || DEFAULT_PREORDER_SETTINGS.galleryPhotos
           };
         }
@@ -1891,6 +2061,64 @@ export const supabasePreOrderSettings = {
 
     if (isSupabaseConfigured && supabase) {
       try {
+        // 0. Try querying boat_models table directly if available
+        let modelsFromBoatModelsTable: PreOrderBoatSize[] | null = null;
+        try {
+          const { data: bmData, error: bmErr } = await supabase
+            .from('boat_models')
+            .select('*')
+            .order('base_price', { ascending: true });
+          if (!bmErr && bmData && bmData.length > 0) {
+            modelsFromBoatModelsTable = bmData.map((bm: any, idx: number) => ({
+              id: String(bm.id || `model_${idx + 1}`),
+              name: String(bm.name || bm.title || `ขนาด ${idx + 1} ที่นั่ง`),
+              shortName: String(bm.short_name || bm.shortName || bm.name || ''),
+              badge: String(bm.badge || ''),
+              lengthLabel: String(bm.length_label || bm.lengthLabel || ''),
+              widthLabel: String(bm.width_label || bm.widthLabel || ''),
+              capacityWeight: bm.capacity_weight ? String(bm.capacity_weight) : (bm.capacityWeight ? String(bm.capacityWeight) : undefined),
+              seatsLabel: bm.seats_label ? String(bm.seats_label) : (bm.seatsLabel ? String(bm.seatsLabel) : undefined),
+              basePrice: Number(bm.base_price || bm.basePrice || 3000),
+              description: bm.description ? String(bm.description) : undefined,
+              scaleBadge: bm.scale_badge ? String(bm.scale_badge) : undefined,
+              enabled: bm.enabled !== false
+            }));
+          }
+        } catch {}
+
+        // Query boat_colors table directly if available
+        let colorsFromTable: PreOrderColorConfig[] | null = null;
+        try {
+          const { data: bcData, error: bcErr } = await supabase.from('boat_colors').select('*');
+          if (!bcErr && bcData && bcData.length > 0) {
+            colorsFromTable = bcData.map((c: any, idx: number) => ({
+              id: String(c.id || c.name || `color_${idx + 1}`),
+              name: String(c.name || `สี ${idx + 1}`),
+              english: c.english ? String(c.english) : undefined,
+              swatchHex: String(c.swatch_hex || c.swatchHex || c.hex || '#2563eb'),
+              extraPrice: Number(c.extra_price ?? c.extraPrice ?? 0),
+              enabled: c.enabled !== false
+            }));
+          }
+        } catch {}
+
+        // Query sticker_options table directly if available
+        let stickersFromTable: PreOrderStickerOption[] | null = null;
+        try {
+          const { data: stData, error: stErr } = await supabase.from('sticker_options').select('*');
+          if (!stErr && stData && stData.length > 0) {
+            stickersFromTable = stData.map((s: any, idx: number) => ({
+              id: String(s.id || `sticker_${idx + 1}`),
+              name: String(s.name || `สติกเกอร์ ${idx + 1}`),
+              price: Number(s.price ?? 300),
+              badge: s.badge ? String(s.badge) : undefined,
+              description: s.description ? String(s.description) : undefined,
+              imageUrl: s.image_url || s.imageUrl,
+              enabled: s.enabled !== false
+            }));
+          }
+        } catch {}
+
         // 1. Try pre_order_settings table
         const { data: posData, error: posErr } = await supabase
           .from('pre_order_settings')
@@ -1906,15 +2134,51 @@ export const supabasePreOrderSettings = {
             parsedPhotos = row.galleryPhotos;
           }
 
+          let rawBoatSizes = row.boat_sizes || row.boatSizes;
+          if (typeof rawBoatSizes === 'string') {
+            try { rawBoatSizes = JSON.parse(rawBoatSizes); } catch {}
+          }
+
+          let rawColors = row.colors;
+          if (typeof rawColors === 'string') {
+            try { rawColors = JSON.parse(rawColors); } catch {}
+          }
+
+          let rawStickers = row.sticker_options || row.stickerOptions;
+          if (typeof rawStickers === 'string') {
+            try { rawStickers = JSON.parse(rawStickers); } catch {}
+          }
+
+          const b1 = Number(row.base_price_1_seat ?? row.basePrice1Seat ?? DEFAULT_PREORDER_SETTINGS.basePrice1Seat);
+          const b2 = Number(row.base_price_2_seat ?? row.basePrice2Seat ?? DEFAULT_PREORDER_SETTINGS.basePrice2Seat);
+          const b3 = Number(row.base_price_3_seat ?? row.basePrice3Seat ?? DEFAULT_PREORDER_SETTINGS.basePrice3Seat);
+
+          // Use boat_models table if present and row.boat_sizes was empty
+          const chosenBoatSizes = (Array.isArray(rawBoatSizes) && rawBoatSizes.length > 0)
+            ? rawBoatSizes
+            : (modelsFromBoatModelsTable || rawBoatSizes);
+
+          const chosenColors = (Array.isArray(rawColors) && rawColors.length > 0)
+            ? rawColors
+            : (colorsFromTable || rawColors);
+
+          const chosenStickers = (Array.isArray(rawStickers) && rawStickers.length > 0)
+            ? rawStickers
+            : (stickersFromTable || rawStickers);
+
+          const parsedStickerPrice = Number(row.sticker_price ?? row.stickerPrice ?? DEFAULT_PREORDER_SETTINGS.stickerPrice);
+
           const settings: PreOrderSettings = {
             basePrice: Number(row.base_price ?? row.basePrice ?? DEFAULT_PREORDER_SETTINGS.basePrice),
-            basePrice1Seat: Number(row.base_price_1_seat ?? row.basePrice1Seat ?? DEFAULT_PREORDER_SETTINGS.basePrice1Seat),
-            basePrice2Seat: Number(row.base_price_2_seat ?? row.basePrice2Seat ?? DEFAULT_PREORDER_SETTINGS.basePrice2Seat),
-            basePrice3Seat: Number(row.base_price_3_seat ?? row.basePrice3Seat ?? DEFAULT_PREORDER_SETTINGS.basePrice3Seat),
-            stickerPrice: Number(row.sticker_price ?? row.stickerPrice ?? DEFAULT_PREORDER_SETTINGS.stickerPrice),
+            basePrice1Seat: b1,
+            basePrice2Seat: b2,
+            basePrice3Seat: b3,
+            boatSizes: normalizeBoatSizes(chosenBoatSizes, b1, b2, b3),
+            stickerPrice: parsedStickerPrice,
+            stickerOptions: normalizeStickerOptions(chosenStickers, parsedStickerPrice),
             customTextPrice: Number(row.custom_text_price ?? row.customTextPrice ?? DEFAULT_PREORDER_SETTINGS.customTextPrice),
             depositPerBoat: Number(row.deposit_per_boat ?? row.depositPerBoat ?? DEFAULT_PREORDER_SETTINGS.depositPerBoat),
-            colors: Array.isArray(row.colors) ? row.colors : (typeof row.colors === 'string' ? JSON.parse(row.colors) : DEFAULT_PREORDER_SETTINGS.colors),
+            colors: normalizeBoatColors(chosenColors),
             galleryPhotos: parsedPhotos || DEFAULT_PREORDER_SETTINGS.galleryPhotos,
             updatedAt: row.updated_at || row.updatedAt || new Date().toISOString()
           };
@@ -1934,9 +2198,24 @@ export const supabasePreOrderSettings = {
         if (!cfgErr && cfgData && cfgData.length > 0) {
           const row = cfgData[0];
           const val = typeof row.value === 'string' ? JSON.parse(row.value) : row.value;
+          const chosenBoatSizes = (Array.isArray(val.boatSizes) && val.boatSizes.length > 0)
+            ? val.boatSizes
+            : (modelsFromBoatModelsTable || val.boatSizes);
+
+          const chosenColors = (Array.isArray(val.colors) && val.colors.length > 0)
+            ? val.colors
+            : (colorsFromTable || val.colors);
+
+          const chosenStickers = (Array.isArray(val.stickerOptions) && val.stickerOptions.length > 0)
+            ? val.stickerOptions
+            : (stickersFromTable || val.stickerOptions);
+
           const settings: PreOrderSettings = {
             ...DEFAULT_PREORDER_SETTINGS,
             ...val,
+            boatSizes: normalizeBoatSizes(chosenBoatSizes, val.basePrice1Seat, val.basePrice2Seat, val.basePrice3Seat),
+            colors: normalizeBoatColors(chosenColors),
+            stickerOptions: normalizeStickerOptions(chosenStickers, val.stickerPrice),
             galleryPhotos: val.galleryPhotos || DEFAULT_PREORDER_SETTINGS.galleryPhotos
           };
           try {
@@ -1953,14 +2232,33 @@ export const supabasePreOrderSettings = {
   },
 
   async save(settings: PreOrderSettings): Promise<boolean> {
+    const boatSizes = (Array.isArray(settings.boatSizes) && settings.boatSizes.length > 0)
+      ? settings.boatSizes
+      : DEFAULT_BOAT_SIZES;
+
+    const colors = (Array.isArray(settings.colors) && settings.colors.length > 0)
+      ? settings.colors
+      : DEFAULT_PREORDER_SETTINGS.colors;
+
+    const stickerOptions = (Array.isArray(settings.stickerOptions) && settings.stickerOptions.length > 0)
+      ? settings.stickerOptions
+      : DEFAULT_STICKER_OPTIONS;
+
+    const p1 = boatSizes.find(s => s.id === '1_seat')?.basePrice ?? boatSizes[0]?.basePrice ?? 2500;
+    const p2 = boatSizes.find(s => s.id === '2_seat')?.basePrice ?? boatSizes[1]?.basePrice ?? 3000;
+    const p3 = boatSizes.find(s => s.id === '3_seat')?.basePrice ?? boatSizes[2]?.basePrice ?? 4500;
+
     const updatedSettings: PreOrderSettings = {
       ...settings,
-      basePrice: Number(settings.basePrice || 3000),
-      basePrice1Seat: Number(settings.basePrice1Seat || 2500),
-      basePrice2Seat: Number(settings.basePrice2Seat || settings.basePrice || 3000),
-      basePrice3Seat: Number(settings.basePrice3Seat || 4500),
-      stickerPrice: Number(settings.stickerPrice || 0),
-      customTextPrice: Number(settings.customTextPrice || 0),
+      boatSizes,
+      colors,
+      stickerOptions,
+      basePrice: Number(p2),
+      basePrice1Seat: Number(p1),
+      basePrice2Seat: Number(p2),
+      basePrice3Seat: Number(p3),
+      stickerPrice: Number(settings.stickerPrice || 300),
+      customTextPrice: Number(settings.customTextPrice || 200),
       depositPerBoat: Number(settings.depositPerBoat || 1000),
       galleryPhotos: settings.galleryPhotos || DEFAULT_PREORDER_SETTINGS.galleryPhotos,
       updatedAt: new Date().toISOString()
@@ -1982,7 +2280,9 @@ export const supabasePreOrderSettings = {
           base_price_1_seat: Number(updatedSettings.basePrice1Seat),
           base_price_2_seat: Number(updatedSettings.basePrice2Seat),
           base_price_3_seat: Number(updatedSettings.basePrice3Seat),
+          boat_sizes: updatedSettings.boatSizes,
           sticker_price: Number(updatedSettings.stickerPrice),
+          sticker_options: updatedSettings.stickerOptions,
           custom_text_price: Number(updatedSettings.customTextPrice),
           deposit_per_boat: Number(updatedSettings.depositPerBoat),
           colors: updatedSettings.colors,
@@ -1990,6 +2290,58 @@ export const supabasePreOrderSettings = {
           updated_at: updatedSettings.updatedAt
         };
         const { error: errA } = await supabase.from('pre_order_settings').upsert([payloadA]);
+
+        // Also sync each model into boat_models table if it exists
+        try {
+          for (const model of updatedSettings.boatSizes) {
+            await supabase.from('boat_models').upsert([{
+              id: model.id,
+              name: model.name,
+              short_name: model.shortName,
+              badge: model.badge,
+              length_label: model.lengthLabel,
+              width_label: model.widthLabel,
+              capacity_weight: model.capacityWeight,
+              seats_label: model.seatsLabel,
+              base_price: model.basePrice,
+              description: model.description,
+              enabled: model.enabled,
+              updated_at: updatedSettings.updatedAt
+            }]);
+          }
+        } catch {}
+
+        // Also sync each color into boat_colors table if it exists
+        try {
+          for (const col of updatedSettings.colors) {
+            await supabase.from('boat_colors').upsert([{
+              id: col.id,
+              name: col.name,
+              english: col.english || '',
+              swatch_hex: col.swatchHex,
+              extra_price: col.extraPrice || 0,
+              enabled: col.enabled,
+              updated_at: updatedSettings.updatedAt
+            }]);
+          }
+        } catch {}
+
+        // Also sync each sticker option into sticker_options table if it exists
+        try {
+          for (const stk of updatedSettings.stickerOptions) {
+            await supabase.from('sticker_options').upsert([{
+              id: stk.id,
+              name: stk.name,
+              price: stk.price,
+              badge: stk.badge || '',
+              description: stk.description || '',
+              image_url: stk.imageUrl || '',
+              enabled: stk.enabled,
+              updated_at: updatedSettings.updatedAt
+            }]);
+          }
+        } catch {}
+
         if (!errA) return true;
 
         // Try table app_config

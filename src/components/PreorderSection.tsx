@@ -28,7 +28,16 @@ import {
   ZoomIn
 } from 'lucide-react';
 import { Product, User } from '../types';
-import { supabaseOrders, supabasePreOrderSettings, PreOrderSettings, DEFAULT_PREORDER_SETTINGS } from '../lib/supabase';
+import { 
+  supabaseOrders, 
+  supabasePreOrderSettings, 
+  PreOrderSettings, 
+  DEFAULT_PREORDER_SETTINGS,
+  DEFAULT_BOAT_SIZES,
+  DEFAULT_STICKER_OPTIONS,
+  PreOrderBoatSize,
+  PreOrderStickerOption
+} from '../lib/supabase';
 
 interface PreorderSectionProps {
   products: Product[];
@@ -39,14 +48,14 @@ interface PreorderSectionProps {
   setActiveTab?: (tab: string) => void;
 }
 
-// 4 Color options specified in user prompt
-export type BoatColorId = 'น้ำเงิน' | 'แดง' | 'เขียว' | 'ส้ม';
+// Color options (Dynamic from Admin Config)
+export type BoatColorId = string;
 
-// 3 Boat Size models specified in user prompt
-export type BoatSizeId = '1_seat' | '2_seat' | '3_seat';
+// Boat Size models (Dynamic from Admin CRUD)
+export type BoatSizeId = string;
 
 export interface BoatSizeConfig {
-  id: BoatSizeId;
+  id: string;
   name: string;
   shortName: string;
   badge: string;
@@ -63,7 +72,7 @@ export interface BoatSizeConfig {
   photoUrl: Record<BoatColorId, string>;
 }
 
-export const BOAT_SIZE_CONFIGS: Record<BoatSizeId, BoatSizeConfig> = {
+export const BOAT_SIZE_CONFIGS: Record<string, BoatSizeConfig> = {
   '1_seat': {
     id: '1_seat',
     name: 'ขนาด 1 ที่นั่ง (เรือเดี่ยว / เรือเล็ก)',
@@ -249,24 +258,181 @@ export default function PreorderSection({
 
   const [selectedSize, setSelectedSize] = React.useState<BoatSizeId>('2_seat');
 
+  // Dynamic boat sizes from Supabase/admin settings
+  const availableBoatSizes = React.useMemo(() => {
+    return (Array.isArray(settings.boatSizes) && settings.boatSizes.length > 0)
+      ? settings.boatSizes
+      : DEFAULT_BOAT_SIZES;
+  }, [settings.boatSizes]);
+
+  const enabledBoatSizes = React.useMemo(() => {
+    const list = availableBoatSizes.filter(s => s.enabled);
+    return list.length > 0 ? list : availableBoatSizes;
+  }, [availableBoatSizes]);
+
+  // Ensure selectedSize is in enabled sizes
+  React.useEffect(() => {
+    if (enabledBoatSizes.length > 0 && !enabledBoatSizes.some(s => s.id === selectedSize)) {
+      setSelectedSize(enabledBoatSizes[0].id);
+    }
+  }, [enabledBoatSizes, selectedSize]);
+
+  const selectedModel = React.useMemo(() => {
+    return availableBoatSizes.find(s => s.id === selectedSize) || availableBoatSizes[0] || DEFAULT_BOAT_SIZES[0];
+  }, [availableBoatSizes, selectedSize]);
+
   const getBasePrice = (sizeId: BoatSizeId): number => {
+    const found = availableBoatSizes.find(s => s.id === sizeId);
+    if (found && typeof found.basePrice === 'number') return found.basePrice;
     if (sizeId === '1_seat') return settings.basePrice1Seat ?? 2500;
     if (sizeId === '3_seat') return settings.basePrice3Seat ?? 4500;
     return settings.basePrice2Seat ?? settings.basePrice ?? 3000;
   };
+
+  const fallbackCfg = BOAT_SIZE_CONFIGS[selectedSize] || BOAT_SIZE_CONFIGS['2_seat'] || {
+    id: selectedSize,
+    name: selectedModel.name,
+    shortName: selectedModel.shortName || selectedModel.name,
+    badge: selectedModel.badge || 'โมเดลคุณภาพ',
+    subtitle: `${selectedModel.lengthLabel || ''} | ${selectedModel.widthLabel || ''}`,
+    dimensions: `${selectedModel.lengthLabel || ''} × ${selectedModel.widthLabel || ''}`,
+    lengthLabel: selectedModel.lengthLabel || 'มาตรฐาน',
+    widthLabel: selectedModel.widthLabel || 'มาตรฐาน',
+    capacityWeight: selectedModel.capacityWeight || '180 - 250 กก.',
+    seatsLabel: selectedModel.seatsLabel || '2 ที่นั่ง',
+    defaultBasePrice: selectedModel.basePrice || 3000,
+    description: selectedModel.description || 'เรือพลาสติกหลอมหนาพิเศษ ตราพรพงศ์พลาสติก',
+    idealFor: selectedModel.description || 'ใช้งานทั่วไป สวนอาหาร รีสอร์ท กู้ภัย อพยพน้ำท่วม ตกปลา',
+    scaleBadge: selectedModel.scaleBadge || `สเกลจริง ${selectedModel.lengthLabel || ''}`,
+    photoUrl: {
+      'น้ำเงิน': 'https://images.unsplash.com/photo-1544551763-46a013bb70d5?q=80&w=900&auto=format&fit=crop',
+      'แดง': 'https://images.unsplash.com/photo-1510312305653-8ed496efae75?q=80&w=900&auto=format&fit=crop',
+      'เขียว': 'https://images.unsplash.com/photo-1508873696983-2df570464756?q=80&w=900&auto=format&fit=crop',
+      'ส้ม': 'https://images.unsplash.com/photo-1540959733332-eab4deceeaf7?q=80&w=900&auto=format&fit=crop'
+    }
+  };
+
+  const activeSizeConfig = React.useMemo(() => {
+    return {
+      id: selectedModel.id,
+      name: selectedModel.name,
+      shortName: selectedModel.shortName || selectedModel.name,
+      badge: selectedModel.badge || 'โมเดลคุณภาพ',
+      subtitle: `${selectedModel.lengthLabel || ''} | ${selectedModel.widthLabel || ''}`,
+      dimensions: `${selectedModel.lengthLabel || ''} × ${selectedModel.widthLabel || ''}`,
+      lengthLabel: selectedModel.lengthLabel || fallbackCfg.lengthLabel,
+      widthLabel: selectedModel.widthLabel || fallbackCfg.widthLabel,
+      capacityWeight: selectedModel.capacityWeight || fallbackCfg.capacityWeight,
+      seatsLabel: selectedModel.seatsLabel || selectedModel.shortName,
+      defaultBasePrice: selectedModel.basePrice || fallbackCfg.defaultBasePrice,
+      description: selectedModel.description || fallbackCfg.description,
+      idealFor: selectedModel.description || fallbackCfg.idealFor,
+      scaleBadge: selectedModel.scaleBadge || `สเกลจริง ${selectedModel.lengthLabel || ''} • ${selectedModel.shortName || ''}`,
+      photoUrl: fallbackCfg.photoUrl
+    };
+  }, [selectedModel, fallbackCfg]);
+
+  const hullStyle = React.useMemo(() => {
+    const sId = selectedModel.id.toLowerCase();
+    const sName = selectedModel.name.toLowerCase();
+    const sSeats = (selectedModel.seatsLabel || '').toLowerCase();
+
+    if (sId === '1_seat' || sName.includes('1 ที่นั่ง') || sName.includes('เรือเดี่ยว') || (sSeats.includes('1') && !sSeats.includes('10') && !sSeats.includes('11') && !sSeats.includes('12'))) {
+      return '1_seat';
+    }
+    if (sId === '2_seat' || sName.includes('2 ที่นั่ง') || sSeats.includes('2')) {
+      return '2_seat';
+    }
+    if (sName.includes('4 ที่นั่ง') || sSeats.includes('4') || sId.includes('4_seat')) {
+      return '4_seat';
+    }
+    return '3_seat';
+  }, [selectedModel]);
 
   const BASE_PRICE = getBasePrice(selectedSize);
   const STICKER_PRICE = settings.stickerPrice ?? 300;
   const CUSTOM_TEXT_PRICE = settings.customTextPrice ?? 200;
   const depositPerBoat = settings.depositPerBoat ?? 1000;
 
+  // Dynamic Colors from Admin Settings
+  const availableColors = React.useMemo(() => {
+    return (Array.isArray(settings.colors) && settings.colors.length > 0)
+      ? settings.colors
+      : DEFAULT_PREORDER_SETTINGS.colors;
+  }, [settings.colors]);
+
+  const enabledColors = React.useMemo(() => {
+    const list = availableColors.filter(c => c.enabled);
+    return list.length > 0 ? list : availableColors;
+  }, [availableColors]);
+
+  // Dynamic Stickers from Admin Settings
+  const availableStickers = React.useMemo(() => {
+    return (Array.isArray(settings.stickerOptions) && settings.stickerOptions.length > 0)
+      ? settings.stickerOptions
+      : DEFAULT_STICKER_OPTIONS;
+  }, [settings.stickerOptions]);
+
+  const enabledStickers = React.useMemo(() => {
+    const list = availableStickers.filter(s => s.enabled);
+    return list.length > 0 ? list : availableStickers;
+  }, [availableStickers]);
+
   const [selectedColor, setSelectedColor] = React.useState<BoatColorId>('น้ำเงิน');
-  const [hasSticker, setHasSticker] = React.useState<boolean>(false);
+  const [selectedStickerId, setSelectedStickerId] = React.useState<string>('none');
   const [hasCustomText, setHasCustomText] = React.useState<boolean>(false);
   const [customText, setCustomText] = React.useState<string>('');
   const [quantity, setQuantity] = React.useState<number>(1);
   const [previewMode, setPreviewMode] = React.useState<'3d_hull' | 'real_photo'>('3d_hull');
   const [isZoomingPhoto, setIsZoomingPhoto] = React.useState(false);
+
+  // Ensure selectedColor is in enabledColors
+  React.useEffect(() => {
+    if (enabledColors.length > 0 && !enabledColors.some(c => c.id === selectedColor)) {
+      setSelectedColor(enabledColors[0].id);
+    }
+  }, [enabledColors, selectedColor]);
+
+  // Ensure selectedStickerId is in enabledStickers
+  React.useEffect(() => {
+    if (enabledStickers.length > 0 && !enabledStickers.some(s => s.id === selectedStickerId)) {
+      setSelectedStickerId(enabledStickers[0].id);
+    }
+  }, [enabledStickers, selectedStickerId]);
+
+  const activeColorSetting = React.useMemo(() => {
+    return availableColors.find(c => c.id === selectedColor) || availableColors[0] || DEFAULT_PREORDER_SETTINGS.colors[0];
+  }, [availableColors, selectedColor]);
+
+  const activeStickerSetting = React.useMemo(() => {
+    return availableStickers.find(s => s.id === selectedStickerId) || availableStickers[0] || DEFAULT_STICKER_OPTIONS[0];
+  }, [availableStickers, selectedStickerId]);
+
+  const hasSticker = selectedStickerId !== 'none' && activeStickerSetting.price > 0;
+  const stickerCost = activeStickerSetting?.price || 0;
+  const colorExtraCost = activeColorSetting?.extraPrice || 0;
+
+  // Active color configuration for visuals and gradients
+  const activeColorConfig = React.useMemo(() => {
+    const fallback = COLOR_CONFIGS[selectedColor as keyof typeof COLOR_CONFIGS] || COLOR_CONFIGS['น้ำเงิน'];
+    const hex = activeColorSetting.swatchHex || fallback.swatchHex || '#2563eb';
+    return {
+      id: activeColorSetting.id,
+      name: activeColorSetting.name || fallback.name,
+      english: activeColorSetting.english || fallback.english || '',
+      badgeBg: fallback.badgeBg || 'bg-blue-600',
+      badgeText: fallback.badgeText || 'text-blue-700 bg-blue-50 border-blue-200',
+      swatchHex: hex,
+      borderHex: fallback.borderHex || 'border-blue-600 ring-blue-400',
+      gradient: fallback.gradient || {
+        start: hex,
+        mid: hex,
+        end: hex,
+        highlight: '#ffffff'
+      },
+      photoUrl: fallback.photoUrl || ''
+    };
+  }, [activeColorSetting, selectedColor]);
 
   // Customer Contact Info
   const [customerName, setCustomerName] = React.useState(currentUser?.name || '');
@@ -293,9 +459,8 @@ export default function PreorderSection({
   }, [currentUser]);
 
   // 2. Real-time Price Calculation
-  const stickerCost = hasSticker ? STICKER_PRICE : 0;
   const textCost = hasCustomText ? CUSTOM_TEXT_PRICE : 0;
-  const unitPrice = BASE_PRICE + stickerCost + textCost;
+  const unitPrice = BASE_PRICE + colorExtraCost + stickerCost + textCost;
   const totalPrice = unitPrice * Math.max(1, quantity);
   // Deposit: depositPerBoat THB per boat or ~30%
   const depositAmount = Math.max(depositPerBoat * Math.max(1, quantity), Math.round(totalPrice * 0.3));
@@ -315,8 +480,10 @@ export default function PreorderSection({
 
     setIsSubmitting(true);
     try {
-      const activeSizeConfig = BOAT_SIZE_CONFIGS[selectedSize];
-      const stickerOptionValue = hasSticker ? `ติดสติกเกอร์ลายพิเศษ (+${STICKER_PRICE.toLocaleString()} บาท)` : 'ไม่ติดสติกเกอร์ (+0 บาท)';
+      const stickerOptionValue = activeStickerSetting.id === 'none' 
+        ? 'ไม่ติดสติกเกอร์ (+0 บาท)' 
+        : `${activeStickerSetting.name} (+${activeStickerSetting.price.toLocaleString()} บาท)`;
+
       const payload = {
         customer_id: currentUser?.id || null,
         customer_name: customerName.trim(),
@@ -324,7 +491,7 @@ export default function PreorderSection({
         customer_phone: customerPhone.trim(),
         boat_size: activeSizeConfig.name,
         boat_model_name: activeSizeConfig.shortName,
-        selected_color: selectedColor,
+        selected_color: activeColorConfig.name,
         sticker_option: stickerOptionValue,
         custom_text: hasCustomText ? customText.trim() : '',
         total_price: totalPrice,
@@ -332,7 +499,7 @@ export default function PreorderSection({
         deposit_amount: depositAmount,
         quantity: quantity,
         address: customerAddress.trim(),
-        notes: `[ขนาด: ${activeSizeConfig.name}] ` + (customerNotes.trim() ? `หมายเหตุ: ${customerNotes.trim()}` : '')
+        notes: `[ขนาด: ${activeSizeConfig.name}][สี: ${activeColorConfig.name}${colorExtraCost > 0 ? ` (+฿${colorExtraCost})` : ''}][สติกเกอร์: ${activeStickerSetting.name}] ` + (customerNotes.trim() ? `หมายเหตุ: ${customerNotes.trim()}` : '')
       };
 
       const result = await supabaseOrders.createCustomPreOrder(payload);
@@ -345,7 +512,6 @@ export default function PreorderSection({
       setShowOrderModal(true);
     } catch (err: any) {
       console.error('Error submitting pre-order:', err);
-      const activeSizeConfig = BOAT_SIZE_CONFIGS[selectedSize];
       // Even if network blips, show confirmation modal with reliable fallback ID
       const fallbackOrder = {
         id: 'ORD-PRE-' + new Date().getFullYear() + '-' + Math.floor(1000 + Math.random() * 9000),
@@ -354,8 +520,8 @@ export default function PreorderSection({
         customer_email: customerEmail.trim(),
         boat_size: activeSizeConfig.name,
         boat_model_name: activeSizeConfig.shortName,
-        selected_color: selectedColor,
-        sticker_option: hasSticker ? `ติดสติกเกอร์ลายพิเศษ (+${STICKER_PRICE} บาท)` : 'ไม่ติดสติกเกอร์ (+0 บาท)',
+        selected_color: activeColorConfig.name,
+        sticker_option: activeStickerSetting.id === 'none' ? 'ไม่ติดสติกเกอร์ (+0 บาท)' : `${activeStickerSetting.name} (+${activeStickerSetting.price} บาท)`,
         custom_text: hasCustomText ? customText.trim() : '',
         total_price: totalPrice,
         status: 'pending_deposit',
@@ -378,9 +544,6 @@ export default function PreorderSection({
       setTimeout(() => setCopiedOrderId(false), 2000);
     }
   };
-
-  const activeColorConfig = COLOR_CONFIGS[selectedColor];
-  const activeSizeConfig = BOAT_SIZE_CONFIGS[selectedSize];
 
   // Other catalog products for browsing below
   const preorderProducts = products.filter(
@@ -409,7 +572,7 @@ export default function PreorderSection({
             <div className="flex flex-wrap items-center gap-4 text-xs sm:text-sm text-sky-200">
               <div className="flex items-center gap-1.5">
                 <CheckCircle2 size={16} className="text-emerald-400" />
-                <span>ราคาเริ่มต้นเพียง ฿{getBasePrice('1_seat').toLocaleString()} (มี 3 ขนาดให้เลือก)</span>
+                <span>ราคาเริ่มต้นเพียง ฿{(enabledBoatSizes[0]?.basePrice || 2500).toLocaleString()} (มี {enabledBoatSizes.length} ขนาดให้เลือก)</span>
               </div>
               <div className="flex items-center gap-1.5">
                 <CheckCircle2 size={16} className="text-emerald-400" />
@@ -531,8 +694,8 @@ export default function PreorderSection({
                           </linearGradient>
                         </defs>
 
-                        {/* RENDER HULL ACCORDING TO SELECTED BOAT SIZE */}
-                        {selectedSize === '1_seat' && (
+                        {/* RENDER HULL ACCORDING TO SELECTED BOAT SIZE MODEL */}
+                        {hullStyle === '1_seat' && (
                           /* MODEL 1: ขนาด 1 ที่นั่ง (เรือเดี่ยว / เรือเล็ก 1.8-2.0 ม.) */
                           <g className="transition-all duration-500">
                             {/* Keel Shadow */}
@@ -602,7 +765,7 @@ export default function PreorderSection({
                           </g>
                         )}
 
-                        {selectedSize === '2_seat' && (
+                        {hullStyle === '2_seat' && (
                           /* MODEL 2: ขนาด 2 ที่นั่ง (รุ่นมาตรฐาน 1.98-2.5 ม.) */
                           <g className="transition-all duration-500">
                             {/* Keel Shadow */}
@@ -684,7 +847,7 @@ export default function PreorderSection({
                           </g>
                         )}
 
-                        {selectedSize === '3_seat' && (
+                        {(hullStyle === '3_seat' || (!['1_seat', '2_seat', '4_seat'].includes(hullStyle))) && (
                           /* MODEL 3: ขนาด 3 ที่นั่งขึ้นไป (เรือขนาดใหญ่ / เรืออีแปะเกษตร 3.3 ม.+) */
                           <g className="transition-all duration-500">
                             {/* Keel Shadow (Wider) */}
@@ -735,6 +898,75 @@ export default function PreorderSection({
                                 />
                                 <polygon points="80,111 90,107 85,119" fill="#fbbf24" />
                                 <text x="450" y="120" fill="#ffffff" fontSize="8" fontWeight="bold" letterSpacing="1" opacity="0.9">HEAVY-DUTY</text>
+                              </g>
+                            )}
+
+                            {/* Custom Text */}
+                            {hasCustomText && (
+                              <g className="transition-all duration-200">
+                                <text x="270" y="150" textAnchor="middle" fill="#000000" opacity="0.6" fontSize="15" fontWeight="900" letterSpacing="1.5">
+                                  {customText.trim() || 'พิมพ์ชื่อเรือของคุณ'}
+                                </text>
+                                <text x="270" y="148" textAnchor="middle" fill="#ffffff" fontSize="15" fontWeight="900" letterSpacing="1.5" stroke="#0f172a" strokeWidth="0.5">
+                                  {customText.trim() || 'พิมพ์ชื่อเรือของคุณ'}
+                                </text>
+                              </g>
+                            )}
+                          </g>
+                        )}
+
+                        {hullStyle === '4_seat' && (
+                          /* MODEL 4: ขนาด 4 ที่นั่ง (เรือท่องเที่ยว / เรือครอบครัว ทรงขยาย 3.6-4.2 ม.) */
+                          <g className="transition-all duration-500">
+                            {/* Keel Shadow (Wide & Deep) */}
+                            <ellipse cx="270" cy="193" rx="260" ry="15" fill="#030712" opacity="0.7" />
+
+                            {/* Outer Main Hull */}
+                            <path 
+                              d="M 12 84 C 50 168, 140 186, 270 188 C 400 186, 490 168, 528 84 C 470 96, 270 101, 12 84 Z" 
+                              fill="url(#boatHullGrad)"
+                              stroke={activeColorConfig.gradient.start}
+                              strokeWidth="2"
+                            />
+                            {/* Hull lighting & gloss shine */}
+                            <path 
+                              d="M 12 84 C 50 168, 140 186, 270 188 C 400 186, 490 168, 528 84 C 470 96, 270 101, 12 84 Z" 
+                              fill="url(#boatShine)"
+                            />
+                            {/* Extended Multi-seat Cockpit */}
+                            <path 
+                              d="M 26 84 C 90 118, 450 118, 514 84 C 460 76, 80 76, 26 84 Z" 
+                              fill="#1e293b" 
+                              opacity="0.9"
+                            />
+                            {/* 4 Bench Seats for 4-seat family/touring model */}
+                            <path d="M 68 91 L 132 91 L 135 101 L 65 101 Z" fill="#334155" stroke="#1e293b" strokeWidth="1" />
+                            <path d="M 180 92 L 244 92 L 247 102 L 177 102 Z" fill="#475569" stroke="#334155" strokeWidth="1" />
+                            <path d="M 296 92 L 360 92 L 363 102 L 293 102 Z" fill="#475569" stroke="#334155" strokeWidth="1" />
+                            <path d="M 408 91 L 472 91 L 475 101 L 405 101 Z" fill="#334155" stroke="#1e293b" strokeWidth="1" />
+
+                            {/* Gunwale Rub Rail */}
+                            <path 
+                              d="M 8 82 C 92 102, 448 102, 532 82 C 520 76, 448 72, 270 72 C 92 72, 20 76, 8 82 Z" 
+                              fill="#0f172a" 
+                              stroke="#334155" 
+                              strokeWidth="1.5"
+                            />
+                            {/* Heavy Duty Mooring Rings */}
+                            <circle cx="12" cy="82" r="5.5" fill="#94a3b8" stroke="#334155" strokeWidth="1.5" />
+                            <circle cx="528" cy="82" r="5.5" fill="#94a3b8" stroke="#334155" strokeWidth="1.5" />
+
+                            {/* Sticker Option */}
+                            {hasSticker && (
+                              <g className="transition-opacity duration-300">
+                                <path 
+                                  d="M 55 114 C 160 148, 380 144, 485 110 C 448 118, 280 126, 85 106 Z" 
+                                  fill="url(#stickerStripe)" 
+                                  opacity="0.95"
+                                  filter="drop-shadow(0 1px 2px rgba(0,0,0,0.5))"
+                                />
+                                <polygon points="70,110 80,106 75,118" fill="#fbbf24" />
+                                <text x="455" y="120" fill="#ffffff" fontSize="8" fontWeight="bold" letterSpacing="1" opacity="0.9">FAMILY 4-SEAT</text>
                               </g>
                             )}
 
@@ -842,24 +1074,23 @@ export default function PreorderSection({
                             </div>
 
                             {/* Color Photo Quick Switcher */}
-                            <div className="flex items-center gap-1.5 pt-1 border-t border-white/10">
+                            <div className="flex items-center gap-1.5 pt-1 border-t border-white/10 flex-wrap">
                               <span className="text-[9.5px] text-slate-300 shrink-0">ดูสีอื่น:</span>
-                              {(['น้ำเงิน', 'แดง', 'เขียว', 'ส้ม'] as BoatColorId[]).map((cId) => {
-                                const cConfig = COLOR_CONFIGS[cId];
-                                const isCur = selectedColor === cId;
+                              {enabledColors.map((cItem) => {
+                                const isCur = selectedColor === cItem.id;
                                 return (
                                   <button
-                                    key={cId}
+                                    key={cItem.id}
                                     type="button"
-                                    onClick={() => setSelectedColor(cId)}
+                                    onClick={() => setSelectedColor(cItem.id)}
                                     className={`px-2 py-0.5 rounded-md text-[9.5px] font-bold flex items-center gap-1 transition-all cursor-pointer ${
                                       isCur 
                                         ? 'bg-white text-slate-900 shadow-xs ring-1 ring-white' 
                                         : 'bg-white/10 text-white hover:bg-white/20'
                                     }`}
                                   >
-                                    <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: cConfig.swatchHex }}></span>
-                                    <span>{cConfig.name.replace('สี', '')}</span>
+                                    <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: cItem.swatchHex }}></span>
+                                    <span>{cItem.name.replace('สี', '')}</span>
                                   </button>
                                 );
                               })}
@@ -897,7 +1128,7 @@ export default function PreorderSection({
             {/* RIGHT COLUMN: CONFIGURATION CONTROLS & SELECTION (6 cols) */}
             <div className="lg:col-span-6 p-6 sm:p-8 flex flex-col justify-between space-y-6">
               
-              {/* ITEM 1: BOAT SIZE SELECTOR (3 SIZES) */}
+              {/* ITEM 1: BOAT SIZE SELECTOR (DYNAMIC CRUD FROM ADMIN) */}
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <label className="text-xs sm:text-sm font-bold text-slate-800 flex items-center gap-2">
@@ -905,25 +1136,29 @@ export default function PreorderSection({
                     <span>1. เลือกประเภทและขนาดเรือ (Boat Size Models)</span>
                   </label>
                   <span className="text-[11px] text-brand-blue font-bold bg-sky-50 px-2 py-0.5 rounded-md border border-sky-100">
-                    มี 3 ขนาดให้เลือก
+                    มี {enabledBoatSizes.length} ขนาดให้เลือก
                   </span>
                 </div>
                 <p className="text-xs text-slate-500 mb-3">
                   คลิกเลือกขนาดมิติเรือและจำนวนที่นั่งตามการใช้งาน (ระบบจะคำนวณราคาและปรับโมเดลจำลองทันที):
                 </p>
 
-                {/* 3 Size Cards */}
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  {(Object.keys(BOAT_SIZE_CONFIGS) as BoatSizeId[]).map((sizeKey) => {
-                    const cfg = BOAT_SIZE_CONFIGS[sizeKey];
-                    const isSelected = selectedSize === sizeKey;
-                    const sizeBasePrice = getBasePrice(sizeKey);
+                {/* Dynamic Size Cards Grid */}
+                <div className={`grid grid-cols-1 ${
+                  enabledBoatSizes.length === 1 ? 'sm:grid-cols-1 max-w-sm' :
+                  enabledBoatSizes.length === 2 ? 'sm:grid-cols-2' :
+                  enabledBoatSizes.length === 3 ? 'sm:grid-cols-3' :
+                  'sm:grid-cols-2 lg:grid-cols-4'
+                } gap-3`}>
+                  {enabledBoatSizes.map((sz) => {
+                    const isSelected = selectedSize === sz.id;
+                    const sizeBasePrice = getBasePrice(sz.id);
 
                     return (
                       <button
                         type="button"
-                        key={sizeKey}
-                        onClick={() => setSelectedSize(sizeKey)}
+                        key={sz.id}
+                        onClick={() => setSelectedSize(sz.id)}
                         className={`p-3.5 rounded-2xl border-2 transition-all flex flex-col justify-between text-left relative cursor-pointer ${
                           isSelected
                             ? 'border-brand-blue bg-sky-50/50 shadow-md ring-2 ring-sky-200'
@@ -937,29 +1172,43 @@ export default function PreorderSection({
                         )}
 
                         <div>
-                          <span className={`inline-block px-2 py-0.5 rounded-md text-[9.5px] font-bold mb-1.5 ${
-                            isSelected ? 'bg-sky-200 text-sky-900' : 'bg-slate-100 text-slate-600'
-                          }`}>
-                            {cfg.badge}
-                          </span>
+                          {sz.badge && (
+                            <span className={`inline-block px-2 py-0.5 rounded-md text-[9.5px] font-bold mb-1.5 ${
+                              isSelected ? 'bg-sky-200 text-sky-900' : 'bg-slate-100 text-slate-600'
+                            }`}>
+                              {sz.badge}
+                            </span>
+                          )}
 
                           <h5 className="font-display text-xs font-extrabold text-slate-850 leading-snug mb-2">
-                            {cfg.name}
+                            {sz.name}
                           </h5>
 
                           <div className="space-y-1 text-[10.5px] text-slate-600">
-                            <div className="flex items-baseline justify-between border-b border-dashed border-slate-100 pb-0.5">
-                              <span className="text-slate-400">ความยาว:</span>
-                              <span className="font-semibold text-slate-800">{cfg.lengthLabel}</span>
-                            </div>
-                            <div className="flex items-baseline justify-between border-b border-dashed border-slate-100 pb-0.5">
-                              <span className="text-slate-400">ความกว้าง:</span>
-                              <span className="font-semibold text-slate-800">{cfg.widthLabel}</span>
-                            </div>
-                            <div className="flex items-baseline justify-between">
-                              <span className="text-slate-400">รับน้ำหนัก:</span>
-                              <span className="font-bold text-emerald-600">{cfg.capacityWeight}</span>
-                            </div>
+                            {sz.lengthLabel && (
+                              <div className="flex items-baseline justify-between border-b border-dashed border-slate-100 pb-0.5">
+                                <span className="text-slate-400">ความยาว:</span>
+                                <span className="font-semibold text-slate-800">{sz.lengthLabel}</span>
+                              </div>
+                            )}
+                            {sz.widthLabel && (
+                              <div className="flex items-baseline justify-between border-b border-dashed border-slate-100 pb-0.5">
+                                <span className="text-slate-400">ความกว้าง:</span>
+                                <span className="font-semibold text-slate-800">{sz.widthLabel}</span>
+                              </div>
+                            )}
+                            {sz.capacityWeight && (
+                              <div className="flex items-baseline justify-between border-b border-dashed border-slate-100 pb-0.5">
+                                <span className="text-slate-400">รับน้ำหนัก:</span>
+                                <span className="font-bold text-emerald-600">{sz.capacityWeight}</span>
+                              </div>
+                            )}
+                            {sz.seatsLabel && (
+                              <div className="flex items-baseline justify-between">
+                                <span className="text-slate-400">ที่นั่ง:</span>
+                                <span className="font-semibold text-slate-800">{sz.seatsLabel}</span>
+                              </div>
+                            )}
                           </div>
                         </div>
 
@@ -992,58 +1241,52 @@ export default function PreorderSection({
                 </div>
               </div>
 
-              {/* ITEM 2: COLOR OPTIONS (4 COLORS) */}
+              {/* ITEM 2: COLOR OPTIONS (DYNAMIC FROM ADMIN CONFIG) */}
               <div>
                 <div className="flex items-center justify-between mb-2.5">
                   <label className="text-xs sm:text-sm font-bold text-slate-800 flex items-center gap-2">
                     <Palette size={16} className="text-brand-blue" />
-                    <span>2. ตัวเลือกสีเรือ (Color Options - มี 4 สี)</span>
+                    <span>2. ตัวเลือกสีเรือ (Color Options - มี {enabledColors.length} สีให้เลือก)</span>
                   </label>
                   <span className="text-[11px] text-emerald-600 font-bold bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-100">
-                    ไม่มีค่าใช้จ่ายเพิ่ม (+฿0)
+                    {colorExtraCost > 0 ? `สีที่เลือก +฿${colorExtraCost.toLocaleString()}` : 'ไม่มีค่าใช้จ่ายเพิ่ม (+฿0)'}
                   </span>
                 </div>
                 <p className="text-xs text-slate-500 mb-3">
                   เลือกสีเนื้อพลาสติกที่ต้องการหลอม (ระบบจะเปลี่ยนสีโมเดลตัวเรือจำลองทันที):
                 </p>
 
-                {/* 4 Swatch Buttons */}
+                {/* Dynamic Swatch Buttons Grid */}
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                  {(Object.keys(COLOR_CONFIGS) as BoatColorId[]).map((colorKey) => {
-                    const cfg = COLOR_CONFIGS[colorKey];
-                    const colorSetting = settings.colors?.find(c => c.id === colorKey);
-                    const displayName = colorSetting?.name || cfg.name;
-                    const isEnabled = colorSetting ? colorSetting.enabled : true;
-                    const isSelected = selectedColor === colorKey;
+                  {enabledColors.map((colorItem) => {
+                    const isSelected = selectedColor === colorItem.id;
+                    const extra = Number(colorItem.extraPrice || 0);
 
                     return (
                       <button
                         type="button"
-                        key={colorKey}
-                        disabled={!isEnabled}
-                        onClick={() => isEnabled && setSelectedColor(colorKey)}
-                        className={`p-3 rounded-2xl border-2 transition-all flex flex-col items-center text-center relative ${
-                          !isEnabled
-                            ? 'opacity-40 bg-slate-100 border-slate-200 cursor-not-allowed'
-                            : isSelected
-                            ? `${cfg.borderHex} bg-sky-50/40 shadow-md ring-2 cursor-pointer`
-                            : 'border-slate-200 hover:border-slate-300 bg-white cursor-pointer'
+                        key={colorItem.id}
+                        onClick={() => setSelectedColor(colorItem.id)}
+                        className={`p-3 rounded-2xl border-2 transition-all flex flex-col items-center text-center relative cursor-pointer ${
+                          isSelected
+                            ? 'border-brand-blue bg-sky-50/60 shadow-md ring-2 ring-sky-200'
+                            : 'border-slate-200 hover:border-slate-300 bg-white hover:bg-slate-50/70'
                         }`}
                       >
-                        {isSelected && isEnabled && (
+                        {isSelected && (
                           <div className="absolute top-2 right-2 w-4 h-4 rounded-full bg-brand-blue text-white flex items-center justify-center">
                             <Check size={11} strokeWidth={3} />
                           </div>
                         )}
                         <span 
-                          className="w-8 h-8 rounded-full shadow-inner mb-2 border border-black/10"
-                          style={{ backgroundColor: colorSetting?.swatchHex || cfg.swatchHex }}
+                          className="w-8 h-8 rounded-full shadow-inner mb-2 border border-black/15 ring-2 ring-black/5"
+                          style={{ backgroundColor: colorItem.swatchHex }}
                         ></span>
-                        <span className="font-display text-xs font-bold text-slate-800">
-                          {displayName}
+                        <span className="font-display text-xs font-bold text-slate-800 line-clamp-1">
+                          {colorItem.name}
                         </span>
-                        <span className="text-[10px] text-slate-400 mt-0.5">
-                          {isEnabled ? '+0 บาท' : 'ปิดรับชั่วคราว'}
+                        <span className={`text-[10px] mt-0.5 font-semibold ${extra > 0 ? 'text-amber-600' : 'text-emerald-600'}`}>
+                          {extra > 0 ? `+฿${extra.toLocaleString()}` : '+0 บาท'}
                         </span>
                       </button>
                     );
@@ -1051,74 +1294,78 @@ export default function PreorderSection({
                 </div>
               </div>
 
-              {/* ITEM C: STICKER OPTION */}
+              {/* ITEM C: DYNAMIC STICKER OPTIONS */}
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <label className="text-xs sm:text-sm font-bold text-slate-800 flex items-center gap-2">
                     <Sparkles size={16} className="text-amber-500" />
-                    <span>ตัวเลือกสติกเกอร์ (Sticker Option)</span>
+                    <span>3. ตัวเลือกสติกเกอร์ (Sticker Options)</span>
                   </label>
+                  <span className="text-[11px] text-amber-600 font-bold bg-amber-50 px-2 py-0.5 rounded-md border border-amber-100">
+                    {stickerCost > 0 ? `+฿${stickerCost.toLocaleString()}` : '+฿0'}
+                  </span>
                 </div>
+                <p className="text-xs text-slate-500 mb-3">
+                  เลือกรูปแบบลายสติกเกอร์ตกแต่งข้างลำเรือ หรือเลือกไม่ติดสติกเกอร์:
+                </p>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {/* Option 1: No Sticker */}
-                  <label 
-                    onClick={() => setHasSticker(false)}
-                    className={`p-3.5 rounded-2xl border-2 flex items-start gap-3 cursor-pointer transition-all ${
-                      !hasSticker 
-                        ? 'border-brand-blue bg-sky-50/50 shadow-xs' 
-                        : 'border-slate-200 hover:border-slate-300 bg-white'
-                    }`}
-                  >
-                    <input
-                      type="radio"
-                      name="sticker_opt"
-                      checked={!hasSticker}
-                      onChange={() => setHasSticker(false)}
-                      className="mt-1 text-brand-blue focus:ring-brand-blue"
-                    />
-                    <div>
-                      <span className="text-xs font-bold text-slate-850 block">
-                        ไม่ติดสติกเกอร์
-                      </span>
-                      <span className="text-[11px] text-slate-500 block mt-0.5">
-                        เนื้อพลาสติกสีเรียบเงาแบบคลาสสิก
-                      </span>
-                      <span className="text-[11px] font-bold text-emerald-600 block mt-1">
-                        +0 บาท
-                      </span>
-                    </div>
-                  </label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                  {enabledStickers.map((sticker) => {
+                    const isSelected = selectedStickerId === sticker.id;
+                    const price = Number(sticker.price || 0);
 
-                  {/* Option 2: Special Sticker */}
-                  <label 
-                    onClick={() => setHasSticker(true)}
-                    className={`p-3.5 rounded-2xl border-2 flex items-start gap-3 cursor-pointer transition-all ${
-                      hasSticker 
-                        ? 'border-amber-500 bg-amber-50/40 shadow-xs ring-1 ring-amber-400' 
-                        : 'border-slate-200 hover:border-slate-300 bg-white'
-                    }`}
-                  >
-                    <input
-                      type="radio"
-                      name="sticker_opt"
-                      checked={hasSticker}
-                      onChange={() => setHasSticker(true)}
-                      className="mt-1 text-amber-500 focus:ring-amber-500"
-                    />
-                    <div>
-                      <span className="text-xs font-bold text-slate-850 block flex items-center gap-1">
-                        <span>ติดสติกเกอร์ลายพิเศษ</span>
-                        <span className="bg-amber-100 text-amber-800 text-[9px] font-extrabold px-1.5 py-0.2 rounded-full">POPULAR</span>
-                      </span>
-                      <span className="text-[11px] text-slate-500 block mt-0.5">
-                        ลายคาดข้างสปอร์ตกันน้ำ ทน UV เกรด Marine 3M
-                      </span>
-                      <span className="text-[11px] font-bold text-amber-600 block mt-1">
-                        +{STICKER_PRICE.toLocaleString()} บาท
-                      </span>
-                    </div>
-                  </label>
+                    return (
+                      <label 
+                        key={sticker.id}
+                        onClick={() => setSelectedStickerId(sticker.id)}
+                        className={`p-3.5 rounded-2xl border-2 flex items-start gap-3 cursor-pointer transition-all relative ${
+                          isSelected 
+                            ? 'border-amber-500 bg-amber-50/40 shadow-xs ring-1 ring-amber-400' 
+                            : 'border-slate-200 hover:border-slate-300 bg-white'
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name="sticker_opt"
+                          checked={isSelected}
+                          onChange={() => setSelectedStickerId(sticker.id)}
+                          className="mt-1 text-amber-500 focus:ring-amber-500"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between gap-1 mb-0.5">
+                            <span className="text-xs font-bold text-slate-850 block truncate">
+                              {sticker.name}
+                            </span>
+                            {sticker.badge && (
+                              <span className="bg-amber-100 text-amber-800 text-[9px] font-extrabold px-1.5 py-0.2 rounded-full shrink-0">
+                                {sticker.badge}
+                              </span>
+                            )}
+                          </div>
+
+                          {sticker.description && (
+                            <span className="text-[10.5px] text-slate-500 block line-clamp-2 mt-0.5">
+                              {sticker.description}
+                            </span>
+                          )}
+
+                          {sticker.imageUrl && sticker.id !== 'none' && (
+                            <div className="mt-2 w-full h-14 rounded-lg overflow-hidden border border-slate-200 bg-slate-50">
+                              <img 
+                                src={sticker.imageUrl} 
+                                alt={sticker.name} 
+                                className="w-full h-full object-cover" 
+                              />
+                            </div>
+                          )}
+
+                          <span className={`text-[11px] font-bold block mt-1.5 ${price > 0 ? 'text-amber-600' : 'text-emerald-600'}`}>
+                            {price > 0 ? `+${price.toLocaleString()} บาท` : '+0 บาท'}
+                          </span>
+                        </div>
+                      </label>
+                    );
+                  })}
                 </div>
               </div>
 
@@ -1268,8 +1515,14 @@ export default function PreorderSection({
 
               <div className="flex flex-wrap items-baseline gap-2 sm:gap-3 text-xs text-slate-300">
                 <span>เรือเปล่า <strong className="text-white">฿{BASE_PRICE.toLocaleString()}</strong> ({activeSizeConfig.shortName})</span>
+                {colorExtraCost > 0 && (
+                  <>
+                    <span>+</span>
+                    <span>สีพิเศษ ({activeColorConfig.name}) <strong className="text-sky-300">+{colorExtraCost.toLocaleString()}฿</strong></span>
+                  </>
+                )}
                 <span>+</span>
-                <span>สติกเกอร์ <strong className={hasSticker ? 'text-amber-400' : 'text-slate-400'}>+{stickerCost}฿</strong></span>
+                <span>สติกเกอร์ ({activeStickerSetting.name}) <strong className={hasSticker ? 'text-amber-400' : 'text-slate-400'}>+{stickerCost.toLocaleString()}฿</strong></span>
                 <span>+</span>
                 <span>สกรีนชื่อ <strong className={hasCustomText ? 'text-indigo-400' : 'text-slate-400'}>+{textCost}฿</strong></span>
                 {quantity > 1 && (
@@ -1352,15 +1605,23 @@ export default function PreorderSection({
                   <span className="text-[10px] text-slate-400 block">สีเนื้อเรือ</span>
                   <div className="flex items-center gap-1.5 mt-1">
                     <span className="w-3 h-3 rounded-full" style={{ backgroundColor: activeColorConfig.swatchHex }}></span>
-                    <strong className="text-slate-800">{activeColorConfig.name}</strong>
+                    <strong className="text-slate-800 line-clamp-1">{activeColorConfig.name}</strong>
                   </div>
+                  {colorExtraCost > 0 && (
+                    <span className="text-[9.5px] text-amber-600 font-semibold block mt-0.5">
+                      (+฿{colorExtraCost.toLocaleString()})
+                    </span>
+                  )}
                 </div>
 
                 <div className="bg-white p-3 rounded-xl border border-slate-200/70">
                   <span className="text-[10px] text-slate-400 block">สติกเกอร์</span>
-                  <strong className={`block mt-1 ${hasSticker ? 'text-amber-600' : 'text-slate-700'}`}>
-                    {hasSticker ? `ลายพิเศษ (+${STICKER_PRICE}฿)` : 'ไม่ติด (+0฿)'}
+                  <strong className={`block mt-1 line-clamp-1 ${hasSticker ? 'text-amber-600' : 'text-slate-700'}`}>
+                    {activeStickerSetting.name}
                   </strong>
+                  <span className="text-[9.5px] text-slate-500 block mt-0.5 font-semibold">
+                    {stickerCost > 0 ? `(+${stickerCost.toLocaleString()}฿)` : '(+0฿)'}
+                  </span>
                 </div>
 
                 <div className="bg-white p-3 rounded-xl border border-slate-200/70">
