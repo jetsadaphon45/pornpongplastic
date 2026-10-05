@@ -613,7 +613,7 @@ export default function App() {
 
         {/* Products Catalog Window */}
         {activeTab === 'products' && (
-          <section className="py-[72px] max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 font-sans">
+          <section style={{ marginLeft: '0px', marginTop: '-66px' }} className="py-[72px] max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 font-sans">
             
             {/* Page Header text */}
             <div className="mb-10 text-center sm:text-left">
@@ -626,13 +626,14 @@ export default function App() {
             </div>
 
             {/* Filter and sorting control grid */}
-            <div className="bg-white border border-sky-100 rounded-2xl p-4 sm:p-5 mb-8 flex flex-col md:flex-row gap-4 justify-between items-center shadow-xs">
+            <div style={{ marginTop: '5px' }} className="bg-white border border-sky-100 rounded-2xl p-4 sm:p-5 mb-8 flex flex-col md:flex-row gap-4 justify-between items-center shadow-xs">
               
               {/* Category selector row */}
-              <div className="flex flex-wrap gap-1.5 w-full md:w-auto overflow-x-auto pb-1 md:pb-0 scrollbar-none">
-                {categories.map((cat) => (
+              <div style={{ marginTop: '6px', marginLeft: '0px' }} className="flex flex-wrap gap-1.5 w-full md:w-auto overflow-x-auto pb-1 md:pb-0 scrollbar-none">
+                {categories.map((cat, idx) => (
                   <button
                     key={cat.value}
+                    style={idx === 4 ? { height: '32.3333px' } : undefined}
                     onClick={() => setCategoryFilter(cat.value)}
                     className={`px-4 py-2 text-xs font-semibold rounded-full duration-250 cursor-pointer ${
                       categoryFilter === cat.value

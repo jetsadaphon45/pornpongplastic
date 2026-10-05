@@ -554,7 +554,7 @@ export default function PreorderSection({
     <div className="font-sans min-h-screen bg-slate-50/50 pb-24">
       
       {/* 1. HERO PRE-ORDER HEADER */}
-      <section className="relative overflow-hidden bg-gradient-to-br from-brand-blue via-sky-800 to-sky-950 text-white py-14 sm:py-18">
+      <section style={{ marginLeft: '0px', marginTop: '-63px' }} className="relative overflow-hidden bg-gradient-to-br from-brand-blue via-sky-800 to-sky-950 text-white py-14 sm:py-18">
         <div className="absolute inset-0 opacity-10 bg-[radial-gradient(#fff_1px,transparent_1px)] [background-size:16px_16px] pointer-events-none"></div>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
           <div className="max-w-3xl">
@@ -1106,7 +1106,7 @@ export default function PreorderSection({
 
               {/* Boat Specifications & Highlights */}
               <div className="mt-6 pt-5 border-t border-slate-800 grid grid-cols-3 gap-3 text-center">
-                <div className="bg-slate-800/60 p-2.5 rounded-xl border border-slate-700/50">
+                <div style={{ marginTop: '0px', paddingLeft: '10px', paddingRight: '10px', marginRight: '1px' }} className="bg-slate-800/60 p-2.5 rounded-xl border border-slate-700/50">
                   <span className="text-[10px] text-slate-400 block">ขนาดมิติ</span>
                   <span className="text-xs font-bold text-white">{activeSizeConfig.lengthLabel}</span>
                   <span className="text-[9.5px] text-slate-400 block mt-0.5">{activeSizeConfig.widthLabel}</span>
