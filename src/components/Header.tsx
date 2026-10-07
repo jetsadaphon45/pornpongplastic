@@ -55,7 +55,6 @@ export default function Header({
   const menuItems = [
     { id: 'home', label: 'หน้าแรก' },
     { id: 'products', label: 'หน้าสินค้า' },
-    { id: 'about', label: 'เกี่ยวกับเรา' },
     { id: 'preorder', label: 'พรีออเดอร์' }
   ];
 
@@ -128,7 +127,7 @@ export default function Header({
           </div>
 
           {/* Desktop Navigation Links */}
-          <nav className="hidden lg:flex items-center gap-1">
+          <nav className="hidden lg:flex items-center gap-2">
             {menuItems.map((item) => (
               <button
                 key={item.id}
@@ -143,9 +142,9 @@ export default function Header({
                     window.history.pushState(null, '', `/${item.id}`);
                   }
                 }}
-                className={`px-4 py-2 text-sm font-medium rounded-full transition-all duration-200 ${
+                className={`px-4.5 py-2 text-sm font-semibold rounded-full transition-all duration-200 cursor-pointer ${
                   activeTab === item.id || (item.id === 'products' && activeTab === 'product-detail')
-                    ? 'bg-sky-50 text-brand-blue font-bold shadow-xs'
+                    ? 'bg-sky-50 text-brand-blue font-bold shadow-xs ring-1 ring-sky-200/60'
                     : 'text-slate-600 hover:bg-slate-50 hover:text-brand-blue'
                 }`}
                 id={`nav-${item.id}`}

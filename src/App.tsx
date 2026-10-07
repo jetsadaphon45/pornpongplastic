@@ -10,7 +10,9 @@ import {
   HelpCircle,
   PhoneCall,
   Menu,
-  ChevronRight
+  ChevronRight,
+  CheckCircle,
+  Check
 } from 'lucide-react';
 
 import { Product, CartItem, User } from './types';
@@ -241,6 +243,72 @@ export default function App() {
 
   // Multi Alert Toast (Top screen brief alerts)
   const [toastMessage, setToastMessage] = React.useState<string | null>(null);
+
+  // Pop-up Alert when admin approves payment slip
+  const [approvedPaymentAlert, setApprovedPaymentAlert] = React.useState<{ orderId: string; message: string } | null>(null);
+
+  // Listen for admin order approval and show Pop-up alert
+  React.useEffect(() => {
+    const checkUnshownApprovals = () => {
+      try {
+        const raw = localStorage.getItem('pornpong_unshown_approvals');
+        if (raw) {
+          const list = JSON.parse(raw);
+          if (Array.isArray(list) && list.length > 0) {
+            const latest = list[list.length - 1];
+            const msg = latest.message || `การชำระเงินเสร็จสิ้น! รายการสั่งซื้อหมายเลข #${latest.orderId} ได้รับการยืนยันแล้ว ทางโรงงานกำลังดำเนินการจัดเตรียมสินค้า`;
+            setApprovedPaymentAlert({ orderId: latest.orderId, message: msg });
+            // Add notification to user list if not already present
+            setNotifications(prev => {
+              if (prev.some(n => n.id === `noti-appr-${latest.orderId}`)) return prev;
+              const noti: AppNotification = {
+                id: `noti-appr-${latest.orderId}`,
+                title: 'การชำระเงินเสร็จสิ้น!',
+                message: msg,
+                type: 'order',
+                date: 'เมื่อครู่',
+                isRead: false
+              };
+              return [noti, ...prev];
+            });
+            localStorage.removeItem('pornpong_unshown_approvals');
+          }
+        }
+      } catch (err) {
+        console.error('Error checking unshown approvals:', err);
+      }
+    };
+
+    checkUnshownApprovals();
+
+    const handleOrderApproved = (e: any) => {
+      const detail = e.detail;
+      if (detail?.orderId) {
+        const msg = detail.notification?.message || `การชำระเงินเสร็จสิ้น! รายการสั่งซื้อหมายเลข #${detail.orderId} ได้รับการยืนยันแล้ว ทางโรงงานกำลังดำเนินการจัดเตรียมสินค้า`;
+        setApprovedPaymentAlert({ orderId: detail.orderId, message: msg });
+        if (detail.notification) {
+          setNotifications(prev => {
+            if (prev.some(n => n.id === detail.notification.id)) return prev;
+            return [detail.notification, ...prev];
+          });
+        }
+      }
+    };
+
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === 'pornpong_unshown_approvals' && e.newValue) {
+        checkUnshownApprovals();
+      }
+    };
+
+    window.addEventListener('pornpong-order-approved', handleOrderApproved);
+    window.addEventListener('storage', handleStorageChange);
+
+    return () => {
+      window.removeEventListener('pornpong-order-approved', handleOrderApproved);
+      window.removeEventListener('storage', handleStorageChange);
+    };
+  }, []);
 
   // Sync cart adjustments with localStorage
   React.useEffect(() => {
@@ -503,6 +571,29 @@ export default function App() {
           setCurrentOrder(null);
           navigateTo('/');
         }}
+        onViewOrderHistory={() => {
+          const ord = currentOrder;
+          setCurrentOrder(null);
+          navigateTo('/');
+          if (currentUser) {
+            setIsProfileOpen(true);
+          } else if (ord) {
+            const guestUser: User = {
+              id: ord.customer_id || `guest-${Date.now()}`,
+              name: ord.customer_name || 'ลูกค้าทั่วไป',
+              email: ord.customer_email || 'guest@example.com',
+              phone: ord.customer_phone || '',
+              address: ord.address || ''
+            };
+            setCurrentUser(guestUser);
+            try {
+              localStorage.setItem('pornpong_current_user', JSON.stringify(guestUser));
+            } catch {}
+            setIsProfileOpen(true);
+          } else {
+            setIsProfileOpen(true);
+          }
+        }}
         triggerToast={triggerToast}
       />
     );
@@ -585,6 +676,68 @@ export default function App() {
         <div className="fixed top-20 right-4 z-50 rounded-xl bg-slate-900/95 backdrop-blur-xs text-white text-xs font-sans py-3.5 px-5 shadow-2xl flex items-center gap-3 border border-slate-800 animate-slideLeft">
           <CheckCircle2 size={16} className="text-sky-400" />
           <span className="font-semibold">{toastMessage}</span>
+        </div>
+      )}
+
+      {/* 2.5 POP-UP MODAL: PAYMENT APPROVED NOTIFICATION */}
+      {approvedPaymentAlert && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs font-sans animate-fadeIn">
+          <div className="relative w-full max-w-md bg-white rounded-3xl p-6 sm:p-7 shadow-2xl border border-emerald-150 text-center space-y-5 animate-scaleUp">
+            
+            {/* Animated Celebration Icon */}
+            <div className="flex justify-center">
+              <div className="relative inline-flex items-center justify-center">
+                <div className="absolute -inset-2 rounded-full bg-emerald-400/25 blur-md animate-ping"></div>
+                <div className="relative h-16 w-16 rounded-full bg-gradient-to-tr from-emerald-600 to-teal-500 text-white flex items-center justify-center shadow-lg shadow-emerald-200">
+                  <CheckCircle size={36} className="animate-bounce" />
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 text-emerald-700 font-bold text-[11px] border border-emerald-200">
+                <Check size={12} strokeWidth={3} />
+                <span>แอดมินอนุมัติการชำระเงินเรียบร้อย</span>
+              </span>
+              <h3 className="font-display text-xl sm:text-2xl font-black text-slate-850">
+                การชำระเงินเสร็จสิ้น!
+              </h3>
+              <p className="text-xs sm:text-sm text-slate-600 leading-relaxed font-sans">
+                {approvedPaymentAlert.message}
+              </p>
+            </div>
+
+            {/* Order info badge */}
+            <div className="bg-slate-50 p-3 rounded-2xl border border-dashed border-slate-200 text-xs flex justify-between items-center font-mono">
+              <span className="text-slate-400 font-sans">รหัสคำสั่งซื้อ:</span>
+              <span className="font-bold text-slate-800 bg-white px-2.5 py-0.5 rounded-lg border border-slate-200">
+                #{approvedPaymentAlert.orderId}
+              </span>
+            </div>
+
+            {/* Buttons */}
+            <div className="grid grid-cols-2 gap-3 pt-1">
+              <button
+                type="button"
+                onClick={() => setApprovedPaymentAlert(null)}
+                className="w-full py-3 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-700 font-bold text-xs cursor-pointer transition-all"
+              >
+                รับทราบ
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setApprovedPaymentAlert(null);
+                  setIsProfileOpen(true);
+                }}
+                className="w-full py-3 rounded-xl bg-brand-blue hover:bg-brand-blue-dark text-white font-bold text-xs cursor-pointer shadow-md transition-all flex items-center justify-center gap-1.5 active:scale-[0.99]"
+              >
+                <ShoppingBag size={14} />
+                <span>ดูประวัติคำสั่งซื้อ</span>
+              </button>
+            </div>
+
+          </div>
         </div>
       )}
 

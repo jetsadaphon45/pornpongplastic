@@ -145,9 +145,8 @@ export function ProfileModal({ isOpen, onClose, currentUser, onUpdateProfile, on
       const mappedRemoteOrders: OrderItem[] = userOrders.map((o: any) => {
         let statusDisplay = 'จัดส่งสำเร็จ';
         const pStatus = (o.payment_status || o.status || '').toLowerCase();
-        if (pStatus === 'paid') statusDisplay = 'ชำระเงินแล้ว';
-        else if (pStatus === 'approved') statusDisplay = 'อนุมัติเรียบร้อย';
-        else if (pStatus === 'waiting_verify') statusDisplay = 'รอตรวจสอบสลิป';
+        if (pStatus === 'paid' || pStatus === 'processing' || pStatus === 'approved') statusDisplay = 'ชำระเงินเสร็จสิ้น';
+        else if (pStatus === 'waiting_verify' || pStatus === 'pending_verification' || pStatus === 'waiting_approval') statusDisplay = 'กำลังตรวจสอบการชำระเงิน';
         else if (pStatus === 'pending') statusDisplay = 'รอชำระเงิน';
         else if (pStatus === 'rejected') statusDisplay = 'สลิปไม่ถูกต้อง';
 
@@ -592,8 +591,18 @@ export function ProfileModal({ isOpen, onClose, currentUser, onUpdateProfile, on
                           <span className="text-[10px] font-semibold text-slate-400">เมื่อ {order.date}</span>
                         </div>
                         <div className="flex items-center gap-2">
-                          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-0.5 text-[10px] font-bold text-emerald-600">
-                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                          <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[10px] font-bold ${
+                            order.status === 'กำลังตรวจสอบการชำระเงิน' || order.status === 'รอตรวจสอบสลิป'
+                              ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                              : order.status === 'ชำระเงินแล้ว' || order.status === 'จัดส่งสำเร็จ' || order.status === 'อนุมัติเรียบร้อย'
+                              ? 'bg-emerald-50 text-emerald-600'
+                              : 'bg-slate-100 text-slate-600'
+                          }`}>
+                            <span className={`w-1.5 h-1.5 rounded-full ${
+                              order.status === 'กำลังตรวจสอบการชำระเงิน' || order.status === 'รอตรวจสอบสลิป'
+                                ? 'bg-amber-500 animate-pulse'
+                                : 'bg-emerald-500'
+                            }`}></span>
                             {order.status}
                           </span>
                           {/* Trash Icon Button for Deletion */}

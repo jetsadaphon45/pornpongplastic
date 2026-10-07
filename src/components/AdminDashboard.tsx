@@ -2163,7 +2163,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                                   รหัสคิวผลิต / สถานะ
                                 </span>
                                 <span className="inline-flex rounded px-2 py-0.5 text-[9.5px] font-extrabold bg-amber-50 text-amber-700 border border-amber-200">
-                                  {ord.payment_status || 'waiting_verify'}
+                                  {ord.payment_status === 'pending_verification' ? 'กำลังตรวจสอบการชำระเงิน' : (ord.payment_status || 'รอตรวจสอบสลิป')}
                                 </span>
                               </div>
                             </div>
@@ -2246,7 +2246,39 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                                   try {
                                     const success = await supabaseOrders.approve(ord.id);
                                     if (success) {
-                                      triggerToast('อัปเดตสถานะเรียบร้อย');
+                                      // 1. Create In-App notification for customer
+                                      const approvalMsg = `การชำระเงินเสร็จสิ้น! รายการสั่งซื้อหมายเลข #${ord.id} ได้รับการยืนยันแล้ว ทางโรงงานกำลังดำเนินการจัดเตรียมสินค้า`;
+                                      const newNoti = {
+                                        id: 'noti-appr-' + Date.now(),
+                                        title: 'การชำระเงินเสร็จสิ้น!',
+                                        message: approvalMsg,
+                                        type: 'order',
+                                        date: 'เมื่อครู่',
+                                        isRead: false
+                                      };
+
+                                      // Append to notifications state
+                                      setNotifications(prev => [newNoti, ...prev]);
+
+                                      // Persist in localStorage notifications
+                                      try {
+                                        const saved = JSON.parse(localStorage.getItem('pornpong_notifications') || '[]');
+                                        localStorage.setItem('pornpong_notifications', JSON.stringify([newNoti, ...saved]));
+                                      } catch {}
+
+                                      // Save to unshown approvals list so storefront shows Pop-up
+                                      try {
+                                        const unshown = JSON.parse(localStorage.getItem('pornpong_unshown_approvals') || '[]');
+                                        unshown.push({ orderId: ord.id, message: approvalMsg, timestamp: Date.now() });
+                                        localStorage.setItem('pornpong_unshown_approvals', JSON.stringify(unshown));
+                                      } catch {}
+
+                                      // Dispatch broadcast event for realtime tabs
+                                      window.dispatchEvent(new CustomEvent('pornpong-order-approved', {
+                                        detail: { orderId: ord.id, notification: newNoti }
+                                      }));
+
+                                      triggerToast(`อนุมัติการชำระเงินสำหรับคำสั่งซื้อ #${ord.id} สำเร็จ!`);
                                       await reloadWaitingVerifyOrders();
                                       await reloadOrders();
                                     } else {

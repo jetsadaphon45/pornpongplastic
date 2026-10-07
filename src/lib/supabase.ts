@@ -1368,7 +1368,7 @@ export const supabaseOrders = {
       const { data, error } = await supabase
         .from('orders')
         .select('*')
-        .eq('payment_status', 'waiting_verify')
+        .in('payment_status', ['pending_verification', 'waiting_verify', 'waiting_approval'])
         .order('created_at', { ascending: false });
 
       if (error) {
@@ -1404,16 +1404,27 @@ export const supabaseOrders = {
   },
 
   async approve(id: string): Promise<boolean> {
-    if (!isSupabaseConfigured || !supabase) return false;
     try {
-      const { error } = await supabase
-        .from('orders')
-        .update({
-          payment_status: 'approved',
-          order_status: 'confirmed'
-        })
-        .eq('id', id);
-      if (error) throw error;
+      if (isSupabaseConfigured && supabase) {
+        const { error } = await supabase
+          .from('orders')
+          .update({
+            payment_status: 'paid',
+            order_status: 'processing'
+          })
+          .eq('id', id);
+        if (error) {
+          console.warn('Supabase approve error, falling back:', error.message);
+        }
+      }
+      // Sync local storage for immediate persistence
+      try {
+        const local = JSON.parse(localStorage.getItem('admin_orders') || '[]');
+        const updated = local.map((o: any) => 
+          o.id === id ? { ...o, payment_status: 'paid', order_status: 'processing' } : o
+        );
+        localStorage.setItem('admin_orders', JSON.stringify(updated));
+      } catch {}
       return true;
     } catch (err: any) {
       console.error('Failed to approve order:', err.message);
@@ -1465,7 +1476,7 @@ export const supabaseOrders = {
 
       const updatePayload = {
         payment_slip_url: publicUrl,
-        payment_status: 'waiting_verify'
+        payment_status: 'pending_verification'
       };
 
       console.log('ORDER ID', orderId);

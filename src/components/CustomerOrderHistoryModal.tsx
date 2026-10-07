@@ -210,8 +210,8 @@ export function CustomerOrderHistoryModal({
             ) : (
               <div className="space-y-3">
                 {orders.map((ord, idx) => {
-                  const isPaid = ord.payment_status === 'paid' || ord.payment_status === 'approved';
-                  const isWaiting = ord.payment_status === 'waiting_verify';
+                  const isPaid = ord.payment_status === 'paid' || ord.payment_status === 'approved' || ord.payment_status === 'processing';
+                  const isWaiting = ord.payment_status === 'waiting_verify' || ord.payment_status === 'pending_verification' || ord.payment_status === 'waiting_approval';
                   return (
                     <div 
                       key={ord.id || idx}
@@ -237,12 +237,12 @@ export function CustomerOrderHistoryModal({
                               : 'bg-rose-50 text-rose-700 border border-rose-200'
                           }`}>
                             {isPaid ? <CheckCircle2 size={11} /> : <Clock size={11} />}
-                            {isPaid ? 'ชำระเงินแล้ว' : isWaiting ? 'รอตรวจสอบสลิป' : 'รอชำระเงิน'}
+                            {isPaid ? 'ชำระเงินเสร็จสิ้น' : isWaiting ? 'กำลังตรวจสอบการชำระเงิน' : 'รอชำระเงิน'}
                           </span>
 
                           {/* Order Status */}
                           <span className="px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-600 text-[10px] font-bold">
-                            {ord.order_status === 'confirmed' ? 'ยืนยันออเดอร์' : ord.order_status === 'shipped' ? 'จัดส่งแล้ว' : 'รอดำเนินการ'}
+                            {ord.order_status === 'confirmed' || ord.order_status === 'processing' ? 'จัดเตรียมสินค้า' : ord.order_status === 'shipped' ? 'จัดส่งแล้ว' : 'รอดำเนินการ'}
                           </span>
                         </div>
                       </div>
