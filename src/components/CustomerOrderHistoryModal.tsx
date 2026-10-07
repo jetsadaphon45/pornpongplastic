@@ -15,7 +15,8 @@ import {
   DollarSign, 
   Loader2,
   ExternalLink,
-  RefreshCw
+  RefreshCw,
+  Truck
 } from 'lucide-react';
 import { supabaseOrders, supabasePreOrders } from '../lib/supabase';
 
@@ -212,6 +213,7 @@ export function CustomerOrderHistoryModal({
                 {orders.map((ord, idx) => {
                   const isPaid = ord.payment_status === 'paid' || ord.payment_status === 'approved' || ord.payment_status === 'processing';
                   const isWaiting = ord.payment_status === 'waiting_verify' || ord.payment_status === 'pending_verification' || ord.payment_status === 'waiting_approval';
+                  const isDelivered = ord.order_status === 'completed' || ord.order_status === 'delivered' || ord.status === 'Delivered';
                   return (
                     <div 
                       key={ord.id || idx}
@@ -230,20 +232,26 @@ export function CustomerOrderHistoryModal({
                         <div className="flex items-center gap-2">
                           {/* Payment status badge */}
                           <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold inline-flex items-center gap-1 ${
-                            isPaid
+                            isDelivered || isPaid
                               ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                               : isWaiting
                               ? 'bg-amber-50 text-amber-700 border border-amber-200'
                               : 'bg-rose-50 text-rose-700 border border-rose-200'
                           }`}>
-                            {isPaid ? <CheckCircle2 size={11} /> : <Clock size={11} />}
-                            {isPaid ? 'ชำระเงินเสร็จสิ้น' : isWaiting ? 'กำลังตรวจสอบการชำระเงิน' : 'รอชำระเงิน'}
+                            {isDelivered || isPaid ? <CheckCircle2 size={11} /> : <Clock size={11} />}
+                            {isDelivered || isPaid ? 'ชำระเงินเสร็จสิ้น' : isWaiting ? 'กำลังตรวจสอบการชำระเงิน' : 'รอชำระเงิน'}
                           </span>
 
                           {/* Order Status */}
-                          <span className="px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-600 text-[10px] font-bold">
-                            {ord.order_status === 'confirmed' || ord.order_status === 'processing' ? 'จัดเตรียมสินค้า' : ord.order_status === 'shipped' ? 'จัดส่งแล้ว' : 'รอดำเนินการ'}
-                          </span>
+                          {isDelivered ? (
+                            <span className="px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-bold inline-flex items-center gap-1">
+                              <CheckCircle2 size={11} /> จัดส่งสำเร็จ
+                            </span>
+                          ) : (
+                            <span className="px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-600 text-[10px] font-bold">
+                              {ord.order_status === 'confirmed' || ord.order_status === 'processing' ? 'จัดเตรียมสินค้า' : ord.order_status === 'shipped' || ord.status === 'Shipping' ? 'กำลังจัดส่ง' : 'รอดำเนินการ'}
+                            </span>
+                          )}
                         </div>
                       </div>
 
@@ -256,9 +264,11 @@ export function CustomerOrderHistoryModal({
                             โทนสี: {ord.color || 'คละสี'} | ผู้สั่ง: {ord.customer_name || customer.name}
                           </p>
                           {ord.shipmentNo && (
-                            <p className="text-[11px] text-sky-700 mt-1 font-mono font-bold">
-                              🚚 เลขพัสดุ: {ord.shipmentNo}
-                            </p>
+                            <div className="mt-1.5 inline-flex items-center gap-1.5 bg-emerald-50 text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded-lg text-[10.5px] font-mono font-bold">
+                              <Truck size={12} className="text-emerald-600" />
+                              <span>เลขพัสดุขนส่ง:</span>
+                              <span className="text-slate-900 bg-white px-1.5 py-0.2 rounded border border-emerald-200">{ord.shipmentNo}</span>
+                            </div>
                           )}
                         </div>
 

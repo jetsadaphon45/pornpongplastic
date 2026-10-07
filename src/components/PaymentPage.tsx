@@ -33,8 +33,8 @@ interface PaymentPageProps {
 }
 
 export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, triggerToast }: PaymentPageProps) {
-  // Navigation Step: 'pay' -> 'verifying'
-  const [step, setStep] = React.useState<'pay' | 'verifying'>('pay');
+  // Navigation Step: 'pay' -> 'verifying' -> 'approved'
+  const [step, setStep] = React.useState<'pay' | 'verifying' | 'approved'>('pay');
   const [copiedAccount, setCopiedAccount] = React.useState(false);
   const [slipFile, setSlipFile] = React.useState<File | null>(null);
   const [slipPreview, setSlipPreview] = React.useState<string | null>(null);
@@ -64,7 +64,12 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, t
       setActiveOrder(order);
       setCurrentPaymentStatus(order.payment_status || 'pending');
       setCurrentOrderStatus(order.order_status || 'waiting_payment');
-      if (['pending_verification', 'waiting_approval', 'waiting_verify'].includes(order.payment_status)) {
+      if (['paid', 'completed', 'approved'].includes(order.payment_status) || ['paid', 'completed'].includes(order.order_status)) {
+        if (order.payment_slip_url) {
+          setUploadedSlipUrl(order.payment_slip_url);
+        }
+        setStep('approved');
+      } else if (['pending_verification', 'waiting_approval', 'waiting_verify'].includes(order.payment_status)) {
         if (order.payment_slip_url) {
           setUploadedSlipUrl(order.payment_slip_url);
         }
@@ -101,7 +106,12 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, t
               setActiveOrder(formattedOrder);
               setCurrentPaymentStatus(formattedOrder.payment_status);
               setCurrentOrderStatus(formattedOrder.order_status);
-              if (['pending_verification', 'waiting_approval', 'waiting_verify'].includes(formattedOrder.payment_status)) {
+              if (['paid', 'completed', 'approved'].includes(formattedOrder.payment_status) || ['paid', 'completed'].includes(formattedOrder.order_status)) {
+                if (formattedOrder.payment_slip_url) {
+                  setUploadedSlipUrl(formattedOrder.payment_slip_url);
+                }
+                setStep('approved');
+              } else if (['pending_verification', 'waiting_approval', 'waiting_verify'].includes(formattedOrder.payment_status)) {
                 if (formattedOrder.payment_slip_url) {
                   setUploadedSlipUrl(formattedOrder.payment_slip_url);
                 }
@@ -116,6 +126,144 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, t
       fetchOrder();
     }
   }, [order]);
+
+  // REAL-TIME STATUS SYNC & POLLING (Supabase Realtime + 3-second Polling + Broadcast Event)
+  React.useEffect(() => {
+    if (!activeOrder?.id || step === 'approved') return;
+
+    // 1. Polling interval (Every 3 seconds)
+    const pollInterval = setInterval(async () => {
+      try {
+        // A. Check Supabase orders table
+        if (isSupabaseConfigured && supabase) {
+          const { data, error } = await supabase
+            .from('orders')
+            .select('*')
+            .eq('id', activeOrder.id)
+            .maybeSingle();
+
+          if (data && !error) {
+            const isApproved = 
+              ['paid', 'completed', 'approved'].includes(data.payment_status) ||
+              ['paid', 'completed', 'processing'].includes(data.order_status);
+
+            if (isApproved) {
+              setActiveOrder((prev: any) => ({
+                ...prev,
+                ...data,
+                payment_status: 'paid',
+                order_status: data.order_status || 'processing'
+              }));
+              setCurrentPaymentStatus('paid');
+              setCurrentOrderStatus(data.order_status || 'processing');
+              if (data.payment_slip_url) {
+                setUploadedSlipUrl(data.payment_slip_url);
+              }
+              setStep('approved');
+              triggerToast('ชำระเงินเสร็จสิ้นเรียบร้อยแล้ว!');
+              return;
+            }
+          }
+        }
+
+        // B. Check local storage fallback (for immediate sync when tested in same browser)
+        try {
+          const localOrders = JSON.parse(localStorage.getItem('admin_orders') || '[]');
+          const found = localOrders.find((o: any) => o.id === activeOrder.id);
+          if (found) {
+            const isApproved = 
+              ['paid', 'completed', 'approved'].includes(found.payment_status) ||
+              ['paid', 'completed', 'processing'].includes(found.order_status);
+
+            if (isApproved) {
+              setActiveOrder((prev: any) => ({
+                ...prev,
+                ...found,
+                payment_status: 'paid',
+                order_status: found.order_status || 'processing'
+              }));
+              setCurrentPaymentStatus('paid');
+              setCurrentOrderStatus(found.order_status || 'processing');
+              if (found.payment_slip_url) {
+                setUploadedSlipUrl(found.payment_slip_url);
+              }
+              setStep('approved');
+              triggerToast('ชำระเงินเสร็จสิ้นเรียบร้อยแล้ว!');
+            }
+          }
+        } catch {}
+      } catch (pollErr) {
+        console.warn('Polling order status check error:', pollErr);
+      }
+    }, 3000);
+
+    // 2. Custom window event listener (dispatched directly when admin approves in AdminDashboard)
+    const handleBroadcastApproval = (e: any) => {
+      const targetOrderId = e.detail?.orderId;
+      if (targetOrderId && targetOrderId === activeOrder.id) {
+        setCurrentPaymentStatus('paid');
+        setCurrentOrderStatus('processing');
+        setActiveOrder((prev: any) => ({
+          ...prev,
+          payment_status: 'paid',
+          order_status: 'processing'
+        }));
+        setStep('approved');
+        triggerToast('ชำระเงินเสร็จสิ้นเรียบร้อยแล้ว!');
+      }
+    };
+    window.addEventListener('pornpong-order-approved', handleBroadcastApproval);
+
+    // 3. Supabase Realtime Subscription (postgres_changes)
+    let channel: any = null;
+    if (isSupabaseConfigured && supabase) {
+      try {
+        channel = supabase
+          .channel(`order-status-${activeOrder.id}`)
+          .on(
+            'postgres_changes',
+            {
+              event: 'UPDATE',
+              schema: 'public',
+              table: 'orders',
+              filter: `id=eq.${activeOrder.id}`
+            },
+            (payload: any) => {
+              const updated = payload.new;
+              if (
+                ['paid', 'completed', 'approved'].includes(updated?.payment_status) ||
+                ['paid', 'completed', 'processing'].includes(updated?.order_status)
+              ) {
+                setActiveOrder((prev: any) => ({
+                  ...prev,
+                  ...updated,
+                  payment_status: 'paid',
+                  order_status: updated?.order_status || 'processing'
+                }));
+                setCurrentPaymentStatus('paid');
+                setCurrentOrderStatus(updated?.order_status || 'processing');
+                if (updated?.payment_slip_url) {
+                  setUploadedSlipUrl(updated.payment_slip_url);
+                }
+                setStep('approved');
+                triggerToast('ชำระเงินเสร็จสิ้นเรียบร้อยแล้ว!');
+              }
+            }
+          )
+          .subscribe();
+      } catch (channelErr) {
+        console.warn('Realtime channel subscription error:', channelErr);
+      }
+    }
+
+    return () => {
+      clearInterval(pollInterval);
+      window.removeEventListener('pornpong-order-approved', handleBroadcastApproval);
+      if (channel && supabase) {
+        supabase.removeChannel(channel);
+      }
+    };
+  }, [activeOrder?.id, step, triggerToast]);
 
   const handleCopyAccount = () => {
     navigator.clipboard.writeText('123-4-56789-0');
@@ -350,32 +498,148 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, t
             </div>
           </div>
 
-          {/* Action Buttons */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 pt-2">
+          {/* Action Button: Centered Return to Home */}
+          <div className="pt-2 flex justify-center">
             <button
               type="button"
               onClick={onBackToHome}
-              className="w-full rounded-2xl border-2 border-slate-300 hover:border-slate-800 bg-white hover:bg-slate-50 text-slate-800 font-display font-bold text-xs py-4 cursor-pointer transition-all duration-200 flex items-center justify-center gap-2 shadow-xs active:scale-[0.99]"
+              className="w-full sm:w-auto sm:min-w-[260px] px-8 rounded-2xl bg-brand-blue hover:bg-brand-blue-dark text-white font-display font-bold text-xs py-4 cursor-pointer shadow-md hover:shadow-lg transition-all duration-200 flex items-center justify-center gap-2 active:scale-[0.99]"
               id="btn-return-home-from-verify"
             >
               <ArrowLeft size={16} />
               <span>กลับสู่หน้าแรก</span>
             </button>
+          </div>
+
+        </div>
+      </div>
+    );
+  }
+
+  // STEP 3: PAYMENT APPROVED SCREEN (ชำระเงินเสร็จสิ้น เรียลไทม์)
+  if (step === 'approved') {
+    return (
+      <div className="font-sans min-h-screen bg-slate-50 flex items-center justify-center p-4 py-10">
+        <div className="max-w-xl w-full bg-white rounded-3xl border border-emerald-100 shadow-2xl p-6 sm:p-8 text-center space-y-6 animate-fadeIn">
+          
+          {/* Glowing Green Checkmark Icon */}
+          <div className="flex justify-center">
+            <div className="relative inline-flex items-center justify-center">
+              {/* Radiant emerald pulsing glow background */}
+              <div className="absolute -inset-4 rounded-full bg-emerald-500/25 blur-xl animate-pulse"></div>
+              
+              <div className="relative h-20 w-20 rounded-full bg-gradient-to-tr from-emerald-600 via-emerald-500 to-teal-400 text-white flex items-center justify-center shadow-lg shadow-emerald-200">
+                <CheckCircle2 size={42} className="animate-in zoom-in-75 duration-300 drop-shadow-xs" />
+                <div className="absolute inset-0 rounded-full border-2 border-white/60"></div>
+              </div>
+            </div>
+          </div>
+          
+          {/* Main Titles */}
+          <div className="space-y-2">
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-[11px] font-bold">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+              <span>ชำระเงินเสร็จสิ้น (Payment Completed)</span>
+            </div>
             
+            <h1 className="font-display text-2xl sm:text-3xl font-extrabold text-slate-850">
+              ชำระเงินเสร็จสิ้นเรียบร้อยแล้ว!
+            </h1>
+            
+            <p className="text-xs sm:text-sm text-slate-600 max-w-md mx-auto leading-relaxed">
+              ทางโรงงานได้รับการชำระเงินของท่านเรียบร้อยแล้ว เตรียมจัดส่งสินค้าตามกำหนดการ
+            </p>
+          </div>
+
+          {/* Summary Box (กล่องสรุปข้อมูลเดิม) */}
+          <div className="bg-slate-50/80 p-5 rounded-2xl border border-slate-200 text-left space-y-3 text-xs">
+            <div className="font-bold text-slate-800 pb-2 border-b border-slate-200 flex justify-between items-center text-xs">
+              <span className="flex items-center gap-1.5">
+                <FileText size={14} className="text-emerald-600" />
+                <span>สรุปรายละเอียดคำสั่งซื้อ</span>
+              </span>
+              <span className="font-mono text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                {activeOrder.id}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              <div>
+                <span className="text-slate-400 text-[11px] block">เลขที่สั่งซื้อ (Order ID):</span>
+                <span className="font-bold text-slate-800 font-mono">{activeOrder.id}</span>
+              </div>
+              <div>
+                <span className="text-slate-400 text-[11px] block">ยอดเงินที่ชำระ:</span>
+                <span className="font-display font-extrabold text-emerald-600 text-sm">
+                  ฿{Number(activeOrder.total_amount).toLocaleString('th-TH')}
+                </span>
+              </div>
+              <div>
+                <span className="text-slate-400 text-[11px] block">ชื่อผู้สั่งซื้อ:</span>
+                <span className="font-semibold text-slate-700">{activeOrder.customer_name}</span>
+              </div>
+              <div>
+                <span className="text-slate-400 text-[11px] block">เบอร์โทรศัพท์:</span>
+                <span className="font-semibold text-slate-700">{activeOrder.customer_phone}</span>
+              </div>
+            </div>
+
+            <div className="pt-2 border-t border-slate-200">
+              <span className="text-slate-400 text-[11px] block mb-0.5">รายการสินค้า:</span>
+              <span className="font-bold text-slate-800 block line-clamp-2">
+                {activeOrder.productName || 'เรือและชุดพ่วงอุปกรณ์'}
+              </span>
+              {activeOrder.color && (
+                <span className="text-[10.5px] text-brand-blue font-semibold mt-0.5 block">
+                  สี: {activeOrder.color}
+                </span>
+              )}
+            </div>
+
+            {/* Slip Photo Preview */}
+            {(uploadedSlipUrl || slipPreview) && (
+              <div className="pt-3 border-t border-slate-200">
+                <span className="text-[11px] text-slate-500 font-bold block mb-1.5 flex items-center justify-between">
+                  <span>หลักฐานการโอนเงินที่อนุมัติ:</span>
+                  <span className="text-[10px] text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 font-bold flex items-center gap-1">
+                    <Check size={11} /> อนุมัติการชำระเงินแล้ว
+                  </span>
+                </span>
+                <div className="border border-slate-200 rounded-xl overflow-hidden bg-white p-2 flex items-center justify-center shadow-xs">
+                  <img 
+                    src={uploadedSlipUrl || slipPreview || ''} 
+                    alt="สลิปหลักฐานการโอนเงินที่อนุมัติ" 
+                    referrerPolicy="no-referrer"
+                    className="max-h-52 object-contain rounded-lg"
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Delivery & Production Notice */}
+          <div className="border border-emerald-200/80 p-3.5 rounded-2xl bg-emerald-50/70 text-slate-700 text-xs flex items-center gap-3 text-left">
+            <ShieldCheck size={22} className="text-emerald-600 shrink-0" />
+            <div className="space-y-0.5">
+              <p className="font-bold text-slate-850">
+                ฝ่ายผลิตกำลังเตรียมหลอมขึ้นรูปและจัดส่งสินค้าตามกำหนดการ
+              </p>
+              <p className="text-[11px] text-slate-500 leading-snug">
+                เจ้าหน้าที่จะติดต่อประสานงานยืนยันวันนัดหมายจัดส่งล่วงหน้า ท่านสามารถเช็กสถานะการผลิตได้ในประวัติคำสั่งซื้อ
+              </p>
+            </div>
+          </div>
+
+          {/* Action Button: Centered Return to Home */}
+          <div className="pt-2 flex justify-center">
             <button
               type="button"
-              onClick={() => {
-                if (onViewOrderHistory) {
-                  onViewOrderHistory();
-                } else {
-                  onBackToHome();
-                }
-              }}
-              className="w-full rounded-2xl bg-brand-blue hover:bg-brand-blue-dark text-white font-display font-bold text-xs py-4 cursor-pointer shadow-md hover:shadow-lg transition-all duration-200 flex items-center justify-center gap-2 active:scale-[0.99]"
-              id="btn-check-order-history-from-verify"
+              onClick={onBackToHome}
+              className="w-full sm:w-auto sm:min-w-[260px] px-8 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-display font-bold text-xs py-4 cursor-pointer shadow-md hover:shadow-lg transition-all duration-200 flex items-center justify-center gap-2 active:scale-[0.99]"
+              id="btn-return-home-from-approved"
             >
-              <ShoppingBag size={16} />
-              <span>เช็กสถานะการสั่งซื้อ</span>
+              <ArrowLeft size={16} />
+              <span>กลับสู่หน้าแรก</span>
             </button>
           </div>
 

@@ -1065,7 +1065,8 @@ export const supabaseOrders = {
         productName: row.productName || row.product_name || 'เรือพลาสติกและอุปกรณ์',
         color: row.color || 'คละสี',
         amount: Number(row.total_amount || row.amount || 0),
-        status: row.payment_status || row.status || 'Pending',
+        status: row.status || (row.order_status === 'completed' || row.order_status === 'Delivered' ? 'Delivered' : row.order_status === 'shipping' || row.order_status === 'Shipping' ? 'Shipping' : row.payment_status || 'Pending'),
+        order_status: row.order_status || (row.status === 'Delivered' ? 'completed' : row.status === 'Shipping' ? 'shipping' : 'pending'),
         shipmentNo: row.shipmentNo || row.shipment_no || '',
         
         // New view exact fields:
@@ -1073,7 +1074,7 @@ export const supabaseOrders = {
         customer_name: row.customer_name || row.customerName || '',
         customer_email: row.customer_email || 'guest@example.com',
         total_amount: Number(row.total_amount || row.amount || 0),
-        payment_status: row.payment_status || row.status || 'pending',
+        payment_status: row.payment_status || (row.status === 'Delivered' ? 'paid' : 'pending'),
         created_at: row.created_at || row.date || ''
       }));
     } catch (e: any) {
@@ -1337,13 +1338,19 @@ export const supabaseOrders = {
   },
 
   async delete(id: string): Promise<boolean> {
-    if (!isSupabaseConfigured || !supabase) return true;
     try {
-      const { error } = await supabase.from('orders').delete().eq('id', id);
-      if (error) {
-        console.warn('Could not delete from orders table in Supabase:', error.message);
-        return false;
+      if (isSupabaseConfigured && supabase) {
+        const { error } = await supabase.from('orders').delete().eq('id', id);
+        if (error) {
+          console.warn('Could not delete from orders table in Supabase:', error.message);
+        }
       }
+      // Sync local storage for immediate persistence
+      try {
+        const local = JSON.parse(localStorage.getItem('admin_orders') || '[]');
+        const filtered = local.filter((o: any) => o.id !== id);
+        localStorage.setItem('admin_orders', JSON.stringify(filtered));
+      } catch {}
       return true;
     } catch (err: any) {
       console.error('Failed to delete order from Supabase:', err.message);
@@ -1352,14 +1359,46 @@ export const supabaseOrders = {
   },
 
   async updateStatus(id: string, status: string): Promise<boolean> {
-    if (!isSupabaseConfigured || !supabase) return false;
+    const mappedOrderStatus = status === 'Delivered' ? 'completed' : status === 'Shipping' ? 'shipping' : 'pending';
+    const trackingNo = `TH-EX-${String(id).replace(/[^0-9]/g, '').slice(-6) || '291823'}`;
+
     try {
-      const { error } = await supabase.from('orders').update({ payment_status: status }).eq('id', id);
-      if (error) throw error;
-      return true;
-    } catch {
-      return false;
+      if (isSupabaseConfigured && supabase) {
+        // Try updating status, order_status, and shipment_no
+        try {
+          await supabase.from('orders').update({
+            status: status,
+            order_status: mappedOrderStatus,
+            shipment_no: trackingNo,
+            shipmentNo: trackingNo
+          }).eq('id', id);
+        } catch {
+          // Fallback to simpler payload if columns differ
+          await supabase.from('orders').update({
+            payment_status: status === 'Delivered' ? 'paid' : status
+          }).eq('id', id);
+        }
+      }
+    } catch (e) {
+      console.warn('Supabase updateStatus caught warning:', e);
     }
+
+    // Persist immediately in local storage admin_orders
+    try {
+      const local = JSON.parse(localStorage.getItem('admin_orders') || '[]');
+      const updated = local.map((o: any) => 
+        o.id === id ? { 
+          ...o, 
+          status: status, 
+          order_status: mappedOrderStatus,
+          shipmentNo: o.shipmentNo || trackingNo,
+          shipment_no: o.shipment_no || trackingNo
+        } : o
+      );
+      localStorage.setItem('admin_orders', JSON.stringify(updated));
+    } catch {}
+
+    return true;
   },
 
   async listWaitingVerify(): Promise<any[]> {

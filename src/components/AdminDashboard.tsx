@@ -822,11 +822,90 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
   const grossSalesVolume = adminOrders.reduce((sum, ord) => sum + Number(ord.amount || 0), 0) + adminPreOrders.reduce((sum, pre) => sum + Number(pre.deposit || 0), 0);
 
   // Order actions
-  const changeOrderStatus = (orderId: string, nextStatus: 'Pending' | 'Shipping' | 'Delivered') => {
-    supabaseOrders.updateStatus(orderId, nextStatus).then(() => {
-      reloadOrders();
-    });
-    triggerToast(`อัปเดตสถานะออเดอร์ ${orderId} เป็น [${nextStatus === 'Shipping' ? 'จัดส่งแล้ว' : nextStatus === 'Delivered' ? 'สำเร็จเรียบร้อย' : 'รอดำเนินการ'}]`);
+  const [ordersTabFilter, setOrdersTabFilter] = React.useState<'active' | 'completed'>('active');
+  const [selectedOrderForDetail, setSelectedOrderForDetail] = React.useState<any | null>(null);
+
+  const changeOrderStatus = async (orderId: string, nextStatus: 'Pending' | 'Shipping' | 'Delivered') => {
+    try {
+      await supabaseOrders.updateStatus(orderId, nextStatus);
+      await reloadOrders();
+
+      if (nextStatus === 'Delivered') {
+        const delivMsg = `รายการสั่งซื้อหมายเลข #${orderId} จัดส่งสำเร็จเรียบร้อยแล้ว! ขอบคุณที่ไว้วางใจใช้บริการพรพงศ์พลาสติก`;
+        const newNoti: AppNotification = {
+          id: 'noti-deliv-' + Date.now(),
+          title: 'จัดส่งสำเร็จเรียบร้อยแล้ว!',
+          message: delivMsg,
+          type: 'order',
+          date: 'เมื่อครู่',
+          isRead: false
+        };
+
+        // 1. Update in-app notifications
+        setNotifications(prev => [newNoti, ...prev]);
+        try {
+          const current = JSON.parse(localStorage.getItem('pornpong_notifications') || '[]');
+          localStorage.setItem('pornpong_notifications', JSON.stringify([newNoti, ...current]));
+        } catch {}
+
+        // 2. Unshown deliveries for customer popup alert
+        try {
+          const unshown = JSON.parse(localStorage.getItem('pornpong_unshown_deliveries') || '[]');
+          unshown.push({ orderId, message: delivMsg, timestamp: Date.now() });
+          localStorage.setItem('pornpong_unshown_deliveries', JSON.stringify(unshown));
+        } catch {}
+
+        // 3. Dispatch broadcast events
+        window.dispatchEvent(new CustomEvent('pornpong-order-delivered', {
+          detail: { orderId, notification: newNoti }
+        }));
+        window.dispatchEvent(new CustomEvent('orders-updated'));
+
+        triggerToast(`อัปเดตออเดอร์ #${orderId} เป็น [จัดส่งสำเร็จ] และส่งการแจ้งเตือนถึงลูกค้าเรียบร้อยแล้ว!`);
+      } else {
+        triggerToast(`อัปเดตสถานะออเดอร์ ${orderId} เป็น [${nextStatus === 'Shipping' ? 'จัดส่งแล้ว' : 'รอดำเนินการ'}]`);
+      }
+    } catch (err: any) {
+      console.error('Failed to change order status:', err);
+      triggerToast('เกิดข้อผิดพลาดในการอัปเดตสถานะ');
+    }
+  };
+
+  // Delete Order states & handlers
+  const [orderToDelete, setOrderToDelete] = React.useState<any | null>(null);
+  const [isDeletingOrder, setIsDeletingOrder] = React.useState(false);
+
+  const handleRequestDeleteOrder = (order: any) => {
+    setOrderToDelete(order);
+  };
+
+  const handleConfirmDeleteOrder = async () => {
+    if (!orderToDelete) return;
+    const targetId = orderToDelete.id;
+    setIsDeletingOrder(true);
+    try {
+      const success = await supabaseOrders.delete(targetId);
+      if (success) {
+        // Optimistically remove from state so row disappears in real-time
+        setAdminOrders(prev => prev.filter(o => o.id !== targetId));
+        setWaitingVerifyOrders(prev => prev.filter(o => o.id !== targetId));
+        
+        // Background sync
+        await reloadOrders();
+        await reloadWaitingVerifyOrders();
+        
+        window.dispatchEvent(new CustomEvent('orders-updated', { detail: { deletedId: targetId } }));
+        triggerToast('ลบรายการสั่งซื้อสำเร็จ');
+        setOrderToDelete(null);
+      } else {
+        triggerToast('ไม่สามารถลบรายการสั่งซื้อได้ กรุณาลองใหม่อีกครั้ง');
+      }
+    } catch (err: any) {
+      console.error('Failed to delete order:', err);
+      triggerToast('เกิดข้อผิดพลาดในการลบคำสั่งซื้อ');
+    } finally {
+      setIsDeletingOrder(false);
+    }
   };
 
 
@@ -1186,11 +1265,42 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
     return matchesSearch && matchesCategory && matchesStatus;
   });
 
-  const filteredAdminOrders = adminOrders.filter(o => 
-    o.customerName.toLowerCase().includes(ordersSearch.toLowerCase()) ||
-    o.id.toLowerCase().includes(ordersSearch.toLowerCase()) ||
-    o.productName.toLowerCase().includes(ordersSearch.toLowerCase())
-  );
+  const isOrderCompleted = (o: any) => {
+    const s = (o.status || '').toLowerCase();
+    const os = (o.order_status || '').toLowerCase();
+    return s === 'delivered' || s === 'completed' || os === 'delivered' || os === 'completed';
+  };
+
+  const activeOrdersList = React.useMemo(() => {
+    return adminOrders.filter(o => !isOrderCompleted(o));
+  }, [adminOrders]);
+
+  const completedOrdersList = React.useMemo(() => {
+    return adminOrders.filter(o => isOrderCompleted(o));
+  }, [adminOrders]);
+
+  const filteredActiveOrders = React.useMemo(() => {
+    const term = ordersSearch.toLowerCase().trim();
+    if (!term) return activeOrdersList;
+    return activeOrdersList.filter(o => 
+      (o.customerName || '').toLowerCase().includes(term) ||
+      (o.id || '').toLowerCase().includes(term) ||
+      (o.productName || '').toLowerCase().includes(term)
+    );
+  }, [activeOrdersList, ordersSearch]);
+
+  const filteredCompletedOrders = React.useMemo(() => {
+    const term = ordersSearch.toLowerCase().trim();
+    if (!term) return completedOrdersList;
+    return completedOrdersList.filter(o => 
+      (o.customerName || '').toLowerCase().includes(term) ||
+      (o.id || '').toLowerCase().includes(term) ||
+      (o.productName || '').toLowerCase().includes(term) ||
+      (o.shipmentNo || '').toLowerCase().includes(term)
+    );
+  }, [completedOrdersList, ordersSearch]);
+
+  const filteredAdminOrders = ordersTabFilter === 'active' ? filteredActiveOrders : filteredCompletedOrders;
 
   const filteredAdminPreorders = adminPreOrders.filter(p => 
     p.customerName.toLowerCase().includes(preordersSearch.toLowerCase()) ||
@@ -1954,34 +2064,85 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
           )}
 
           {/* -----------------------------------------------------------
-              3. SUCCESS DIRECT ORDERS WINDOW TAB
+              3. SUCCESS DIRECT ORDERS WINDOW TAB (ACTIVE & COMPLETED TABS)
               ----------------------------------------------------------- */}
           {activeMenu === 'orders' && (
             <div className="space-y-4 animate-fadeIn">
-              <div className="relative max-w-sm flex items-center">
-                <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-slate-400">
-                  <Search size={14} />
-                </div>
-                <input
-                  type="text"
-                  placeholder="พิมพ์หาชื่อคู่ค้าง ค้นหาเลขที่เช็คบิล..."
-                  value={ordersSearch}
-                  onChange={(e) => setOrdersSearch(e.target.value)}
-                  className="w-full h-9 bg-white border border-slate-200 rounded-xl pl-9 pr-8 text-xs leading-normal text-slate-800 placeholder-slate-400 outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500/20 shadow-xs transition-all"
-                  id="admin-orders-search-input"
-                />
-                {ordersSearch && (
+              
+              {/* Top Navigation & Sub-Tabs Switcher */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-3.5 rounded-2xl border border-slate-200 shadow-xs">
+                
+                {/* 2 Sub-Tabs */}
+                <div className="flex items-center gap-2 flex-wrap">
+                  {/* Tab 1: รายการคำสั่งซื้อกำลังดำเนินการ */}
                   <button
                     type="button"
-                    onClick={() => setOrdersSearch('')}
-                    className="absolute inset-y-0 right-0 flex items-center pr-2.5 text-slate-400 hover:text-slate-600 cursor-pointer"
-                    title="ล้างคำค้นหา"
+                    onClick={() => setOrdersTabFilter('active')}
+                    className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-2 ${
+                      ordersTabFilter === 'active'
+                        ? 'bg-sky-600 text-white shadow-xs'
+                        : 'bg-slate-50 hover:bg-slate-100 text-slate-600 border border-slate-200'
+                    }`}
+                    id="tab-orders-active"
                   >
-                    <X size={13} />
+                    <Package size={14} />
+                    <span>รายการคำสั่งซื้อกำลังดำเนินการ</span>
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${
+                      ordersTabFilter === 'active' ? 'bg-sky-800 text-white' : 'bg-slate-200 text-slate-700'
+                    }`}>
+                      {activeOrdersList.length}
+                    </span>
                   </button>
-                )}
+
+                  {/* Tab 2: ประวัติคำสั่งซื้อสำเร็จ (Completed History) */}
+                  <button
+                    type="button"
+                    onClick={() => setOrdersTabFilter('completed')}
+                    className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-2 ${
+                      ordersTabFilter === 'completed'
+                        ? 'bg-emerald-600 text-white shadow-xs'
+                        : 'bg-slate-50 hover:bg-slate-100 text-slate-600 border border-slate-200'
+                    }`}
+                    id="tab-orders-completed"
+                  >
+                    <CheckCircle2 size={14} />
+                    <span>ประวัติคำสั่งซื้อสำเร็จ (Completed History)</span>
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${
+                      ordersTabFilter === 'completed' ? 'bg-emerald-800 text-white' : 'bg-slate-200 text-slate-700'
+                    }`}>
+                      {completedOrdersList.length}
+                    </span>
+                  </button>
+                </div>
+
+                {/* Search Bar */}
+                <div className="relative min-w-[240px] flex items-center">
+                  <div className="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-slate-400">
+                    <Search size={14} />
+                  </div>
+                  <input
+                    type="text"
+                    placeholder={ordersTabFilter === 'active' ? "ค้นหาคำสั่งซื้อกำลังดำเนินการ..." : "ค้นหาประวัติคำสั่งซื้อสำเร็จ, เลขพัสดุ..."}
+                    value={ordersSearch}
+                    onChange={(e) => setOrdersSearch(e.target.value)}
+                    className="w-full h-9 bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-8 text-xs leading-normal text-slate-800 placeholder-slate-400 outline-none focus:bg-white focus:border-sky-500 focus:ring-1 focus:ring-sky-500/20 shadow-xs transition-all"
+                    id="admin-orders-search-input"
+                  />
+                  {ordersSearch && (
+                    <button
+                      type="button"
+                      onClick={() => setOrdersSearch('')}
+                      className="absolute inset-y-0 right-0 flex items-center pr-2.5 text-slate-400 hover:text-slate-600 cursor-pointer"
+                      title="ล้างคำค้นหา"
+                    >
+                      <X size={13} />
+                    </button>
+                  )}
+                </div>
+
               </div>
 
+              {/* TABLE VIEW */}
               <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-xs border-collapse">
@@ -1993,18 +2154,37 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                         <th className="py-3 px-3">สีเรือที่สั่ง</th>
                         <th className="py-3 px-3 text-right">ยอดเรียกเก็บ</th>
                         <th className="py-3 px-3 text-center">รหัสสิ่งส่งของขนส่ง</th>
-                        <th className="py-3 px-3 text-center">อัปเดตสถานะขนย้าย</th>
+                        <th className="py-3 px-3 text-center">
+                          {ordersTabFilter === 'active' ? 'อัปเดตสถานะขนย้าย' : 'สถานะ / การจัดการ'}
+                        </th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {filteredAdminOrders.length === 0 ? (
                         <tr>
-                          <td colSpan={7} className="py-12 text-center text-slate-400 font-medium">ยังไม่มีข้อมูล</td>
+                          <td colSpan={7} className="py-12 text-center text-slate-400 font-medium">
+                            {ordersTabFilter === 'active' 
+                              ? 'ไม่มีรายการคำสั่งซื้อที่กำลังดำเนินการในขณะนี้' 
+                              : 'ยังไม่มีประวัติคำสั่งซื้อที่จัดส่งสำเร็จ'}
+                          </td>
                         </tr>
                       ) : (
                         filteredAdminOrders.map((ord) => (
-                          <tr key={ord.id} className="hover:bg-slate-50/70 text-[11px]">
-                            <td className="py-3.5 px-4 font-mono font-bold text-slate-700">{ord.id}</td>
+                          <tr key={ord.id} className="hover:bg-slate-50/70 text-[11px] group/row">
+                            <td className="py-3.5 px-4 font-mono font-bold text-slate-700">
+                              <div className="flex items-center gap-2">
+                                <span>{ord.id}</span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleRequestDeleteOrder(ord)}
+                                  className="p-1 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer border border-transparent hover:border-rose-200"
+                                  title={`ลบรายการคำสั่งซื้อ ${ord.id}`}
+                                  id={`btn-delete-order-${ord.id}`}
+                                >
+                                  <Trash2 size={13} />
+                                </button>
+                              </div>
+                            </td>
                             <td className="py-3.5 px-3">
                               <span className="font-bold block text-slate-800">{ord.customerName}</span>
                               <span className="text-[9px] text-slate-400">จดทะเบียน {ord.date}</span>
@@ -2013,45 +2193,68 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                               {ord.productName}
                             </td>
                             <td className="py-3.5 px-3 text-slate-600 font-medium">{ord.color}</td>
-                            <td className="py-3.5 px-3 text-right font-black text-emerald-600">
+                            <td className="py-3.5 px-3 text-right font-black text-emerald-600 font-mono">
                               ฿{ord.amount.toLocaleString()}
                             </td>
                             <td className="py-3.5 px-3 text-center">
                               {ord.shipmentNo ? (
-                                <code className="bg-sky-50 border border-sky-200 rounded-md px-1.8 py-0.5 text-sky-700 font-mono text-[10px]">
-                                  {ord.shipmentNo}
+                                <code className="bg-sky-50 border border-sky-200 rounded-md px-2 py-0.5 text-sky-700 font-mono text-[10px] font-bold inline-flex items-center gap-1">
+                                  <Truck size={10} /> {ord.shipmentNo}
                                 </code>
                               ) : (
                                 <span className="text-slate-400 italic">รอรันลำเลียงรหัสคิว</span>
                               )}
                             </td>
                             <td className="py-3.5 px-3 text-center">
-                              <div className="flex items-center justify-center gap-1">
-                                <button
-                                  onClick={() => changeOrderStatus(ord.id, 'Pending')}
-                                  className={`px-2 py-1 rounded text-[9px] font-extrabold cursor-pointer transition-all ${
-                                    ord.status === 'Pending' ? 'bg-amber-500 text-white font-black shadow-xs' : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
-                                  }`}
-                                >
-                                  รอขนย้าย
-                                </button>
-                                <button
-                                  onClick={() => changeOrderStatus(ord.id, 'Shipping')}
-                                  className={`px-2 py-1 rounded text-[9px] font-extrabold cursor-pointer transition-all ${
-                                    ord.status === 'Shipping' ? 'bg-sky-500 text-white font-black shadow-xs' : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
-                                  }`}
-                                >
-                                  ส่งของ
-                                </button>
-                                <button
-                                  onClick={() => changeOrderStatus(ord.id, 'Delivered')}
-                                  className={`px-2 py-1 rounded text-[9px] font-extrabold cursor-pointer transition-all ${
-                                    ord.status === 'Delivered' ? 'bg-emerald-500 text-white font-black shadow-xs' : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
-                                  }`}
-                                >
-                                  ส่งสำเร็จ
-                                </button>
-                              </div>
+                              {ordersTabFilter === 'active' ? (
+                                <div className="flex items-center justify-center gap-1">
+                                  <button
+                                    onClick={() => changeOrderStatus(ord.id, 'Pending')}
+                                    className={`px-2 py-1 rounded text-[9px] font-extrabold cursor-pointer transition-all ${
+                                      ord.status === 'Pending' ? 'bg-amber-500 text-white font-black shadow-xs' : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
+                                    }`}
+                                  >
+                                    รอขนย้าย
+                                  </button>
+                                  <button
+                                    onClick={() => changeOrderStatus(ord.id, 'Shipping')}
+                                    className={`px-2 py-1 rounded text-[9px] font-extrabold cursor-pointer transition-all ${
+                                      ord.status === 'Shipping' ? 'bg-sky-500 text-white font-black shadow-xs' : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
+                                    }`}
+                                  >
+                                    ส่งของ
+                                  </button>
+                                  <button
+                                    onClick={() => changeOrderStatus(ord.id, 'Delivered')}
+                                    className="px-2.5 py-1 rounded text-[9px] font-extrabold cursor-pointer transition-all bg-emerald-500 hover:bg-emerald-600 text-white font-black shadow-xs"
+                                    title="คลิกเพื่อย้ายรายการนี้ไปยังประวัติคำสั่งซื้อสำเร็จ และส่งแจ้งเตือนหาลูกค้า"
+                                  >
+                                    ✓ ส่งสำเร็จ
+                                  </button>
+                                </div>
+                              ) : (
+                                <div className="flex items-center justify-center gap-1.5">
+                                  <span className="px-2.5 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 font-bold text-[9.5px] inline-flex items-center gap-1">
+                                    <CheckCircle2 size={10} /> จัดส่งสำเร็จ
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => setSelectedOrderForDetail(ord)}
+                                    className="px-2 py-0.5 rounded-lg bg-sky-50 border border-sky-200 text-sky-700 hover:bg-sky-100 text-[10px] font-bold cursor-pointer transition-colors"
+                                    title="ดูรายละเอียดคำสั่งซื้อเต็ม"
+                                  >
+                                    ดูรายละเอียด
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => changeOrderStatus(ord.id, 'Shipping')}
+                                    className="px-1.5 py-0.5 rounded text-[9px] text-slate-400 hover:text-slate-600 hover:bg-slate-100 cursor-pointer transition-colors"
+                                    title="เรียกคืนสถานะกลับเป็นกำลังจัดส่ง"
+                                  >
+                                    เรียกคืน
+                                  </button>
+                                </div>
+                              )}
                             </td>
                           </tr>
                         ))
@@ -2060,6 +2263,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                   </table>
                 </div>
               </div>
+
             </div>
           )}
 
@@ -4363,6 +4567,225 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
             <p className="text-slate-300 text-center text-xs mt-3 font-semibold">
               ภาพถ่ายเรือจริงความละเอียดสูง • คลิกที่ใดก็ได้ด้านนอกเพื่อปิด
             </p>
+          </div>
+        </div>
+      )}
+
+      {/* CONFIRMATION MODAL FOR DELETING AN ORDER */}
+      {orderToDelete && (
+        <div 
+          className="fixed inset-0 z-[110] flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 animate-fadeIn"
+          onClick={() => {
+            if (!isDeletingOrder) setOrderToDelete(null);
+          }}
+        >
+          <div 
+            className="bg-white rounded-3xl max-w-md w-full p-6 sm:p-7 shadow-2xl border border-rose-100 text-center space-y-5 animate-scaleIn relative"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Red Alert Trash Icon */}
+            <div className="flex justify-center">
+              <div className="relative inline-flex items-center justify-center">
+                <div className="absolute -inset-2 rounded-full bg-rose-500/20 blur-md"></div>
+                <div className="relative w-14 h-14 rounded-2xl bg-rose-50 border border-rose-200 text-rose-600 flex items-center justify-center shadow-xs">
+                  <Trash2 size={26} />
+                </div>
+              </div>
+            </div>
+
+            {/* Header Titles */}
+            <div className="space-y-1.5">
+              <h3 className="font-display text-lg font-black text-slate-800">
+                ยืนยันการลบรายการสั่งซื้อ
+              </h3>
+              <p className="text-xs text-slate-600 leading-relaxed">
+                คุณแน่ใจหรือไม่ที่จะลบรายการสั่งซื้อ <span className="font-mono font-bold text-rose-600 bg-rose-50 px-1.5 py-0.5 rounded border border-rose-200">{orderToDelete.id}</span> นี้? ข้อมูลจะถูกลบออกจากฐานข้อมูลอย่างถาวร
+              </p>
+            </div>
+
+            {/* Order Snippet Box */}
+            <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200 text-left text-xs space-y-1.5">
+              <div className="flex justify-between items-center">
+                <span className="text-slate-400 text-[11px]">ลูกค้า:</span>
+                <span className="font-bold text-slate-800">{orderToDelete.customerName || orderToDelete.customer_name || 'ไม่ระบุชื่อ'}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-slate-400 text-[11px]">สินค้า:</span>
+                <span className="font-medium text-slate-700 truncate max-w-[220px]">{orderToDelete.productName || 'เรือพลาสติก'}</span>
+              </div>
+              <div className="flex justify-between items-center pt-1.5 border-t border-slate-200">
+                <span className="text-slate-400 text-[11px]">ยอดเรียกเก็บ:</span>
+                <span className="font-display font-extrabold text-emerald-600">
+                  ฿{Number(orderToDelete.amount || orderToDelete.total_amount || 0).toLocaleString()}
+                </span>
+              </div>
+            </div>
+
+            {/* Action Buttons: Cancel & Confirm Delete (Red) */}
+            <div className="flex items-center gap-3 pt-2">
+              <button
+                type="button"
+                disabled={isDeletingOrder}
+                onClick={() => setOrderToDelete(null)}
+                className="flex-1 py-3 px-4 rounded-xl border border-slate-200 hover:bg-slate-100 text-slate-700 font-bold text-xs transition-colors cursor-pointer disabled:opacity-50"
+                id="btn-cancel-delete-order"
+              >
+                ยกเลิก
+              </button>
+              
+              <button
+                type="button"
+                disabled={isDeletingOrder}
+                onClick={handleConfirmDeleteOrder}
+                className="flex-1 py-3 px-4 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs shadow-md shadow-rose-600/25 transition-all cursor-pointer flex items-center justify-center gap-2 active:scale-98 disabled:opacity-50"
+                id="btn-confirm-delete-order"
+              >
+                {isDeletingOrder ? (
+                  <>
+                    <RefreshCw size={14} className="animate-spin" />
+                    <span>กำลังลบ...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 size={14} />
+                    <span>ยืนยันการลบ</span>
+                  </>
+                )}
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* ORDER DETAILS MODAL (COMPLETED / ACTIVE ORDER DETAILS VIEW) */}
+      {selectedOrderForDetail && (
+        <div 
+          className="fixed inset-0 z-[110] flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 animate-fadeIn"
+          onClick={() => setSelectedOrderForDetail(null)}
+        >
+          <div 
+            className="bg-white rounded-3xl max-w-lg w-full p-6 sm:p-7 shadow-2xl border border-slate-200 text-left space-y-5 animate-scaleIn relative max-h-[90vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between pb-3 border-b border-slate-150">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center font-bold border border-emerald-200 shadow-xs">
+                  <CheckCircle2 size={20} />
+                </div>
+                <div>
+                  <h3 className="font-display text-base font-black text-slate-800">
+                    รายละเอียดคำสั่งซื้อ
+                  </h3>
+                  <span className="font-mono text-xs font-bold text-sky-600">
+                    #{selectedOrderForDetail.id}
+                  </span>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setSelectedOrderForDetail(null)}
+                className="p-1.5 rounded-full hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Status & Tracking Badge */}
+            <div className="p-3.5 rounded-2xl bg-emerald-50/80 border border-emerald-200 flex flex-wrap items-center justify-between gap-2 text-xs">
+              <div className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                <span className="font-bold text-emerald-800">สถานะ: จัดส่งสำเร็จเรียบร้อยแล้ว</span>
+              </div>
+              {selectedOrderForDetail.shipmentNo && (
+                <div className="flex items-center gap-1.5 font-mono text-emerald-900 bg-white px-2.5 py-1 rounded-xl border border-emerald-200 font-bold text-[11px]">
+                  <Truck size={12} className="text-emerald-600" />
+                  <span>เลขพัสดุ: {selectedOrderForDetail.shipmentNo}</span>
+                </div>
+              )}
+            </div>
+
+            {/* Customer Details Box */}
+            <div className="space-y-3 text-xs bg-slate-50 p-4 rounded-2xl border border-slate-200">
+              <span className="font-bold text-slate-800 block text-[11px] uppercase tracking-wider text-slate-400">
+                ข้อมูลลูกค้าและที่อยู่จัดส่ง
+              </span>
+              <div className="grid grid-cols-2 gap-2.5">
+                <div>
+                  <span className="text-slate-400 text-[10.5px] block">ชื่อผู้รับ:</span>
+                  <strong className="text-slate-800 block">{selectedOrderForDetail.customerName || selectedOrderForDetail.customer_name || 'ไม่ระบุชื่อ'}</strong>
+                </div>
+                <div>
+                  <span className="text-slate-400 text-[10.5px] block">เบอร์ติดต่อ:</span>
+                  <strong className="text-slate-800 block">{selectedOrderForDetail.customer_phone || selectedOrderForDetail.phone || 'ไม่ระบุเบอร์'}</strong>
+                </div>
+                <div className="col-span-2">
+                  <span className="text-slate-400 text-[10.5px] block">อีเมล:</span>
+                  <span className="text-slate-700 font-mono text-[11px] block">{selectedOrderForDetail.customer_email || selectedOrderForDetail.email || '-'}</span>
+                </div>
+                {selectedOrderForDetail.address && (
+                  <div className="col-span-2">
+                    <span className="text-slate-400 text-[10.5px] block">ที่อยู่ปลายทาง:</span>
+                    <p className="text-slate-700 leading-relaxed font-medium">{selectedOrderForDetail.address}</p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Product & Payment Summary */}
+            <div className="space-y-3 text-xs bg-slate-50 p-4 rounded-2xl border border-slate-200">
+              <span className="font-bold text-slate-800 block text-[11px] uppercase tracking-wider text-slate-400">
+                รายการสินค้าและยอดเงิน
+              </span>
+              <div>
+                <p className="font-bold text-slate-800 text-sm">
+                  {selectedOrderForDetail.productName || selectedOrderForDetail.product_name || 'เรือพลาสติกหลอม'}
+                </p>
+                {selectedOrderForDetail.color && (
+                  <p className="text-[11px] text-sky-700 font-semibold mt-0.5">
+                    โทนสี: {selectedOrderForDetail.color}
+                  </p>
+                )}
+              </div>
+              <div className="flex justify-between items-center pt-2 border-t border-slate-200">
+                <span className="text-slate-500">ยอดเงินชำระสุทธิ:</span>
+                <span className="font-display font-black text-emerald-600 text-base font-mono">
+                  ฿{Number(selectedOrderForDetail.amount || selectedOrderForDetail.total_amount || 0).toLocaleString()}
+                </span>
+              </div>
+            </div>
+
+            {/* Slip if available */}
+            {selectedOrderForDetail.payment_slip_url && (
+              <div className="space-y-2">
+                <span className="text-[11px] font-bold text-slate-600 block">สลิปหลักฐานการชำระเงิน:</span>
+                <div 
+                  onClick={() => setZoomedSlipUrl(selectedOrderForDetail.payment_slip_url)}
+                  className="border border-slate-200 rounded-xl overflow-hidden p-2 bg-slate-50 flex items-center justify-center cursor-zoom-in hover:border-sky-400 transition-colors"
+                >
+                  <img 
+                    src={selectedOrderForDetail.payment_slip_url} 
+                    alt="สลิปโอนเงิน" 
+                    referrerPolicy="no-referrer"
+                    className="max-h-48 object-contain rounded-lg"
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Close Button */}
+            <div className="pt-2">
+              <button
+                type="button"
+                onClick={() => setSelectedOrderForDetail(null)}
+                className="w-full py-3 rounded-xl bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs cursor-pointer transition-colors shadow-xs"
+              >
+                ปิดหน้าต่างรายละเอียด
+              </button>
+            </div>
+
           </div>
         </div>
       )}
