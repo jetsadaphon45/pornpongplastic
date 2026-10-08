@@ -12,7 +12,8 @@ import {
   Menu,
   ChevronRight,
   CheckCircle,
-  Check
+  Check,
+  Truck
 } from 'lucide-react';
 
 import { Product, CartItem, User } from './types';

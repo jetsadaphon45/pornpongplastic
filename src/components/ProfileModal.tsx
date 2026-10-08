@@ -15,7 +15,9 @@ import {
   MapPin,
   Trash2,
   AlertTriangle,
-  Loader2
+  Loader2,
+  Truck,
+  CheckCircle2
 } from 'lucide-react';
 import { supabaseOrders, supabasePreOrders } from '../lib/supabase';
 import AddressManagementView from './AddressManagementView';
@@ -144,11 +146,22 @@ export function ProfileModal({ isOpen, onClose, currentUser, onUpdateProfile, on
 
       const mappedRemoteOrders: OrderItem[] = userOrders.map((o: any) => {
         let statusDisplay = 'จัดส่งสำเร็จ';
-        const pStatus = (o.payment_status || o.status || '').toLowerCase();
-        if (pStatus === 'paid' || pStatus === 'processing' || pStatus === 'approved') statusDisplay = 'ชำระเงินเสร็จสิ้น';
-        else if (pStatus === 'waiting_verify' || pStatus === 'pending_verification' || pStatus === 'waiting_approval') statusDisplay = 'กำลังตรวจสอบการชำระเงิน';
-        else if (pStatus === 'pending') statusDisplay = 'รอชำระเงิน';
-        else if (pStatus === 'rejected') statusDisplay = 'สลิปไม่ถูกต้อง';
+        const ordStatus = (o.status || o.order_status || '').toLowerCase();
+        const pStatus = (o.payment_status || '').toLowerCase();
+
+        if (ordStatus === 'delivered' || ordStatus === 'completed') {
+          statusDisplay = 'จัดส่งสำเร็จ';
+        } else if (ordStatus === 'shipping') {
+          statusDisplay = 'กำลังจัดส่ง';
+        } else if (pStatus === 'waiting_verify' || pStatus === 'pending_verification' || pStatus === 'waiting_approval') {
+          statusDisplay = 'กำลังตรวจสอบการชำระเงิน';
+        } else if (pStatus === 'paid' || pStatus === 'processing' || pStatus === 'approved') {
+          statusDisplay = 'ชำระเงินเสร็จสิ้น';
+        } else if (pStatus === 'pending') {
+          statusDisplay = 'รอชำระเงิน';
+        } else if (pStatus === 'rejected') {
+          statusDisplay = 'สลิปไม่ถูกต้อง';
+        }
 
         const rawAmount = typeof o.amount === 'number' ? o.amount : (Number(o.total_amount || 0));
         const formattedAmount = rawAmount > 0 ? `฿${rawAmount.toLocaleString()}` : (o.amount || '฿0');
@@ -231,6 +244,22 @@ export function ProfileModal({ isOpen, onClose, currentUser, onUpdateProfile, on
       loadHistory();
     }
   }, [currentUser, isOpen, loadHistory]);
+
+  // Real-time synchronization for order delivery and approvals
+  React.useEffect(() => {
+    if (!isOpen) return;
+    const handleSync = () => {
+      loadHistory();
+    };
+    window.addEventListener('orders-updated', handleSync);
+    window.addEventListener('pornpong-order-delivered', handleSync);
+    window.addEventListener('pornpong-order-approved', handleSync);
+    return () => {
+      window.removeEventListener('orders-updated', handleSync);
+      window.removeEventListener('pornpong-order-delivered', handleSync);
+      window.removeEventListener('pornpong-order-approved', handleSync);
+    };
+  }, [isOpen, loadHistory]);
 
   if (!isOpen || !currentUser) return null;
 
@@ -591,19 +620,32 @@ export function ProfileModal({ isOpen, onClose, currentUser, onUpdateProfile, on
                           <span className="text-[10px] font-semibold text-slate-400">เมื่อ {order.date}</span>
                         </div>
                         <div className="flex items-center gap-2">
-                          <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[10px] font-bold ${
-                            order.status === 'กำลังตรวจสอบการชำระเงิน' || order.status === 'รอตรวจสอบสลิป'
+                          <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[10px] font-bold ${
+                            order.status === 'จัดส่งสำเร็จ'
+                              ? 'bg-emerald-100 text-emerald-800 border border-emerald-300 font-black shadow-2xs'
+                              : order.status === 'กำลังจัดส่ง'
+                              ? 'bg-sky-50 text-sky-700 border border-sky-200 font-bold'
+                              : order.status === 'กำลังตรวจสอบการชำระเงิน' || order.status === 'รอตรวจสอบสลิป'
                               ? 'bg-amber-50 text-amber-700 border border-amber-200'
-                              : order.status === 'ชำระเงินแล้ว' || order.status === 'จัดส่งสำเร็จ' || order.status === 'อนุมัติเรียบร้อย'
-                              ? 'bg-emerald-50 text-emerald-600'
+                              : order.status === 'ชำระเงินแล้ว' || order.status === 'ชำระเงินเสร็จสิ้น' || order.status === 'อนุมัติเรียบร้อย'
+                              ? 'bg-teal-50 text-teal-700 border border-teal-200'
                               : 'bg-slate-100 text-slate-600'
                           }`}>
-                            <span className={`w-1.5 h-1.5 rounded-full ${
-                              order.status === 'กำลังตรวจสอบการชำระเงิน' || order.status === 'รอตรวจสอบสลิป'
-                                ? 'bg-amber-500 animate-pulse'
-                                : 'bg-emerald-500'
-                            }`}></span>
-                            {order.status}
+                            {order.status === 'จัดส่งสำเร็จ' ? (
+                              <>
+                                <CheckCircle2 size={12} className="text-emerald-600" />
+                                <span>จัดส่งสำเร็จ</span>
+                              </>
+                            ) : (
+                              <>
+                                <span className={`w-1.5 h-1.5 rounded-full ${
+                                  order.status === 'กำลังตรวจสอบการชำระเงิน' || order.status === 'รอตรวจสอบสลิป'
+                                    ? 'bg-amber-500 animate-pulse'
+                                    : 'bg-slate-400'
+                                }`}></span>
+                                <span>{order.status}</span>
+                              </>
+                            )}
                           </span>
                           {/* Trash Icon Button for Deletion */}
                           <button
@@ -621,7 +663,15 @@ export function ProfileModal({ isOpen, onClose, currentUser, onUpdateProfile, on
                       <div className="flex flex-wrap items-center justify-between gap-2 mt-2 pt-2 border-t border-slate-100/60 text-[11px]">
                         <span className="text-slate-500">สีที่สั่ง: <b className="text-slate-700 font-semibold">{order.color}</b></span>
                         <div className="flex items-center gap-2">
-                          <span className="text-slate-400">รหัสสิ่งส่งของ: <code className="text-slate-700 font-medium font-mono">{order.shipmentNo}</code></span>
+                          {order.status === 'จัดส่งสำเร็จ' ? (
+                            <span className="inline-flex items-center gap-1.5 bg-emerald-50/80 text-emerald-800 border border-emerald-200/80 px-2.5 py-0.5 rounded-lg text-[10.5px] font-mono">
+                              <Truck size={12} className="text-emerald-600" />
+                              <span className="font-sans text-[10px] text-slate-500">เลขพัสดุ:</span>
+                              <strong>{order.shipmentNo}</strong>
+                            </span>
+                          ) : (
+                            <span className="text-slate-400">รหัสสิ่งส่งของ: <code className="text-slate-700 font-medium font-mono">{order.shipmentNo}</code></span>
+                          )}
                           <span className="font-black text-brand-blue">{order.amount}</span>
                         </div>
                       </div>

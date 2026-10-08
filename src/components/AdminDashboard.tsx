@@ -827,6 +827,16 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
 
   const changeOrderStatus = async (orderId: string, nextStatus: 'Pending' | 'Shipping' | 'Delivered') => {
     try {
+      const trackingNo = `TH-EX-${String(orderId).replace(/[^0-9]/g, '').slice(-6) || '291823'}`;
+      // Optimistically update React state immediately
+      setAdminOrders(prev => prev.map(o => o.id === orderId ? {
+        ...o,
+        status: nextStatus,
+        order_status: nextStatus === 'Delivered' ? 'completed' : nextStatus === 'Shipping' ? 'shipping' : 'pending',
+        shipmentNo: o.shipmentNo || trackingNo,
+        shipment_no: o.shipment_no || trackingNo
+      } : o));
+
       await supabaseOrders.updateStatus(orderId, nextStatus);
       await reloadOrders();
 
