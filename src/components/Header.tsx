@@ -48,11 +48,15 @@ export default function Header({
   const totalCartItems = cart.reduce((sum, item) => sum + item.quantity, 0);
   const unreadNotificationsCount = notifications.filter(n => !n.isRead).length;
 
-  // Dynamic tracking button mode: 'producing' | 'shipping' | 'hidden'
+  // Strict active orders state & tracking mode: 'producing' | 'shipping' | 'hidden'
+  const [activeOrders, setActiveOrders] = React.useState<any[]>([]);
   const [trackingStatus, setTrackingStatus] = React.useState<'producing' | 'shipping' | 'hidden'>('hidden');
 
+  // Strict Active Order Check: Queries current user's active orders from Supabase 'orders' table
   const checkUserOrders = React.useCallback(async () => {
+    // If user is not logged in or has no identification, strictly hide the button
     if (!currentUser) {
+      setActiveOrders([]);
       setTrackingStatus('hidden');
       return;
     }
@@ -60,141 +64,127 @@ export default function Header({
     const cleanUserId = currentUser.id?.trim() || '';
     const cleanEmail = (currentUser.email || '').toLowerCase().trim();
     const cleanPhone = (currentUser.phone || '').replace(/\D/g, '');
-    const cleanName = (currentUser.name || (currentUser as any).fullName || '').toLowerCase().trim();
 
-    // Check for deleted orders stored locally for this user
+    // Deleted orders key from ProfileModal
     const deletedOrdersKey = `pornpong_deleted_orders_${cleanUserId || cleanEmail || 'guest'}`;
     let deletedIds: string[] = [];
     try {
       deletedIds = JSON.parse(localStorage.getItem(deletedOrdersKey) || '[]');
     } catch {}
 
-    let fetchedOrders: any[] = [];
-    let fetchedPreOrders: any[] = [];
-    let deliveriesMap: Record<string, any> = {};
+    // Only query if user has at least one valid identifier
+    const conditions: string[] = [];
+    if (cleanUserId && cleanUserId !== 'guest') conditions.push(`customer_id.eq.${cleanUserId}`);
+    if (cleanEmail && cleanEmail !== 'guest@example.com') conditions.push(`customer_email.eq.${cleanEmail}`);
+    if (cleanPhone) conditions.push(`customer_phone.eq.${cleanPhone}`);
 
-    try {
-      const [oList, pList, dMap] = await Promise.all([
-        supabaseOrders.listByUserId(cleanUserId, cleanEmail, cleanPhone),
-        supabasePreOrders.listByUserId(cleanUserId, cleanPhone, cleanName),
-        supabaseDeliveries.getAll()
-      ]);
-      fetchedOrders = Array.isArray(oList) ? [...oList] : [];
-      fetchedPreOrders = Array.isArray(pList) ? [...pList] : [];
-      deliveriesMap = dMap || {};
-    } catch (fetchErr) {
-      console.warn('Header orders sync warning:', fetchErr);
-    }
-
-    // Merge with local storage admin_orders for immediate and offline consistency
-    try {
-      const localOrders: any[] = JSON.parse(localStorage.getItem('admin_orders') || '[]');
-      localOrders.forEach(lo => {
-        const matchUser = 
-          (cleanUserId && lo.customer_id === cleanUserId) ||
-          (cleanEmail && lo.customer_email && lo.customer_email.toLowerCase() === cleanEmail) ||
-          (cleanPhone && lo.customer_phone && lo.customer_phone.replace(/\D/g, '').includes(cleanPhone)) ||
-          (cleanName && lo.customer_name && lo.customer_name.toLowerCase().includes(cleanName));
-        if (matchUser && !fetchedOrders.some(fo => fo.id === lo.id)) {
-          fetchedOrders.push(lo);
-        }
-      });
-    } catch {}
-
-    // Merge with local storage admin_preorders
-    try {
-      const localPre: any[] = JSON.parse(localStorage.getItem('admin_preorders') || '[]');
-      localPre.forEach(lp => {
-        const matchUser = 
-          (cleanUserId && (lp.user_id === cleanUserId || lp.customer_id === cleanUserId)) ||
-          (cleanPhone && lp.phone && lp.phone.replace(/\D/g, '').includes(cleanPhone)) ||
-          (cleanName && lp.customerName && lp.customerName.toLowerCase().includes(cleanName));
-        if (matchUser && !fetchedPreOrders.some(fp => fp.id === lp.id)) {
-          fetchedPreOrders.push(lp);
-        }
-      });
-    } catch {}
-
-    // Filter out deleted IDs
-    const activeOrders = fetchedOrders.filter(o => !deletedIds.includes(o.id));
-    const activePreOrders = fetchedPreOrders.filter(p => !deletedIds.includes(p.id));
-
-    if (activeOrders.length === 0 && activePreOrders.length === 0) {
+    if (conditions.length === 0) {
+      setActiveOrders([]);
       setTrackingStatus('hidden');
       return;
     }
 
-    let hasShipping = false;
-    let hasProducing = false;
+    let rawOrders: any[] = [];
+    let deliveriesMap: Record<string, any> = {};
 
-    // Check normal orders
-    for (const ord of activeOrders) {
+    if (isSupabaseConfigured && supabase) {
+      try {
+        const [ordersRes, dMap] = await Promise.all([
+          supabase
+            .from('orders')
+            .select('*')
+            .or(conditions.join(','))
+            .order('created_at', { ascending: false }),
+          supabaseDeliveries.getAll()
+        ]);
+
+        if (!ordersRes.error && ordersRes.data) {
+          rawOrders = ordersRes.data;
+        }
+        deliveriesMap = dMap || {};
+      } catch (err) {
+        console.warn('Strict active orders sync warning from Supabase:', err);
+      }
+    }
+
+    // Filter strictly for active orders (must be in pending/producing/shipping status and NOT finished)
+    const validActiveOrders = rawOrders.filter((ord: any) => {
       const orderIdStr = String(ord.id).trim();
-      const delivery = deliveriesMap[orderIdStr] || deliveriesMap[ord.id];
+      if (deletedIds.includes(orderIdStr)) return false;
 
+      const delivery = deliveriesMap[orderIdStr] || deliveriesMap[ord.id];
       const delivStatus = String(delivery?.delivery_status || ord.delivery_status || '').toLowerCase().trim();
       const ordStatus = String(ord.status || ord.order_status || ord.payment_status || '').toLowerCase().trim();
       const qStage = Number(ord.queue_stage || delivery?.queue_stage || 0);
 
-      // 1. Delivered / Completed / Cancelled check
-      if (
+      // Condition 1: Check if delivered / completed / cancelled (Finished -> EXCLUDE)
+      const isFinished = 
         delivStatus === 'delivered' ||
         delivStatus === 'completed' ||
         ordStatus === 'delivered' ||
         ordStatus === 'completed' ||
         delivStatus === 'cancelled' ||
-        ordStatus === 'cancelled'
-      ) {
-        // Finished order - ignore
-        continue;
+        ordStatus === 'cancelled' ||
+        ordStatus === 'rejected';
+
+      if (isFinished) {
+        return false;
       }
 
-      // 2. In Transit / Shipping check
-      if (
+      // Condition 2: Check if in active in-progress status
+      const activeKeywords = [
+        'pending_verification',
+        'paid',
+        'producing',
+        'ready_to_ship',
+        'in_transit',
+        'shipping',
+        'shipped',
+        'queue_received',
+        'manufacturing',
+        'ready_for_shipping',
+        'ready',
+        'processing',
+        'pending_deposit',
+        'awaitingdeposit',
+        'pending',
+        'confirmed'
+      ];
+
+      return activeKeywords.includes(delivStatus) || activeKeywords.includes(ordStatus) || (qStage >= 1 && qStage <= 4);
+    });
+
+    // Update activeOrders state directly
+    setActiveOrders(validActiveOrders);
+
+    // If activeOrders.length === 0 or all orders completed/delivered, strictly hide the button
+    if (validActiveOrders.length === 0) {
+      setTrackingStatus('hidden');
+      return;
+    }
+
+    // Determine whether to display "ติดตามการจัดส่ง" (in transit) or "ติดตามคิวผลิต" (in production)
+    const hasShipping = validActiveOrders.some((ord: any) => {
+      const orderIdStr = String(ord.id).trim();
+      const delivery = deliveriesMap[orderIdStr] || deliveriesMap[ord.id];
+      const delivStatus = String(delivery?.delivery_status || ord.delivery_status || '').toLowerCase().trim();
+      const ordStatus = String(ord.status || ord.order_status || '').toLowerCase().trim();
+      const qStage = Number(ord.queue_stage || delivery?.queue_stage || 0);
+
+      return (
         delivStatus === 'in_transit' ||
         delivStatus === 'shipping' ||
         ordStatus === 'in_transit' ||
         ordStatus === 'shipping' ||
         ordStatus === 'shipped' ||
         qStage === 4
-      ) {
-        hasShipping = true;
-      } else {
-        // Any other in-progress status belongs to producing phase
-        hasProducing = true;
-      }
-    }
+      );
+    });
 
-    // Check custom pre-orders
-    for (const pre of activePreOrders) {
-      const preStatus = String(pre.status || pre.payment_status || '').toLowerCase().trim();
-      if (
-        preStatus === 'delivered' ||
-        preStatus === 'completed' ||
-        preStatus === 'cancelled' ||
-        preStatus === 'rejected'
-      ) {
-        continue;
-      }
-
-      if (preStatus === 'in_transit' || preStatus === 'shipping') {
-        hasShipping = true;
-      } else {
-        hasProducing = true;
-      }
-    }
-
-    if (hasShipping) {
-      setTrackingStatus('shipping');
-    } else if (hasProducing) {
-      setTrackingStatus('producing');
-    } else {
-      // All orders completed or delivered
-      setTrackingStatus('hidden');
-    }
+    setTrackingStatus(hasShipping ? 'shipping' : 'producing');
   }, [currentUser]);
 
-  // Real-time synchronization for Header Tracking Status
+  // Real-time synchronization for Header Tracking Status & Active Orders
   React.useEffect(() => {
     checkUserOrders();
 
@@ -202,7 +192,7 @@ export default function Header({
     if (isSupabaseConfigured && supabase) {
       try {
         channel = supabase
-          .channel('public:header-track-sync')
+          .channel('public:header-active-orders-sync')
           .on(
             'postgres_changes',
             { event: '*', schema: 'public', table: 'orders' },
@@ -211,11 +201,6 @@ export default function Header({
           .on(
             'postgres_changes',
             { event: '*', schema: 'public', table: 'deliveries' },
-            () => checkUserOrders()
-          )
-          .on(
-            'postgres_changes',
-            { event: '*', schema: 'public', table: 'preorders' },
             () => checkUserOrders()
           )
           .subscribe();
@@ -350,7 +335,7 @@ export default function Header({
                 {item.label}
               </button>
             ))}
-            {trackingStatus !== 'hidden' && (
+            {activeOrders.length > 0 && trackingStatus !== 'hidden' && (
               trackingStatus === 'shipping' ? (
                 <button
                   type="button"
@@ -601,7 +586,7 @@ export default function Header({
                 {item.label}
               </button>
             ))}
-            {trackingStatus !== 'hidden' && (
+            {activeOrders.length > 0 && trackingStatus !== 'hidden' && (
               trackingStatus === 'shipping' ? (
                 <button
                   type="button"
