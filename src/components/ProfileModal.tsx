@@ -28,6 +28,7 @@ import {
 import { 
   supabaseOrders, 
   supabasePreOrders, 
+  supabaseDeliveries,
   supabase, 
   isSupabaseConfigured,
   formatQueueId,
@@ -57,6 +58,7 @@ interface ProfileModalProps {
 interface OrderItem {
   id: string;
   queueId: string;
+  queue_number?: string;
   date: string;
   productName: string;
   color: string;
@@ -66,9 +68,14 @@ interface OrderItem {
   stageLabel: string;
   statusMessage: string;
   shipmentNo: string;
+  tracking_number?: string;
   estimatedDeliveryDate?: string;
+  estimated_delivery_date?: string;
   carrierName?: string;
+  shipping_carrier?: string;
   driverPhone?: string;
+  driver_phone?: string;
+  delivery_status?: string;
 }
 
 interface PreOrderItem {
@@ -197,12 +204,18 @@ export function ProfileModal({ isOpen, onClose, currentUser, onUpdateProfile, on
       const deletedOrdersKey = 'pornpong_deleted_orders';
       const deletedIds: string[] = JSON.parse(localStorage.getItem(deletedOrdersKey) || '[]');
 
-      // 1. Fetch Supabase Orders
+      // 1. Fetch Supabase Orders & Deliveries table (JOIN via order_id)
       let fetchedOrders: any[] = [];
+      let deliveriesMap: Record<string, any> = {};
       try {
-        fetchedOrders = await supabaseOrders.list();
+        const [ordersList, delivs] = await Promise.all([
+          supabaseOrders.list(),
+          supabaseDeliveries.getAll()
+        ]);
+        fetchedOrders = ordersList || [];
+        deliveriesMap = delivs || {};
       } catch (e) {
-        console.warn('Could not list orders from Supabase:', e);
+        console.warn('Could not list orders and deliveries from Supabase:', e);
       }
 
       // Filter orders for current user
@@ -216,31 +229,35 @@ export function ProfileModal({ isOpen, onClose, currentUser, onUpdateProfile, on
       });
 
       const mappedRemoteOrders: OrderItem[] = userOrders.map((o: any, idx: number) => {
-        const ordStatus = (o.status || o.order_status || '').toLowerCase();
-        const qId = o.queue_id || formatQueueId(o, idx);
+        const orderIdStr = String(o.id).trim();
+        const delivery = deliveriesMap[orderIdStr] || deliveriesMap[o.id];
 
-        const estDate = o.estimated_delivery_date || o.est_delivery || 'กำลังประสานงานคิวจัดส่ง';
-        const carrier = o.carrier_name || 'รถโรงงานพรพงศ์พลาสติก';
-        const driver = o.driver_phone || '089-456-7890';
-        const trackingNo = o.shipmentNo || o.shipment_no || `TH-EX-${String(o.id).replace(/[^0-9]/g, '').slice(-6) || '291823'}`;
+        // Read real-time delivery columns joined by order_id
+        const queueNum = delivery?.queue_number || o.queue_number || o.queue_id || formatQueueId(o, idx);
+        const carrier = delivery?.shipping_carrier || o.shipping_carrier || o.carrier_name || 'รถโรงงานพรพงศ์พลาสติก (สายส่งด่วน)';
+        const driver = delivery?.driver_phone || o.driver_phone || '089-456-7890';
+        const trackingNo = delivery?.tracking_number || o.tracking_number || o.shipmentNo || o.shipment_no || `TH-EX-${String(o.id).replace(/[^0-9]/g, '').slice(-6) || '291823'}`;
+        const estDate = delivery?.estimated_delivery_date || o.estimated_delivery_date || o.est_delivery || '';
+        const delivStatus = (delivery?.delivery_status || '').toLowerCase();
+        const ordStatus = (o.status || o.order_status || '').toLowerCase();
 
         let stageNumber: 1 | 2 | 3 | 4 = 1;
         let stageLabel = 'รับคิวผลิต';
         let statusMessage = 'โรงงานลงทะเบียนรับคิวผลิตของคุณเข้าระบบเรียบร้อยแล้ว';
 
-        if (ordStatus === 'delivered' || ordStatus === 'completed') {
+        if (delivStatus === 'delivered' || delivStatus === 'completed' || ordStatus === 'delivered' || ordStatus === 'completed') {
           stageNumber = 4;
           stageLabel = 'จัดส่งสำเร็จ';
           statusMessage = 'จัดส่งสำเร็จเรียบร้อยแล้ว - ขอบคุณที่ไว้วางใจใช้บริการพรพงศ์พลาสติก';
-        } else if (ordStatus === 'in_transit' || ordStatus === 'shipped' || ordStatus === 'shipping' || o.queue_stage === 4) {
+        } else if (delivStatus === 'in_transit' || ordStatus === 'in_transit' || ordStatus === 'shipped' || ordStatus === 'shipping' || o.queue_stage === 4) {
           stageNumber = 4;
           stageLabel = 'อยู่ระหว่างจัดส่ง';
-          statusMessage = `สินค้าอยู่ระหว่างจัดส่ง - ขนส่ง: ${carrier} | เบอร์คนขับ/Tracking: ${driver} / ${trackingNo}`;
-        } else if (ordStatus === 'ready_for_shipping' || ordStatus === 'ready' || o.queue_stage === 3) {
+          statusMessage = `สินค้าอยู่ระหว่างจัดส่ง - ขนส่ง: ${carrier} | เบอร์คนขับ: ${driver} | Tracking: ${trackingNo}`;
+        } else if (delivStatus === 'ready_for_shipping' || ordStatus === 'ready_for_shipping' || ordStatus === 'ready' || o.queue_stage === 3) {
           stageNumber = 3;
           stageLabel = 'รอขนย้าย';
-          statusMessage = `เรือผลิตเสร็จแล้ว - คาดว่าจะจัดส่งวันที่: ${estDate}`;
-        } else if (ordStatus === 'manufacturing' || ordStatus === 'processing' || ordStatus === 'paid' || o.queue_stage === 2) {
+          statusMessage = `เรือผลิตเสร็จแล้ว - คาดว่าจะจัดส่งวันที่: ${estDate || 'กำลังประสานงานคิวจัดส่ง'}`;
+        } else if (delivStatus === 'manufacturing' || ordStatus === 'manufacturing' || ordStatus === 'processing' || ordStatus === 'paid' || o.queue_stage === 2) {
           stageNumber = 2;
           stageLabel = 'กำลังหลอม/ผลิต';
           statusMessage = 'กำลังหลอมเรือตามสเปกที่คุณออกแบบ';
@@ -255,7 +272,8 @@ export function ProfileModal({ isOpen, onClose, currentUser, onUpdateProfile, on
 
         return {
           id: o.id,
-          queueId: qId,
+          queueId: queueNum,
+          queue_number: queueNum,
           date: o.date || (o.created_at ? new Date(o.created_at).toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric' }) : 'เมื่อเร็วๆ นี้'),
           productName: o.productName || 'เรือพลาสติกและอุปกรณ์',
           color: o.color || 'คละสี',
@@ -265,9 +283,14 @@ export function ProfileModal({ isOpen, onClose, currentUser, onUpdateProfile, on
           stageLabel,
           statusMessage,
           shipmentNo: trackingNo,
+          tracking_number: trackingNo,
           estimatedDeliveryDate: estDate,
+          estimated_delivery_date: estDate,
           carrierName: carrier,
-          driverPhone: driver
+          shipping_carrier: carrier,
+          driverPhone: driver,
+          driver_phone: driver,
+          delivery_status: delivStatus || ordStatus
         };
       });
 
@@ -361,17 +384,26 @@ export function ProfileModal({ isOpen, onClose, currentUser, onUpdateProfile, on
     window.addEventListener('pornpong-order-delivered', handleSync);
     window.addEventListener('pornpong-order-approved', handleSync);
     window.addEventListener('pornpong-queue-updated', handleQueueSync);
+    window.addEventListener('pornpong-delivery-updated', handleSync);
     window.addEventListener('storage', handleSync);
 
-    // Supabase Realtime Channel Subscription
+    // Supabase Realtime Channel Subscription for both orders and deliveries tables
     let channel: any = null;
     if (isSupabaseConfigured && supabase) {
       try {
         channel = supabase
-          .channel('public:orders-queue-realtime')
+          .channel('public:orders-deliveries-realtime')
           .on(
             'postgres_changes',
             { event: '*', schema: 'public', table: 'orders' },
+            () => {
+              loadHistory();
+              setActiveFactoryQueue(getActiveProductionQueue());
+            }
+          )
+          .on(
+            'postgres_changes',
+            { event: '*', schema: 'public', table: 'deliveries' },
             () => {
               loadHistory();
               setActiveFactoryQueue(getActiveProductionQueue());
@@ -388,6 +420,7 @@ export function ProfileModal({ isOpen, onClose, currentUser, onUpdateProfile, on
       window.removeEventListener('pornpong-order-delivered', handleSync);
       window.removeEventListener('pornpong-order-approved', handleSync);
       window.removeEventListener('pornpong-queue-updated', handleQueueSync);
+      window.removeEventListener('pornpong-delivery-updated', handleSync);
       window.removeEventListener('storage', handleSync);
       if (channel && supabase) {
         supabase.removeChannel(channel);

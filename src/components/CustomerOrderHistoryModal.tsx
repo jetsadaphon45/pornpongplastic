@@ -293,11 +293,33 @@ export function CustomerOrderHistoryModal({
                           <p className="text-[11px] text-slate-500 mt-0.5">
                             โทนสี: {ord.color || 'คละสี'} | ผู้สั่ง: {ord.customer_name || customer.name}
                           </p>
-                          {ord.shipmentNo && (
-                            <div className="mt-1.5 inline-flex items-center gap-1.5 bg-emerald-50 text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded-lg text-[10.5px] font-mono font-bold">
-                              <Truck size={12} className="text-emerald-600" />
-                              <span>เลขพัสดุขนส่ง:</span>
-                              <span className="text-slate-900 bg-white px-1.5 py-0.2 rounded border border-emerald-200">{ord.shipmentNo}</span>
+                          {(ord.shipping_carrier || ord.carrier_name || ord.tracking_number || ord.shipmentNo || ord.driver_phone) && (
+                            <div className="mt-2 p-2 rounded-xl bg-slate-50 border border-slate-200 text-[11px] space-y-1">
+                              {(ord.shipping_carrier || ord.carrier_name) && (
+                                <div className="flex items-center gap-1.5 text-slate-700">
+                                  <Truck size={12} className="text-sky-600 shrink-0" />
+                                  <span className="text-slate-500">ขนส่ง:</span>
+                                  <span className="font-semibold text-slate-800">{ord.shipping_carrier || ord.carrier_name}</span>
+                                </div>
+                              )}
+                              {ord.driver_phone && (
+                                <div className="flex items-center gap-1.5 text-slate-700">
+                                  <Phone size={12} className="text-emerald-600 shrink-0" />
+                                  <span className="text-slate-500">เบอร์คนขับ:</span>
+                                  <a href={`tel:${ord.driver_phone}`} className="font-mono font-bold text-emerald-700 hover:underline">
+                                    {ord.driver_phone}
+                                  </a>
+                                </div>
+                              )}
+                              {(ord.tracking_number || ord.shipmentNo || ord.shipment_no) && (
+                                <div className="flex items-center gap-1.5 text-slate-700">
+                                  <span className="text-[10px] font-bold px-1 rounded bg-amber-100 text-amber-800 shrink-0">TRACK</span>
+                                  <span className="text-slate-500">เลขพัสดุ:</span>
+                                  <span className="font-mono font-bold text-slate-900 bg-white px-1.5 py-0.5 rounded border border-slate-200">
+                                    {ord.tracking_number || ord.shipmentNo || ord.shipment_no}
+                                  </span>
+                                </div>
+                              )}
                             </div>
                           )}
                         </div>

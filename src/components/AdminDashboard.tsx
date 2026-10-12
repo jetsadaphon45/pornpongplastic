@@ -60,6 +60,7 @@ import {
   supabase, 
   supabaseCustomers,
   supabaseOrders,
+  supabaseDeliveries,
   supabasePreOrders,
   supabaseCoupons,
   supabaseReviews,
@@ -853,6 +854,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
       driver_phone?: string;
       shipment_no?: string;
       status_message?: string;
+      delivery_status?: string;
     } = {},
     statusLabel: string,
     notificationMsg: string
@@ -1004,12 +1006,24 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
     setInTransitOrder(null);
   };
 
-  const handleSelectDelivered = (order: any) => {
+  const handleSelectDelivered = async (order: any) => {
     const orderId = order.id;
     const msg = `รายการสั่งซื้อหมายเลข #${orderId} จัดส่งสำเร็จเรียบร้อยแล้ว - ขอบคุณที่ไว้วางใจใช้บริการพรพงศ์พลาสติก`;
-    executeOrderStatusChange(orderId, 'delivered', {
-      status_message: 'จัดส่งสำเร็จเรียบร้อยแล้ว - ขอบคุณที่ไว้วางใจใช้บริการพรพงศ์พลาสติก'
+    
+    // 1. UPSERT delivery_status = 'delivered' in separate deliveries table
+    await supabaseDeliveries.upsert({
+      order_id: String(orderId),
+      delivery_status: 'delivered'
+    });
+
+    // 2. Update status = 'delivered' and order_status = 'completed' in orders table
+    await executeOrderStatusChange(orderId, 'delivered', {
+      status_message: msg,
+      delivery_status: 'delivered'
     }, 'จัดส่งสำเร็จ', msg);
+
+    // Switch tab to completed history to view the completed order immediately
+    triggerToast(`คำสั่งซื้อ #${orderId} จัดส่งสำเร็จ! ย้ายไปแท็บ "ประวัติคำสั่งซื้อสำเร็จ (Completed History)" เรียบร้อยแล้ว`);
   };
 
   const changeOrderStatus = (orderId: string, nextStatus: string) => {
@@ -1038,6 +1052,42 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
   const [queueCarrier, setQueueCarrier] = React.useState<string>('รถโรงงานพรพงศ์พลาสติก (สายส่งด่วน)');
   const [queueDriverPhone, setQueueDriverPhone] = React.useState<string>('089-456-7890');
   const [queueTrackingNo, setQueueTrackingNo] = React.useState<string>('');
+  const [queueEstDate, setQueueEstDate] = React.useState<string>('');
+
+  // Issue / Edit Queue Number state (บันทึกลง deliveries table)
+  const [editingQueueOrder, setEditingQueueOrder] = React.useState<any | null>(null);
+  const [newQueueNumberInput, setNewQueueNumberInput] = React.useState<string>('');
+
+  const handleSaveQueueNumber = async () => {
+    if (!editingQueueOrder) return;
+    const qNum = newQueueNumberInput.trim().toUpperCase();
+    if (!qNum) {
+      triggerToast('กรุณาระบุเลขคิว (เช่น Q-2610-015)');
+      return;
+    }
+    const orderId = editingQueueOrder.id;
+
+    setAdminOrders(prev => prev.map(o => o.id === orderId ? {
+      ...o,
+      queue_id: qNum,
+      queue_number: qNum
+    } : o));
+
+    // 1. UPSERT into deliveries table
+    await supabaseDeliveries.upsert({
+      order_id: String(orderId),
+      queue_number: qNum,
+      delivery_status: editingQueueOrder.delivery_status || editingQueueOrder.order_status || 'queue_received'
+    });
+
+    // 2. Update orders table
+    await supabaseOrders.updateQueueStage(orderId, editingQueueOrder.queue_stage || 1, {
+      queue_number: qNum
+    });
+
+    triggerToast(`ออกเลขคิว [${qNum}] สำหรับออเดอร์ #${orderId} บันทึกลงตาราง deliveries เรียบร้อยแล้ว!`);
+    setEditingQueueOrder(null);
+  };
 
   // Synchronize active production queue on mount and when external events occur
   React.useEffect(() => {
@@ -1141,16 +1191,17 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
   const handleQueueStageChange = (order: any, nextStage: 1 | 2 | 3 | 4) => {
     if (nextStage === 4) {
       setQueueShippingModalOrder(order);
-      setQueueCarrier(order.carrier_name || 'รถโรงงานพรพงศ์พลาสติก (สายส่งด่วน)');
+      setQueueCarrier(order.shipping_carrier || order.carrier_name || 'รถโรงงานพรพงศ์พลาสติก (สายส่งด่วน)');
       setQueueDriverPhone(order.driver_phone || '089-456-7890');
-      const tracking = order.shipmentNo || order.shipment_no || `TH-EX-${String(order.id).replace(/[^0-9]/g, '').slice(-6) || '291823'}`;
+      const tracking = order.tracking_number || order.shipmentNo || order.shipment_no || `TH-EX-${String(order.id).replace(/[^0-9]/g, '').slice(-6) || '291823'}`;
       setQueueTrackingNo(tracking);
+      setQueueEstDate(order.estimated_delivery_date || new Date(Date.now() + 2 * 86400000).toISOString().split('T')[0]);
       return;
     }
 
     if (nextStage === 2) {
-      setActiveProductionQueueId(order.queue_id);
-      setActiveProductionQueue(order.queue_id);
+      setActiveProductionQueueId(order.queue_id || order.queue_number);
+      setActiveProductionQueue(order.queue_id || order.queue_number);
     }
 
     const stageStatusMap: Record<number, string> = {
@@ -1160,16 +1211,36 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
       4: 'in_transit'
     };
     const mapped = stageStatusMap[nextStage];
+    const qNum = order.queue_number || order.queue_id;
 
     setAdminOrders(prev => prev.map(o => o.id === order.id ? {
       ...o,
       queue_stage: nextStage,
       queue_status: mapped,
       order_status: mapped,
-      status: mapped
+      status: mapped,
+      delivery_status: mapped,
+      queue_number: qNum
     } : o));
 
-    supabaseOrders.updateQueueStage(order.id, nextStage);
+    // UPSERT into deliveries table referencing order_id
+    supabaseDeliveries.upsert({
+      order_id: String(order.id),
+      queue_number: qNum,
+      delivery_status: mapped,
+      shipping_carrier: order.shipping_carrier || order.carrier_name,
+      driver_phone: order.driver_phone,
+      tracking_number: order.tracking_number || order.shipmentNo || order.shipment_no,
+      estimated_delivery_date: order.estimated_delivery_date
+    });
+
+    supabaseOrders.updateQueueStage(order.id, nextStage, {
+      queue_number: qNum,
+      shipping_carrier: order.shipping_carrier || order.carrier_name,
+      driver_phone: order.driver_phone,
+      tracking_number: order.tracking_number || order.shipmentNo || order.shipment_no,
+      estimated_delivery_date: order.estimated_delivery_date
+    });
 
     const labels: Record<number, string> = {
       1: 'รับคิวผลิต',
@@ -1177,12 +1248,12 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
       3: 'รอขนย้าย',
       4: 'อยู่ระหว่างจัดส่ง'
     };
-    triggerToast(`อัปเดตคิว ${order.queue_id} เป็น [${labels[nextStage]}] สำเร็จ`);
+    triggerToast(`อัปเดตคิว ${qNum} เป็น [${labels[nextStage]}] บันทึกลงตาราง deliveries สำเร็จ`);
 
     const notif: AppNotification = {
       id: 'noti-queue-st-' + Date.now(),
-      title: `อัปเดตสถานะคิว ${order.queue_id}: ${labels[nextStage]}`,
-      message: `คิว ${order.queue_id} (${order.productName || 'เรือพลาสติก'}) ปรับเข้าสู่ขั้นตอนที่ ${nextStage}: ${labels[nextStage]}`,
+      title: `อัปเดตสถานะคิว ${qNum}: ${labels[nextStage]}`,
+      message: `คิว ${qNum} (${order.productName || 'เรือพลาสติก'}) ปรับเข้าสู่ขั้นตอนที่ ${nextStage}: ${labels[nextStage]}`,
       type: 'order',
       date: 'เมื่อสักครู่',
       isRead: false
@@ -1190,13 +1261,14 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
     setNotifications(prev => [notif, ...prev]);
   };
 
-  const handleConfirmQueueShipping = () => {
+  const handleConfirmQueueShipping = async () => {
     if (!queueShippingModalOrder) return;
     const orderId = queueShippingModalOrder.id;
-    const qId = queueShippingModalOrder.queue_id;
+    const qId = queueShippingModalOrder.queue_number || queueShippingModalOrder.queue_id;
     const carrier = queueCarrier.trim() || 'รถโรงงานพรพงศ์พลาสติก (สายส่งด่วน)';
     const driver = queueDriverPhone.trim() || '089-456-7890';
     const tracking = queueTrackingNo.trim() || `TH-EX-${String(orderId).replace(/[^0-9]/g, '').slice(-6) || '291823'}`;
+    const estDate = queueEstDate.trim() || '';
 
     setAdminOrders(prev => prev.map(o => o.id === orderId ? {
       ...o,
@@ -1204,19 +1276,40 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
       queue_status: 'in_transit',
       order_status: 'in_transit',
       status: 'in_transit',
+      queue_number: qId,
+      shipping_carrier: carrier,
       carrier_name: carrier,
       driver_phone: driver,
+      tracking_number: tracking,
       shipmentNo: tracking,
-      shipment_no: tracking
+      shipment_no: tracking,
+      estimated_delivery_date: estDate,
+      delivery_status: 'in_transit'
     } : o));
 
-    supabaseOrders.updateQueueStage(orderId, 4, {
-      carrier_name: carrier,
+    // 1. UPSERT directly into separate deliveries table
+    await supabaseDeliveries.upsert({
+      order_id: String(orderId),
+      queue_number: qId,
+      shipping_carrier: carrier,
       driver_phone: driver,
-      shipment_no: tracking
+      tracking_number: tracking,
+      estimated_delivery_date: estDate,
+      delivery_status: 'in_transit'
     });
 
-    triggerToast(`คิว ${qId} บันทึกข้อมูลขนส่งและเข้าสู่ขั้นตอน [อยู่ระหว่างจัดส่ง] แล้ว!`);
+    // 2. Update orders table in Supabase
+    await supabaseOrders.updateQueueStage(orderId, 4, {
+      queue_number: qId,
+      shipping_carrier: carrier,
+      carrier_name: carrier,
+      driver_phone: driver,
+      tracking_number: tracking,
+      shipment_no: tracking,
+      estimated_delivery_date: estDate
+    });
+
+    triggerToast(`คิว ${qId} บันทึกลงตาราง deliveries และเข้าสู่ขั้นตอน [อยู่ระหว่างจัดส่ง] แล้ว!`);
 
     const notif: AppNotification = {
       id: 'noti-queue-ship-' + Date.now(),
@@ -2610,12 +2703,12 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                                 isCurrentActive ? 'bg-amber-50/30' : ''
                               }`}
                             >
-                              {/* 1. Queue ID */}
+                              {/* 1. Queue ID & Issue Queue Button */}
                               <td className="py-3.5 px-4 align-top">
-                                <div className="space-y-1">
-                                  <div className="flex items-center gap-1.5">
+                                <div className="space-y-1.5">
+                                  <div className="flex items-center gap-1.5 flex-wrap">
                                     <span className="font-mono text-xs font-black px-2.5 py-1 rounded-lg bg-slate-900 text-amber-400 border border-slate-800 shadow-2xs">
-                                      {order.queue_id}
+                                      {order.queue_number || order.queue_id}
                                     </span>
                                     {isCurrentActive && (
                                       <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
@@ -2624,9 +2717,23 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                                       </span>
                                     )}
                                   </div>
-                                  <span className="block text-[10px] text-slate-400 font-mono">
-                                    #{order.id}
-                                  </span>
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-[10px] text-slate-400 font-mono">
+                                      #{order.id}
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setEditingQueueOrder(order);
+                                        setNewQueueNumberInput(order.queue_number || order.queue_id || formatQueueId(order));
+                                      }}
+                                      className="text-[9.5px] font-bold text-sky-700 hover:text-sky-900 bg-sky-50 hover:bg-sky-100 border border-sky-200 px-1.5 py-0.5 rounded cursor-pointer transition-colors inline-flex items-center gap-1"
+                                      title="ออกเลขคิว / แก้ไขเลขคิวเพื่อบันทึกลงตาราง deliveries"
+                                    >
+                                      <Tag size={10} />
+                                      <span>ออก/แก้เลขคิว</span>
+                                    </button>
+                                  </div>
                                 </div>
                               </td>
 
@@ -2669,7 +2776,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                                 </div>
                               </td>
 
-                              {/* 4. Mini Stepper Progress */}
+                              {/* 4. Mini Stepper Progress & Delivery Metadata */}
                               <td className="py-3.5 px-4 align-top">
                                 <div className="space-y-1.5">
                                   <div className="flex items-center gap-1">
@@ -2713,16 +2820,29 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                                     )}
                                   </div>
 
-                                  {/* In transit metadata preview */}
-                                  {currentStage === 4 && order.shipmentNo && (
-                                    <div className="text-[9.5px] text-slate-500 font-mono">
-                                      ขนส่ง: {order.carrier_name || 'รถโรงงาน'} • Tracking: {order.shipmentNo}
+                                  {/* Delivery Metadata Preview (Joined from deliveries table) */}
+                                  {(order.shipping_carrier || order.carrier_name || order.driver_phone || order.tracking_number || order.shipmentNo || order.estimated_delivery_date) && (
+                                    <div className="text-[9.5px] text-slate-600 bg-slate-50 p-2 rounded-xl border border-slate-200/80 space-y-0.5 font-mono">
+                                      <div className="font-semibold truncate">
+                                        🚚 ขนส่ง: <span className="font-bold text-slate-800">{order.shipping_carrier || order.carrier_name || 'รถโรงงาน'}</span>
+                                      </div>
+                                      {order.driver_phone && (
+                                        <div>📞 คนขับ: <span className="text-slate-800">{order.driver_phone}</span></div>
+                                      )}
+                                      {(order.tracking_number || order.shipmentNo) && (
+                                        <div className="truncate">
+                                          📦 Tracking: <span className="font-bold text-amber-700">{order.tracking_number || order.shipmentNo}</span>
+                                        </div>
+                                      )}
+                                      {order.estimated_delivery_date && (
+                                        <div>📅 กำหนดส่ง: <span className="text-emerald-700">{order.estimated_delivery_date}</span></div>
+                                      )}
                                     </div>
                                   )}
                                 </div>
                               </td>
 
-                              {/* 5. 4-Stage Action Buttons */}
+                              {/* 5. 4-Stage Action Buttons + Delivered Finish Button */}
                               <td className="py-3.5 px-4 align-top">
                                 <div className="flex items-center justify-center gap-1.5 flex-wrap">
                                   {/* Button 1: รับคิวผลิต */}
@@ -2779,10 +2899,21 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                                         ? 'bg-emerald-600 text-white shadow-xs font-black scale-102 ring-2 ring-emerald-200'
                                         : 'bg-slate-100 hover:bg-emerald-50 text-slate-600 hover:text-emerald-700 border border-slate-200/80'
                                     }`}
-                                    title="ขั้นตอนที่ 4: อยู่ระหว่างจัดส่ง (เปิดแบบฟอร์มกรอกข้อมูลขนส่ง)"
+                                    title="ขั้นตอนที่ 4: อยู่ระหว่างจัดส่ง (เปิดแบบฟอร์มกรอกข้อมูลขนส่ง บันทึกลง deliveries)"
                                   >
                                     <Truck size={11} className={currentStage === 4 ? 'block' : 'hidden'} />
                                     <span>4. อยู่ระหว่างจัดส่ง</span>
+                                  </button>
+
+                                  {/* Button 5: ส่งสำเร็จ (ย้ายไปแท็บ Completed History) */}
+                                  <button
+                                    type="button"
+                                    onClick={() => handleSelectDelivered(order)}
+                                    className="px-2.5 py-1.5 rounded-xl text-[10.5px] font-black transition-all cursor-pointer flex items-center gap-1 bg-emerald-700 hover:bg-emerald-800 text-white shadow-xs"
+                                    title="ขั้นตอนสำเร็จ: จัดส่งสำเร็จ (อัปเดต delivery_status เป็น delivered และย้ายไปแท็บประวัติคำสั่งซื้อสำเร็จ)"
+                                  >
+                                    <CheckCircle2 size={11} />
+                                    <span>✓ ส่งสำเร็จ</span>
                                   </button>
                                 </div>
                               </td>
@@ -5925,10 +6056,24 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                   id="input-queue-tracking-no"
                 />
               </div>
+
+              {/* Field 4: กำหนดส่งถึงโดยประมาณ (Estimated Delivery Date) */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  กำหนดส่งถึงโดยประมาณ (Estimated Delivery Date)
+                </label>
+                <input 
+                  type="date"
+                  value={queueEstDate}
+                  onChange={(e) => setQueueEstDate(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 outline-none focus:bg-white focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/20"
+                  id="input-queue-est-date"
+                />
+              </div>
             </div>
 
             <p className="text-[11px] text-slate-600 leading-relaxed bg-emerald-50/70 p-3 rounded-xl border border-emerald-150">
-              ⚡ เมื่อกดบันทึก ระบบจะอัปเดตตาราง <code className="font-mono text-emerald-700 font-bold">orders</code> ใน Supabase ทันที พร้อมยิงข้อมูล Real-time ไปแสดงผลใน <b>"บัตรติดตามคิว"</b> ฝั่งลูกค้า
+              ⚡ เมื่อกดบันทึก ระบบจะส่งคำสั่ง <b>UPSERT</b> ไปยังตาราง <code className="font-mono text-emerald-700 font-bold">deliveries</code> โดยอ้างอิงผ่าน <b>order_id</b> บันทึกคอลัมน์ <code className="font-mono text-emerald-700">queue_number, shipping_carrier, driver_phone, tracking_number, estimated_delivery_date</code> ทันที และซิงค์เข้าตาราง orders
             </p>
 
             {/* Action buttons */}
@@ -5948,6 +6093,103 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
               >
                 <Check size={14} />
                 <span>ยืนยันเข้าสู่ [อยู่ระหว่างจัดส่ง]</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 4: ISSUE / EDIT QUEUE NUMBER (ออกเลขคิว / แก้ไขเลขคิว บันทึกลง deliveries table) */}
+      {editingQueueOrder && (
+        <div 
+          className="fixed inset-0 z-[125] flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 animate-fadeIn font-sans"
+          onClick={() => setEditingQueueOrder(null)}
+        >
+          <div 
+            className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-slate-200 text-left space-y-4 animate-scaleIn relative"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between pb-3 border-b border-slate-150">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-2xl bg-sky-50 text-sky-600 flex items-center justify-center font-bold border border-sky-200 shadow-xs">
+                  <Tag size={20} />
+                </div>
+                <div>
+                  <h3 className="font-display text-base font-black text-slate-800">
+                    ออกเลขคิวผลิต (Queue ID)
+                  </h3>
+                  <span className="text-[11px] text-slate-400 font-mono">
+                    คำสั่งซื้อ #{editingQueueOrder.id}
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingQueueOrder(null)}
+                className="p-1.5 rounded-full hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Input Form */}
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  เลขคิวการผลิต (Format: Q-YYMM-XXX) <span className="text-rose-500">*</span>
+                </label>
+                <input 
+                  type="text"
+                  value={newQueueNumberInput}
+                  onChange={(e) => setNewQueueNumberInput(e.target.value.toUpperCase())}
+                  placeholder="เช่น Q-2610-015"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 font-mono font-bold outline-none focus:bg-white focus:border-sky-500 focus:ring-1 focus:ring-sky-500/20"
+                  id="input-new-queue-number"
+                />
+              </div>
+
+              {/* Quick suggestions */}
+              <div className="flex flex-wrap gap-1.5">
+                {[
+                  formatQueueId(editingQueueOrder),
+                  formatQueueId(editingQueueOrder, 1),
+                  formatQueueId(editingQueueOrder, 5),
+                  formatQueueId(editingQueueOrder, 11)
+                ].filter((v, i, a) => a.indexOf(v) === i).map((suggest) => (
+                  <button
+                    key={suggest}
+                    type="button"
+                    onClick={() => setNewQueueNumberInput(suggest)}
+                    className="text-[10.5px] font-mono font-bold bg-sky-50 hover:bg-sky-100 text-sky-800 border border-sky-200 px-2.5 py-1 rounded-lg cursor-pointer transition-colors"
+                  >
+                    {suggest}
+                  </button>
+                ))}
+              </div>
+
+              <p className="text-[11px] text-slate-600 bg-sky-50/70 p-3 rounded-xl border border-sky-150 leading-relaxed">
+                ⚡ ระบบจะส่งคำสั่ง <b>UPSERT</b> ลงคอลัมน์ <code className="font-mono text-sky-700 font-bold">queue_number</code> ในตาราง <b>deliveries</b> และอัปเดต <b>orders</b> ทันที
+              </p>
+            </div>
+
+            {/* Actions */}
+            <div className="flex items-center gap-2.5 pt-1">
+              <button
+                type="button"
+                onClick={() => setEditingQueueOrder(null)}
+                className="flex-1 py-2.5 rounded-xl border border-slate-200 hover:bg-slate-100 text-slate-600 font-bold text-xs cursor-pointer transition-colors"
+              >
+                ยกเลิก
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveQueueNumber}
+                className="flex-1 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs shadow-md shadow-sky-600/20 cursor-pointer transition-all active:scale-[0.99] flex items-center justify-center gap-1.5"
+                id="btn-save-queue-number"
+              >
+                <Save size={14} />
+                <span>บันทึกเลขคิว</span>
               </button>
             </div>
           </div>

@@ -41,6 +41,46 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, t
   const [slipError, setSlipError] = React.useState<string | null>(null);
   const [isProcessing, setIsProcessing] = React.useState(false);
 
+  // 3-Second Auto-Redirect countdown state when payment is completed
+  const [autoRedirectCountdown, setAutoRedirectCountdown] = React.useState<number>(3);
+  const hasRedirectedRef = React.useRef(false);
+
+  const handleReturnHome = React.useCallback(() => {
+    if (hasRedirectedRef.current) return;
+    hasRedirectedRef.current = true;
+    if (onBackToHome) {
+      onBackToHome();
+    } else {
+      window.location.href = '/';
+    }
+    if (typeof window !== 'undefined' && window.location.pathname !== '/') {
+      window.history.pushState(null, '', '/');
+    }
+  }, [onBackToHome]);
+
+  // 3-Second Auto-Redirect effect when entering 'approved' step
+  React.useEffect(() => {
+    if (step !== 'approved') return;
+
+    setAutoRedirectCountdown(3);
+    hasRedirectedRef.current = false;
+
+    const timer = setInterval(() => {
+      setAutoRedirectCountdown((prev) => {
+        if (prev <= 1) {
+          clearInterval(timer);
+          handleReturnHome();
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => {
+      clearInterval(timer);
+    };
+  }, [step, handleReturnHome]);
+
   // Fallback initial order info
   const [activeOrder, setActiveOrder] = React.useState<any>(order || {
     id: 'PP-ORD-' + Math.floor(1000 + Math.random() * 9000),
@@ -630,17 +670,34 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, t
             </div>
           </div>
 
-          {/* Action Button: Centered Return to Home */}
-          <div className="pt-2 flex justify-center">
+          {/* Action Button: Centered Return to Home with 3-Second Auto-Redirect */}
+          <div className="pt-2 flex flex-col items-center gap-2.5">
             <button
               type="button"
-              onClick={onBackToHome}
+              onClick={handleReturnHome}
               className="w-full sm:w-auto sm:min-w-[260px] px-8 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-display font-bold text-xs py-4 cursor-pointer shadow-md hover:shadow-lg transition-all duration-200 flex items-center justify-center gap-2 active:scale-[0.99]"
               id="btn-return-home-from-approved"
             >
               <ArrowLeft size={16} />
               <span>กลับสู่หน้าแรก</span>
             </button>
+            <p className="text-[11.5px] text-slate-500 font-medium flex items-center gap-1.5 animate-pulse">
+              <Clock size={12} className="text-emerald-600" />
+              <span>กำลังนำท่านกลับสู่หน้าหลักใน {autoRedirectCountdown} วินาที...</span>
+            </p>
+            {onViewOrderHistory && (
+              <button
+                type="button"
+                onClick={() => {
+                  hasRedirectedRef.current = true;
+                  onViewOrderHistory();
+                }}
+                className="text-[11.5px] text-emerald-700 hover:text-emerald-800 font-bold underline transition-colors cursor-pointer mt-0.5"
+                id="btn-view-order-history-from-approved"
+              >
+                ดูสถานะและติดตามคิวผลิตในประวัติคำสั่งซื้อ
+              </button>
+            )}
           </div>
 
         </div>

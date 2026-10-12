@@ -1169,59 +1169,229 @@ export const supabaseUserAddresses = {
   }
 };
 
+// -------------------------------------------------------------
+// SEPARATE DELIVERIES TABLE ARCHITECTURE (Supabase deliveries table)
+// -------------------------------------------------------------
+export interface DeliveryRecord {
+  id?: string;
+  order_id: string;
+  queue_number?: string;
+  shipping_carrier?: string;
+  driver_phone?: string;
+  tracking_number?: string;
+  estimated_delivery_date?: string;
+  delivery_status?: 'queue_received' | 'manufacturing' | 'ready_for_shipping' | 'in_transit' | 'delivered' | string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export const supabaseDeliveries = {
+  async getByOrderId(orderId: string): Promise<DeliveryRecord | null> {
+    const cleanId = String(orderId).trim();
+    if (isSupabaseConfigured && supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('deliveries')
+          .select('*')
+          .eq('order_id', cleanId)
+          .maybeSingle();
+        if (!error && data) return data;
+      } catch (err: any) {
+        console.warn('Could not query delivery by order_id from Supabase:', err?.message);
+      }
+    }
+    // Fallback to local storage
+    try {
+      const stored: DeliveryRecord[] = JSON.parse(localStorage.getItem('admin_deliveries') || '[]');
+      return stored.find(d => String(d.order_id).trim() === cleanId) || null;
+    } catch {
+      return null;
+    }
+  },
+
+  async getAll(): Promise<Record<string, DeliveryRecord>> {
+    const map: Record<string, DeliveryRecord> = {};
+    if (isSupabaseConfigured && supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('deliveries')
+          .select('*');
+        if (!error && data) {
+          data.forEach((row: any) => {
+            if (row.order_id) {
+              map[String(row.order_id).trim()] = row;
+            }
+          });
+        }
+      } catch (err: any) {
+        console.warn('Could not fetch deliveries from Supabase:', err?.message);
+      }
+    }
+    // Merge from local storage
+    try {
+      const stored: DeliveryRecord[] = JSON.parse(localStorage.getItem('admin_deliveries') || '[]');
+      stored.forEach(d => {
+        const key = String(d.order_id).trim();
+        if (key && !map[key]) {
+          map[key] = d;
+        }
+      });
+    } catch {}
+    return map;
+  },
+
+  async upsert(delivery: {
+    order_id: string;
+    queue_number?: string;
+    shipping_carrier?: string;
+    driver_phone?: string;
+    tracking_number?: string;
+    estimated_delivery_date?: string;
+    delivery_status?: string;
+  }): Promise<boolean> {
+    const orderId = String(delivery.order_id).trim();
+    const payload: any = {
+      order_id: orderId,
+      updated_at: new Date().toISOString()
+    };
+    if (delivery.queue_number !== undefined) payload.queue_number = delivery.queue_number;
+    if (delivery.shipping_carrier !== undefined) payload.shipping_carrier = delivery.shipping_carrier;
+    if (delivery.driver_phone !== undefined) payload.driver_phone = delivery.driver_phone;
+    if (delivery.tracking_number !== undefined) payload.tracking_number = delivery.tracking_number;
+    if (delivery.estimated_delivery_date !== undefined) payload.estimated_delivery_date = delivery.estimated_delivery_date;
+    if (delivery.delivery_status !== undefined) payload.delivery_status = delivery.delivery_status;
+
+    if (isSupabaseConfigured && supabase) {
+      try {
+        // Attempt UPSERT with onConflict on order_id
+        const { error } = await supabase
+          .from('deliveries')
+          .upsert(payload, { onConflict: 'order_id' });
+
+        if (error) {
+          // If onConflict fails or table lacks unique constraint on order_id, attempt update then insert
+          const { data: updated, error: updateErr } = await supabase
+            .from('deliveries')
+            .update(payload)
+            .eq('order_id', orderId)
+            .select();
+
+          if (updateErr || !updated || updated.length === 0) {
+            await supabase.from('deliveries').insert(payload);
+          }
+        }
+      } catch (err: any) {
+        console.warn('Deliveries table upsert/insert warning:', err?.message);
+      }
+    }
+
+    // Persist immediately in local storage admin_deliveries
+    try {
+      const stored: DeliveryRecord[] = JSON.parse(localStorage.getItem('admin_deliveries') || '[]');
+      const idx = stored.findIndex(d => String(d.order_id).trim() === orderId);
+      if (idx >= 0) {
+        stored[idx] = { ...stored[idx], ...payload };
+      } else {
+        stored.push({ ...payload, created_at: new Date().toISOString() });
+      }
+      localStorage.setItem('admin_deliveries', JSON.stringify(stored));
+    } catch {}
+
+    // Dispatch real-time events for instant UI synchronization
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('pornpong-delivery-updated', {
+        detail: payload
+      }));
+      window.dispatchEvent(new CustomEvent('pornpong-queue-updated', {
+        detail: {
+          orderId,
+          ...payload
+        }
+      }));
+      window.dispatchEvent(new Event('orders-updated'));
+    }
+
+    return true;
+  }
+};
+
 export const supabaseOrders = {
   async list(): Promise<any[]> {
     if (!isSupabaseConfigured || !supabase) return [];
     try {
-      const { data, error } = await supabase
-        .from('orders')
-        .select('*')
-        .order('created_at', { ascending: false });
+      // JOIN orders with separate deliveries table
+      const [ordersRes, deliveriesMap] = await Promise.all([
+        supabase
+          .from('orders')
+          .select('*')
+          .order('created_at', { ascending: false }),
+        supabaseDeliveries.getAll()
+      ]);
 
-      if (error) {
-        console.warn('Could not select from orders table in Supabase:', error.message);
+      if (ordersRes.error) {
+        console.warn('Could not select from orders table in Supabase:', ordersRes.error.message);
         return [];
       }
 
-      return (data || []).map((row: any, idx: number) => {
+      const data = ordersRes.data || [];
+
+      return data.map((row: any, idx: number) => {
+        const orderIdStr = String(row.id).trim();
+        const delivery = deliveriesMap[orderIdStr] || deliveriesMap[row.id];
+
+        const queueNum = delivery?.queue_number || row.queue_number || row.queue_id || formatQueueId(row, idx);
+        const carrier = delivery?.shipping_carrier || row.shipping_carrier || row.carrier_name || '';
+        const driver = delivery?.driver_phone || row.driver_phone || '';
+        const tracking = delivery?.tracking_number || row.tracking_number || row.shipmentNo || row.shipment_no || '';
+        const estDeliveryDate = delivery?.estimated_delivery_date || row.estimated_delivery_date || '';
+        const delivStatus = (delivery?.delivery_status || '').toLowerCase();
         const ordStatus = (row.order_status || row.status || '').toLowerCase();
+
         let qStage: 1 | 2 | 3 | 4 = 1;
-        if (ordStatus === 'in_transit' || ordStatus === 'shipped' || ordStatus === 'shipping' || ordStatus === 'delivered' || ordStatus === 'completed') {
+        if (delivStatus === 'delivered' || delivStatus === 'completed' || ordStatus === 'delivered' || ordStatus === 'completed') {
           qStage = 4;
-        } else if (ordStatus === 'ready_for_shipping' || ordStatus === 'ready') {
+        } else if (delivStatus === 'in_transit' || ordStatus === 'in_transit' || ordStatus === 'shipped' || ordStatus === 'shipping') {
+          qStage = 4;
+        } else if (delivStatus === 'ready_for_shipping' || ordStatus === 'ready_for_shipping' || ordStatus === 'ready') {
           qStage = 3;
-        } else if (ordStatus === 'manufacturing' || ordStatus === 'processing' || ordStatus === 'paid') {
+        } else if (delivStatus === 'manufacturing' || ordStatus === 'manufacturing' || ordStatus === 'processing' || ordStatus === 'paid') {
           qStage = 2;
         } else {
           qStage = 1;
         }
 
         const stageKey = qStage === 4 ? 'in_transit' : qStage === 3 ? 'ready_for_shipping' : qStage === 2 ? 'manufacturing' : 'queue_received';
-        const qId = row.queue_id || row.queue_number || formatQueueId(row, idx);
 
         return {
           ...row,
-          // Old view compatible fields:
+          // Joined delivery fields:
+          queue_number: queueNum,
+          queue_id: queueNum,
+          shipping_carrier: carrier,
+          carrier_name: carrier,
+          driver_phone: driver,
+          tracking_number: tracking,
+          shipmentNo: tracking,
+          shipment_no: tracking,
+          estimated_delivery_date: estDeliveryDate,
+          delivery_status: delivStatus || ordStatus,
+
+          // Standard order fields:
           id: row.id,
           customerName: row.customer_name || row.customerName || '',
           date: row.created_at ? new Date(row.created_at).toISOString().split('T')[0] : '',
           productName: row.productName || row.product_name || 'เรือพลาสติกและอุปกรณ์',
           color: row.color || 'คละสี',
           amount: Number(row.total_amount || row.amount || 0),
-          status: row.status || (row.order_status === 'completed' || row.order_status === 'Delivered' ? 'Delivered' : row.order_status === 'shipping' || row.order_status === 'Shipping' ? 'Shipping' : row.payment_status || 'Pending'),
-          order_status: row.order_status || (row.status === 'Delivered' ? 'completed' : row.status === 'Shipping' ? 'shipping' : 'pending'),
-          shipmentNo: row.shipmentNo || row.shipment_no || '',
-          estimated_delivery_date: row.estimated_delivery_date || '',
-          carrier_name: row.carrier_name || '',
-          driver_phone: row.driver_phone || '',
+          status: delivStatus === 'delivered' ? 'Delivered' : (row.status || (ordStatus === 'completed' || ordStatus === 'delivered' ? 'Delivered' : ordStatus === 'shipping' || ordStatus === 'in_transit' ? 'Shipping' : row.payment_status || 'Pending')),
+          order_status: delivStatus === 'delivered' ? 'completed' : (row.order_status || (row.status === 'Delivered' ? 'completed' : row.status === 'Shipping' ? 'shipping' : 'pending')),
           status_message: row.status_message || '',
           
           // Queue System Fields:
-          queue_id: qId,
           queue_stage: row.queue_stage || qStage,
           queue_status: row.queue_status || stageKey,
 
-          // New view exact fields:
+          // Exact fields:
           customer_id: row.customer_id || null,
           customer_name: row.customer_name || row.customerName || '',
           customer_email: row.customer_email || 'guest@example.com',
@@ -1291,7 +1461,7 @@ export const supabaseOrders = {
       // 4. Fallback filter
       if (matchedRows.length === 0) {
         const all = await this.list();
-        matchedRows = all.filter((o: any) => {
+        return all.filter((o: any) => {
           if (cleanUserId && (String(o.customer_id) === cleanUserId || String(o.user_id) === cleanUserId)) return true;
           if (cleanEmail && o.customer_email && o.customer_email.toLowerCase() === cleanEmail) return true;
           if (cleanPhone && o.customer_phone && o.customer_phone.replace(/\D/g, '').includes(cleanPhone)) return true;
@@ -1299,40 +1469,61 @@ export const supabaseOrders = {
         });
       }
 
+      // Fetch deliveries to JOIN with matched user orders
+      const deliveriesMap = await supabaseDeliveries.getAll();
+
       return matchedRows.map((row: any, idx: number) => {
+        const orderIdStr = String(row.id).trim();
+        const delivery = deliveriesMap[orderIdStr] || deliveriesMap[row.id];
+
+        const queueNum = delivery?.queue_number || row.queue_number || row.queue_id || formatQueueId(row, idx);
+        const carrier = delivery?.shipping_carrier || row.shipping_carrier || row.carrier_name || '';
+        const driver = delivery?.driver_phone || row.driver_phone || '';
+        const tracking = delivery?.tracking_number || row.tracking_number || row.shipmentNo || row.shipment_no || '';
+        const estDeliveryDate = delivery?.estimated_delivery_date || row.estimated_delivery_date || '';
+        const delivStatus = (delivery?.delivery_status || '').toLowerCase();
         const ordStatus = (row.order_status || row.status || '').toLowerCase();
+
         let qStage: 1 | 2 | 3 | 4 = 1;
-        if (ordStatus === 'in_transit' || ordStatus === 'shipped' || ordStatus === 'shipping' || ordStatus === 'delivered' || ordStatus === 'completed') {
+        if (delivStatus === 'delivered' || delivStatus === 'completed' || ordStatus === 'delivered' || ordStatus === 'completed') {
           qStage = 4;
-        } else if (ordStatus === 'ready_for_shipping' || ordStatus === 'ready') {
+        } else if (delivStatus === 'in_transit' || ordStatus === 'in_transit' || ordStatus === 'shipped' || ordStatus === 'shipping') {
+          qStage = 4;
+        } else if (delivStatus === 'ready_for_shipping' || ordStatus === 'ready_for_shipping' || ordStatus === 'ready') {
           qStage = 3;
-        } else if (ordStatus === 'manufacturing' || ordStatus === 'processing' || ordStatus === 'paid') {
+        } else if (delivStatus === 'manufacturing' || ordStatus === 'manufacturing' || ordStatus === 'processing' || ordStatus === 'paid') {
           qStage = 2;
         } else {
           qStage = 1;
         }
 
         const stageKey = qStage === 4 ? 'in_transit' : qStage === 3 ? 'ready_for_shipping' : qStage === 2 ? 'manufacturing' : 'queue_received';
-        const qId = row.queue_id || row.queue_number || formatQueueId(row, idx);
 
         return {
           ...row,
           id: row.id,
+          // Joined deliveries table fields:
+          queue_number: queueNum,
+          queue_id: queueNum,
+          shipping_carrier: carrier,
+          carrier_name: carrier,
+          driver_phone: driver,
+          tracking_number: tracking,
+          shipmentNo: tracking,
+          shipment_no: tracking,
+          estimated_delivery_date: estDeliveryDate,
+          delivery_status: delivStatus || ordStatus,
+
           customerName: row.customer_name || row.customerName || '',
           date: row.created_at ? new Date(row.created_at).toISOString().split('T')[0] : '',
           productName: row.productName || row.product_name || 'เรือพลาสติกและอุปกรณ์',
           color: row.color || 'คละสี',
           amount: Number(row.total_amount || row.amount || 0),
-          status: row.payment_status || row.status || 'Pending',
-          shipmentNo: row.shipmentNo || row.shipment_no || '',
+          status: delivStatus === 'delivered' ? 'Delivered' : (row.status || (ordStatus === 'completed' || ordStatus === 'delivered' ? 'Delivered' : ordStatus === 'shipping' || ordStatus === 'in_transit' ? 'Shipping' : row.payment_status || 'Pending')),
           payment_slip_url: row.payment_slip_url || '',
-          estimated_delivery_date: row.estimated_delivery_date || '',
-          carrier_name: row.carrier_name || '',
-          driver_phone: row.driver_phone || '',
           status_message: row.status_message || '',
           
           // Queue fields:
-          queue_id: qId,
           queue_stage: row.queue_stage || qStage,
           queue_status: row.queue_status || stageKey,
 
@@ -1342,7 +1533,7 @@ export const supabaseOrders = {
           customer_phone: row.customer_phone || '',
           total_amount: Number(row.total_amount || row.amount || 0),
           payment_status: row.payment_status || row.status || 'pending',
-          order_status: row.order_status || 'waiting_payment',
+          order_status: delivStatus === 'delivered' ? 'completed' : (row.order_status || 'waiting_payment'),
           created_at: row.created_at || row.date || ''
         };
       });
@@ -1543,9 +1734,12 @@ export const supabaseOrders = {
     status: string,
     meta?: {
       estimated_delivery_date?: string;
+      shipping_carrier?: string;
       carrier_name?: string;
       driver_phone?: string;
+      tracking_number?: string;
       shipment_no?: string;
+      queue_number?: string;
       status_message?: string;
     }
   ): Promise<boolean> {
@@ -1554,30 +1748,52 @@ export const supabaseOrders = {
     const isShip = sLower === 'shipped' || sLower === 'shipping' || sLower === 'in_transit';
     const isReady = sLower === 'ready_for_shipping' || sLower === 'ready';
     const mappedOrderStatus = isDeliv ? 'completed' : isShip ? 'in_transit' : isReady ? 'ready_for_shipping' : 'manufacturing';
-    const trackingNo = meta?.shipment_no || `TH-EX-${String(id).replace(/[^0-9]/g, '').slice(-6) || '291823'}`;
+    const trackingNo = meta?.tracking_number || meta?.shipment_no || `TH-EX-${String(id).replace(/[^0-9]/g, '').slice(-6) || '291823'}`;
+    const carrier = meta?.shipping_carrier || meta?.carrier_name || '';
+    const driver = meta?.driver_phone || '';
+    const estDate = meta?.estimated_delivery_date || '';
+    const queueNo = meta?.queue_number;
 
     try {
       if (isSupabaseConfigured && supabase) {
-        // Try updating status, order_status, and shipment_no
+        // 1. Update orders table in Supabase
         try {
           await supabase.from('orders').update({
-            status: status,
+            status: isDeliv ? 'delivered' : status,
             order_status: mappedOrderStatus,
             shipment_no: trackingNo,
             shipmentNo: trackingNo,
-            ...(meta?.estimated_delivery_date ? { estimated_delivery_date: meta.estimated_delivery_date } : {}),
-            ...(meta?.carrier_name ? { carrier_name: meta.carrier_name } : {}),
-            ...(meta?.driver_phone ? { driver_phone: meta.driver_phone } : {})
+            tracking_number: trackingNo,
+            ...(carrier ? { shipping_carrier: carrier, carrier_name: carrier } : {}),
+            ...(driver ? { driver_phone: driver } : {}),
+            ...(estDate ? { estimated_delivery_date: estDate } : {}),
+            ...(queueNo ? { queue_number: queueNo } : {})
           }).eq('id', id);
         } catch {
-          // Fallback to simpler payload if columns differ
           await supabase.from('orders').update({
-            payment_status: isDeliv ? 'paid' : status
+            payment_status: isDeliv ? 'paid' : status,
+            status: isDeliv ? 'delivered' : status,
+            order_status: mappedOrderStatus
           }).eq('id', id);
         }
       }
     } catch (e) {
       console.warn('Supabase updateStatus caught warning:', e);
+    }
+
+    // 2. UPSERT into separate deliveries table
+    try {
+      await supabaseDeliveries.upsert({
+        order_id: String(id),
+        delivery_status: isDeliv ? 'delivered' : mappedOrderStatus,
+        ...(queueNo ? { queue_number: queueNo } : {}),
+        ...(carrier ? { shipping_carrier: carrier } : {}),
+        ...(driver ? { driver_phone: driver } : {}),
+        ...(trackingNo ? { tracking_number: trackingNo } : {}),
+        ...(estDate ? { estimated_delivery_date: estDate } : {})
+      });
+    } catch (e) {
+      console.warn('supabaseDeliveries.upsert caught warning in updateStatus:', e);
     }
 
     // Persist immediately in local storage admin_orders
@@ -1586,13 +1802,16 @@ export const supabaseOrders = {
       const updated = local.map((o: any) => 
         o.id === id ? { 
           ...o, 
-          status: status, 
+          status: isDeliv ? 'delivered' : status, 
           order_status: mappedOrderStatus,
           shipmentNo: trackingNo,
           shipment_no: trackingNo,
-          ...(meta?.estimated_delivery_date ? { estimated_delivery_date: meta.estimated_delivery_date } : {}),
-          ...(meta?.carrier_name ? { carrier_name: meta.carrier_name } : {}),
-          ...(meta?.driver_phone ? { driver_phone: meta.driver_phone } : {})
+          tracking_number: trackingNo,
+          ...(carrier ? { shipping_carrier: carrier, carrier_name: carrier } : {}),
+          ...(driver ? { driver_phone: driver } : {}),
+          ...(estDate ? { estimated_delivery_date: estDate } : {}),
+          ...(queueNo ? { queue_number: queueNo } : {}),
+          delivery_status: isDeliv ? 'delivered' : mappedOrderStatus
         } : o
       );
       localStorage.setItem('admin_orders', JSON.stringify(updated));
@@ -1605,8 +1824,11 @@ export const supabaseOrders = {
     id: string,
     stage: 1 | 2 | 3 | 4,
     meta?: {
+      queue_number?: string;
+      shipping_carrier?: string;
       carrier_name?: string;
       driver_phone?: string;
+      tracking_number?: string;
       shipment_no?: string;
       estimated_delivery_date?: string;
     }
@@ -1618,8 +1840,13 @@ export const supabaseOrders = {
       4: { status: 'in_transit', orderStatus: 'in_transit', label: 'อยู่ระหว่างจัดส่ง' }
     };
     const currentStageInfo = stageMap[stage] || stageMap[1];
-    const trackingNo = meta?.shipment_no || `TH-EX-${String(id).replace(/[^0-9]/g, '').slice(-6) || '291823'}`;
+    const trackingNo = meta?.tracking_number || meta?.shipment_no || `TH-EX-${String(id).replace(/[^0-9]/g, '').slice(-6) || '291823'}`;
+    const carrier = meta?.shipping_carrier || meta?.carrier_name || '';
+    const driver = meta?.driver_phone || '';
+    const estDate = meta?.estimated_delivery_date || '';
+    const queueNo = meta?.queue_number;
 
+    // 1. Update orders table in Supabase
     if (isSupabaseConfigured && supabase) {
       try {
         await supabase.from('orders').update({
@@ -1629,9 +1856,11 @@ export const supabaseOrders = {
           status: currentStageInfo.status,
           shipment_no: trackingNo,
           shipmentNo: trackingNo,
-          ...(meta?.carrier_name ? { carrier_name: meta.carrier_name } : {}),
-          ...(meta?.driver_phone ? { driver_phone: meta.driver_phone } : {}),
-          ...(meta?.estimated_delivery_date ? { estimated_delivery_date: meta.estimated_delivery_date } : {})
+          tracking_number: trackingNo,
+          ...(queueNo ? { queue_number: queueNo } : {}),
+          ...(carrier ? { shipping_carrier: carrier, carrier_name: carrier } : {}),
+          ...(driver ? { driver_phone: driver } : {}),
+          ...(estDate ? { estimated_delivery_date: estDate } : {})
         }).eq('id', id);
       } catch (err: any) {
         console.warn('Supabase updateQueueStage error:', err?.message);
@@ -1644,7 +1873,22 @@ export const supabaseOrders = {
       }
     }
 
-    // Persist in local storage
+    // 2. UPSERT into separate deliveries table
+    try {
+      await supabaseDeliveries.upsert({
+        order_id: String(id),
+        delivery_status: currentStageInfo.orderStatus,
+        ...(queueNo ? { queue_number: queueNo } : {}),
+        ...(carrier ? { shipping_carrier: carrier } : {}),
+        ...(driver ? { driver_phone: driver } : {}),
+        ...(trackingNo ? { tracking_number: trackingNo } : {}),
+        ...(estDate ? { estimated_delivery_date: estDate } : {})
+      });
+    } catch (e) {
+      console.warn('supabaseDeliveries.upsert caught warning in updateQueueStage:', e);
+    }
+
+    // Persist in local storage admin_orders
     try {
       const local = JSON.parse(localStorage.getItem('admin_orders') || '[]');
       const updated = local.map((o: any) =>
@@ -1656,9 +1900,12 @@ export const supabaseOrders = {
           status: currentStageInfo.status,
           shipment_no: trackingNo,
           shipmentNo: trackingNo,
-          ...(meta?.carrier_name ? { carrier_name: meta.carrier_name } : {}),
-          ...(meta?.driver_phone ? { driver_phone: meta.driver_phone } : {}),
-          ...(meta?.estimated_delivery_date ? { estimated_delivery_date: meta.estimated_delivery_date } : {})
+          tracking_number: trackingNo,
+          ...(queueNo ? { queue_number: queueNo } : {}),
+          ...(carrier ? { shipping_carrier: carrier, carrier_name: carrier } : {}),
+          ...(driver ? { driver_phone: driver } : {}),
+          ...(estDate ? { estimated_delivery_date: estDate } : {}),
+          delivery_status: currentStageInfo.orderStatus
         } : o
       );
       localStorage.setItem('admin_orders', JSON.stringify(updated));
