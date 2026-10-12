@@ -25,7 +25,10 @@ import {
   Sparkle,
   Camera,
   Maximize2,
-  ZoomIn
+  ZoomIn,
+  Loader2,
+  AlertTriangle,
+  Trash2
 } from 'lucide-react';
 import { Product, User } from '../types';
 import { 
@@ -36,7 +39,9 @@ import {
   DEFAULT_BOAT_SIZES,
   DEFAULT_STICKER_OPTIONS,
   PreOrderBoatSize,
-  PreOrderStickerOption
+  PreOrderStickerOption,
+  supabase,
+  isSupabaseConfigured
 } from '../lib/supabase';
 
 interface PreorderSectionProps {
@@ -447,6 +452,10 @@ export default function PreorderSection({
   const [confirmedOrder, setConfirmedOrder] = React.useState<any | null>(null);
   const [copiedOrderId, setCopiedOrderId] = React.useState(false);
   const [slipUploaded, setSlipUploaded] = React.useState(false);
+  const [slipFile, setSlipFile] = React.useState<File | null>(null);
+  const [slipPreview, setSlipPreview] = React.useState<string | null>(null);
+  const [isUploadingSlip, setIsUploadingSlip] = React.useState(false);
+  const [slipError, setSlipError] = React.useState<string | null>(null);
 
   // Sync user details if logged in
   React.useEffect(() => {
@@ -479,6 +488,13 @@ export default function PreorderSection({
     }
 
     setIsSubmitting(true);
+    // Reset slip states for new order
+    setSlipFile(null);
+    setSlipPreview(null);
+    setSlipUploaded(false);
+    setSlipError(null);
+    setIsUploadingSlip(false);
+
     try {
       const stickerOptionValue = activeStickerSetting.id === 'none' 
         ? 'ไม่ติดสติกเกอร์ (+0 บาท)' 
@@ -534,6 +550,132 @@ export default function PreorderSection({
       setShowOrderModal(true);
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  // Slip file selection handler with validation
+  const handleSlipFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+      const err = 'กรุณาเลือกไฟล์รูปภาพสลิปที่ถูกต้อง (JPG, PNG, WEBP)';
+      setSlipError(err);
+      alert(err);
+      return;
+    }
+
+    if (file.size > 10 * 1024 * 1024) {
+      const err = 'ขนาดไฟล์รูปภาพเกิน 10MB กรุณาเลือกไฟล์ที่มีขนาดเล็กลง';
+      setSlipError(err);
+      alert(err);
+      return;
+    }
+
+    setSlipFile(file);
+    setSlipError(null);
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      setSlipPreview(reader.result as string);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // Final confirmation handler with Slip Upload & Validation
+  const handleFinishPreOrderWithSlip = async () => {
+    if (!confirmedOrder) return;
+
+    // Validation: Require slip upload
+    if (!slipFile && !slipPreview) {
+      const err = 'กรุณาแนบสลิปหลักฐานการโอนเงินมัดจำก่อนดำเนินการต่อ';
+      setSlipError(err);
+      alert(err);
+      return;
+    }
+
+    setIsUploadingSlip(true);
+    setSlipError(null);
+
+    try {
+      let finalSlipUrl = slipPreview || '';
+
+      // Upload file to Supabase Storage if file is present
+      if (slipFile) {
+        try {
+          const uploadedUrl = await supabaseOrders.uploadSlip(confirmedOrder.id, slipFile);
+          if (uploadedUrl) {
+            finalSlipUrl = uploadedUrl;
+          }
+        } catch (uploadErr) {
+          console.warn('Storage upload error, using preview data URL fallback:', uploadErr);
+          if (isSupabaseConfigured && supabase) {
+            try {
+              const fileExt = slipFile.name.split('.').pop() || 'png';
+              const cleanFileName = `deposit_slip_${confirmedOrder.id}_${Date.now()}.${fileExt}`;
+              const { data: stData, error: stErr } = await supabase.storage
+                .from('payment-slips')
+                .upload(cleanFileName, slipFile, { cacheControl: '3600', upsert: true });
+              if (!stErr && stData) {
+                const { data: { publicUrl } } = supabase.storage.from('payment-slips').getPublicUrl(cleanFileName);
+                if (publicUrl) finalSlipUrl = publicUrl;
+              }
+            } catch (fallbackErr) {
+              console.warn('Direct storage upload fallback caught warning:', fallbackErr);
+            }
+          }
+        }
+      }
+
+      // Update orders table in Supabase
+      if (isSupabaseConfigured && supabase) {
+        try {
+          await supabase.from('orders').update({
+            payment_slip_url: finalSlipUrl,
+            payment_status: 'pending_verification',
+            status: 'pending_verification'
+          }).eq('id', confirmedOrder.id);
+        } catch (errDb: any) {
+          console.warn('Could not update payment_slip_url in orders table:', errDb?.message);
+        }
+      }
+
+      // Sync local storage for immediate Admin reflection
+      try {
+        const localOrders = JSON.parse(localStorage.getItem('admin_orders') || '[]');
+        const updatedOrders = localOrders.map((o: any) => 
+          o.id === confirmedOrder.id 
+            ? { ...o, payment_slip_url: finalSlipUrl, payment_status: 'pending_verification' } 
+            : o
+        );
+        localStorage.setItem('admin_orders', JSON.stringify(updatedOrders));
+
+        const localPre = JSON.parse(localStorage.getItem('admin_preorders') || '[]');
+        const updatedPre = localPre.map((p: any) =>
+          p.id === confirmedOrder.id
+            ? { ...p, payment_slip_url: finalSlipUrl, status: 'pending_verification' }
+            : p
+        );
+        localStorage.setItem('admin_preorders', JSON.stringify(updatedPre));
+
+        window.dispatchEvent(new CustomEvent('orders-updated'));
+        window.dispatchEvent(new CustomEvent('pornpong-queue-updated'));
+      } catch {}
+
+      setSlipUploaded(true);
+      alert(`บันทึกคำสั่งจองรหัส ${confirmedOrder.id} และอัปโหลดสลิปเรียบร้อยแล้ว! ฝ่ายผลิตจะตรวจสอบยอดมัดจำและติดต่อกลับที่เบอร์ ${confirmedOrder.customer_phone}`);
+
+      setShowOrderModal(false);
+      if (setActiveTab) {
+        setActiveTab('home');
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+    } catch (err: any) {
+      console.error('Failed to complete pre-order with slip:', err);
+      alert('บันทึกคำสั่งจองเรียบร้อยแล้ว เจ้าหน้าที่จะตรวจสอบสลิปและติดต่อกลับ');
+      setShowOrderModal(false);
+    } finally {
+      setIsUploadingSlip(false);
     }
   };
 
@@ -1888,55 +2030,144 @@ export default function PreorderSection({
                 <div>ชื่อบัญชี: บจก. พรพงศ์พลาสติก (ประเทศไทย)</div>
               </div>
 
-              {/* Upload Slip confirmation status */}
+              {/* Upload Slip confirmation status & validation */}
               {slipUploaded ? (
                 <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-800 flex items-center gap-2">
                   <CheckCircle2 size={18} className="text-emerald-600 shrink-0" />
                   <span>บันทึกหลักฐานการโอนเรียบร้อย เจ้าหน้าที่จะตรวจสอบและโทรยืนยันคิวหลอมในไม่ช้า</span>
                 </div>
+              ) : slipPreview ? (
+                <div className="border border-emerald-300 bg-emerald-50/50 rounded-2xl p-3.5 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-emerald-800 flex items-center gap-1.5">
+                      <CheckCircle2 size={16} className="text-emerald-600" />
+                      เลือกไฟล์สลิปเรียบร้อย (พร้อมบันทึก)
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSlipFile(null);
+                        setSlipPreview(null);
+                        setSlipError('กรุณาแนบสลิปหลักฐานการโอนเงินมัดจำก่อนดำเนินการต่อ');
+                      }}
+                      className="text-xs text-rose-600 hover:text-rose-700 font-bold inline-flex items-center gap-1 cursor-pointer"
+                    >
+                      <Trash2 size={13} />
+                      <span>เปลี่ยนรูป/ลบ</span>
+                    </button>
+                  </div>
+                  <div className="flex items-center gap-3 bg-white p-2.5 rounded-xl border border-emerald-200">
+                    <img 
+                      src={slipPreview} 
+                      alt="Slip preview" 
+                      className="w-14 h-14 object-cover rounded-lg border border-slate-200 shadow-2xs shrink-0"
+                    />
+                    <div className="flex-1 min-w-0 text-left">
+                      <p className="text-xs font-bold text-slate-800 truncate">
+                        {slipFile?.name || 'สลิปการโอนเงินมัดจำ'}
+                      </p>
+                      <p className="text-[10px] text-slate-400">
+                        {slipFile ? `${(slipFile.size / 1024).toFixed(1)} KB` : 'รูปภาพพร้อมอัปโหลด'}
+                      </p>
+                      <span className="inline-block mt-0.5 text-[9.5px] font-bold text-emerald-700 bg-emerald-100 px-1.5 py-0.2 rounded">
+                        ✓ แนบสลิปแล้ว (กดปุ่มสีฟ้าด้านล่างเพื่ออัปโหลด)
+                      </span>
+                    </div>
+                  </div>
+                </div>
               ) : (
-                <label className="border-2 border-dashed border-slate-200 hover:border-brand-blue rounded-2xl p-3.5 text-center flex flex-col items-center justify-center gap-1.5 cursor-pointer transition-colors bg-slate-50/50 hover:bg-sky-50/30">
-                  <Upload size={18} className="text-brand-blue" />
-                  <span className="text-xs font-bold text-slate-700">แนบสลิปหลักฐานการโอนมัดจำ (ถ้ามี)</span>
-                  <span className="text-[10px] text-slate-400">รองรับไฟล์ JPG, PNG หรือส่งทาง LINE ภายหลังได้</span>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    onChange={() => {
-                      setSlipUploaded(true);
-                    }}
-                  />
-                </label>
+                <div className="space-y-1.5">
+                  <label className={`border-2 border-dashed rounded-2xl p-4 text-center flex flex-col items-center justify-center gap-1.5 cursor-pointer transition-all ${
+                    slipError 
+                      ? 'border-rose-400 bg-rose-50/50 hover:bg-rose-50/70 ring-2 ring-rose-300/30' 
+                      : 'border-amber-300 hover:border-brand-blue bg-amber-50/30 hover:bg-sky-50/30'
+                  }`}>
+                    <Upload size={20} className={slipError ? 'text-rose-500 animate-bounce' : 'text-brand-blue'} />
+                    <span className="text-xs font-bold text-slate-800 flex items-center gap-1">
+                      <span>แนบสลิปหลักฐานการโอนเงินมัดจำ (จำเป็นต้องแนบ)</span>
+                      <span className="text-rose-500 font-black">*</span>
+                    </span>
+                    <span className="text-[10px] text-slate-400">
+                      รองรับไฟล์ JPG, PNG หรือ WEBP (ขนาดไม่เกิน 10MB)
+                    </span>
+                    <span className="text-[9.5px] font-bold text-amber-700 bg-amber-100/80 px-2 py-0.5 rounded-full mt-0.5">
+                      ⚠️ ต้องแนบสลิปมัดจำเพื่อยืนยันคิวผลิต
+                    </span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={handleSlipFileSelect}
+                    />
+                  </label>
+
+                  {slipError && (
+                    <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-700 font-bold flex items-center gap-1.5">
+                      <AlertTriangle size={15} className="text-rose-600 shrink-0" />
+                      <span>{slipError}</span>
+                    </div>
+                  )}
+                </div>
               )}
 
             </div>
 
             {/* Modal Footer Actions */}
-            <div className="p-5 bg-slate-50 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-end gap-3">
-              <button
-                type="button"
-                onClick={() => {
-                  setShowOrderModal(false);
-                  if (setActiveTab) {
-                    setActiveTab('home');
-                    window.scrollTo({ top: 0, behavior: 'smooth' });
-                  }
-                }}
-                className="w-full sm:w-auto px-5 py-2.5 rounded-xl border border-slate-300 hover:bg-slate-100 text-slate-700 font-semibold text-xs transition-colors cursor-pointer"
-              >
-                ปิดหน้าต่าง
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setShowOrderModal(false);
-                  alert(`บันทึกคำสั่งจองรหัส ${confirmedOrder.id} เรียบร้อยแล้ว ฝ่ายผลิตจะติดต่อกลับที่เบอร์ ${confirmedOrder.customer_phone}`);
-                }}
-                className="w-full sm:w-auto px-6 py-2.5 rounded-xl bg-brand-blue hover:bg-brand-blue-light text-white font-bold text-xs shadow-md transition-all cursor-pointer text-center"
-              >
-                รับทราบและเสร็จสิ้น
-              </button>
+            <div className="p-5 bg-slate-50 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-3">
+              <div className="text-xs text-slate-500 text-center sm:text-left">
+                {!slipFile && !slipPreview ? (
+                  <span className="text-amber-700 font-medium flex items-center gap-1 justify-center sm:justify-start">
+                    <AlertTriangle size={13} className="text-amber-600 shrink-0" />
+                    <span>กรุณาแนบรูปสลิปเพื่อเปิดใช้งานปุ่มบันทึก</span>
+                  </span>
+                ) : (
+                  <span className="text-emerald-700 font-medium flex items-center gap-1 justify-center sm:justify-start">
+                    <CheckCircle2 size={13} className="text-emerald-600 shrink-0" />
+                    <span>แนบสลิปเรียบร้อย พร้อมกดยืนยัน</span>
+                  </span>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2 w-full sm:w-auto">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowOrderModal(false);
+                    if (setActiveTab) {
+                      setActiveTab('home');
+                      window.scrollTo({ top: 0, behavior: 'smooth' });
+                    }
+                  }}
+                  className="w-full sm:w-auto px-4 py-2.5 rounded-xl border border-slate-300 hover:bg-slate-100 text-slate-700 font-semibold text-xs transition-colors cursor-pointer"
+                >
+                  ปิดหน้าต่าง
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleFinishPreOrderWithSlip}
+                  disabled={isUploadingSlip}
+                  className={`w-full sm:w-auto px-6 py-2.5 rounded-xl font-bold text-xs transition-all text-center flex items-center justify-center gap-2 ${
+                    !slipFile && !slipPreview
+                      ? 'bg-slate-200 text-slate-400 border border-slate-300 hover:bg-slate-250 cursor-not-allowed shadow-none'
+                      : 'bg-brand-blue hover:bg-brand-blue-light text-white shadow-md shadow-brand-blue/20 cursor-pointer active:scale-[0.98]'
+                  }`}
+                  id="btn-finish-preorder"
+                  title={!slipFile && !slipPreview ? 'กรุณาแนบสลิปหลักฐานการโอนเงินมัดจำก่อนดำเนินการต่อ' : 'รับทราบและเสร็จสิ้น'}
+                >
+                  {isUploadingSlip ? (
+                    <>
+                      <Loader2 size={14} className="animate-spin" />
+                      <span>กำลังบันทึกและอัปโหลดสลิป...</span>
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle2 size={14} />
+                      <span>รับทราบและเสร็จสิ้น</span>
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
 
           </div>

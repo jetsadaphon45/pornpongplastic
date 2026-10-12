@@ -1188,19 +1188,21 @@ export interface DeliveryRecord {
 export const supabaseDeliveries = {
   async getByOrderId(orderId: string): Promise<DeliveryRecord | null> {
     const cleanId = String(orderId).trim();
+    if (!cleanId) return null;
     if (isSupabaseConfigured && supabase) {
       try {
         const { data, error } = await supabase
           .from('deliveries')
           .select('*')
           .eq('order_id', cleanId)
-          .maybeSingle();
-        if (!error && data) return data;
+          .order('updated_at', { ascending: false })
+          .limit(1);
+        if (!error && data && data.length > 0) return data[0];
       } catch (err: any) {
         console.warn('Could not query delivery by order_id from Supabase:', err?.message);
       }
     }
-    // Fallback to local storage
+    // Fallback to local storage (latest 1 item)
     try {
       const stored: DeliveryRecord[] = JSON.parse(localStorage.getItem('admin_deliveries') || '[]');
       return stored.find(d => String(d.order_id).trim() === cleanId) || null;
@@ -1213,13 +1215,18 @@ export const supabaseDeliveries = {
     const map: Record<string, DeliveryRecord> = {};
     if (isSupabaseConfigured && supabase) {
       try {
+        // Order by updated_at descending so the most recent delivery record comes first
         const { data, error } = await supabase
           .from('deliveries')
-          .select('*');
+          .select('*')
+          .order('updated_at', { ascending: false });
+
         if (!error && data) {
           data.forEach((row: any) => {
-            if (row.order_id) {
-              map[String(row.order_id).trim()] = row;
+            const key = String(row.order_id || '').trim();
+            // Keep strictly only 1 latest record per order_id
+            if (key && !map[key]) {
+              map[key] = row;
             }
           });
         }
@@ -1227,16 +1234,18 @@ export const supabaseDeliveries = {
         console.warn('Could not fetch deliveries from Supabase:', err?.message);
       }
     }
-    // Merge from local storage
+
+    // Merge from local storage, keeping strictly only 1 latest record per order_id
     try {
       const stored: DeliveryRecord[] = JSON.parse(localStorage.getItem('admin_deliveries') || '[]');
       stored.forEach(d => {
-        const key = String(d.order_id).trim();
+        const key = String(d.order_id || '').trim();
         if (key && !map[key]) {
           map[key] = d;
         }
       });
     } catch {}
+
     return map;
   },
 
@@ -1250,6 +1259,8 @@ export const supabaseDeliveries = {
     delivery_status?: string;
   }): Promise<boolean> {
     const orderId = String(delivery.order_id).trim();
+    if (!orderId) return false;
+
     const payload: any = {
       order_id: orderId,
       updated_at: new Date().toISOString()
@@ -1263,38 +1274,85 @@ export const supabaseDeliveries = {
 
     if (isSupabaseConfigured && supabase) {
       try {
-        // Attempt UPSERT with onConflict on order_id
-        const { error } = await supabase
+        // Step 1: Check if this order_id already exists in 'deliveries' table
+        const { data: existingRows, error: checkErr } = await supabase
           .from('deliveries')
-          .upsert(payload, { onConflict: 'order_id' });
+          .select('id, created_at, updated_at')
+          .eq('order_id', orderId)
+          .order('updated_at', { ascending: false });
 
-        if (error) {
-          // If onConflict fails or table lacks unique constraint on order_id, attempt update then insert
-          const { data: updated, error: updateErr } = await supabase
+        if (!checkErr && existingRows && existingRows.length > 0) {
+          // If existing row found, UPDATE the existing row (avoid creating duplicate rows)
+          const primaryRow = existingRows[0];
+          if (primaryRow?.id) {
+            await supabase
+              .from('deliveries')
+              .update(payload)
+              .eq('id', primaryRow.id);
+          } else {
+            await supabase
+              .from('deliveries')
+              .update(payload)
+              .eq('order_id', orderId);
+          }
+
+          // If duplicate rows already existed previously, clean up redundant duplicates
+          if (existingRows.length > 1) {
+            const duplicateIds = existingRows.slice(1).map(r => r.id).filter(Boolean);
+            if (duplicateIds.length > 0) {
+              try {
+                await supabase
+                  .from('deliveries')
+                  .delete()
+                  .in('id', duplicateIds);
+              } catch (cleanErr) {
+                console.warn('Could not clean up redundant duplicate delivery rows:', cleanErr);
+              }
+            }
+          }
+        } else {
+          // If NOT existing yet, create a single new row via UPSERT or single INSERT
+          const { error: upsertError } = await supabase
             .from('deliveries')
-            .update(payload)
-            .eq('order_id', orderId)
-            .select();
+            .upsert({
+              ...payload,
+              created_at: new Date().toISOString()
+            }, { onConflict: 'order_id' });
 
-          if (updateErr || !updated || updated.length === 0) {
-            await supabase.from('deliveries').insert(payload);
+          if (upsertError) {
+            // Check once more to prevent race-condition duplicates
+            const { data: raceCheck } = await supabase
+              .from('deliveries')
+              .select('id')
+              .eq('order_id', orderId)
+              .limit(1);
+
+            if (raceCheck && raceCheck.length > 0) {
+              await supabase
+                .from('deliveries')
+                .update(payload)
+                .eq('order_id', orderId);
+            } else {
+              await supabase
+                .from('deliveries')
+                .insert({
+                  ...payload,
+                  created_at: new Date().toISOString()
+                });
+            }
           }
         }
       } catch (err: any) {
-        console.warn('Deliveries table upsert/insert warning:', err?.message);
+        console.warn('Deliveries table update/upsert warning:', err?.message);
       }
     }
 
-    // Persist immediately in local storage admin_deliveries
+    // Persist immediately in local storage admin_deliveries with deduplication
     try {
       const stored: DeliveryRecord[] = JSON.parse(localStorage.getItem('admin_deliveries') || '[]');
-      const idx = stored.findIndex(d => String(d.order_id).trim() === orderId);
-      if (idx >= 0) {
-        stored[idx] = { ...stored[idx], ...payload };
-      } else {
-        stored.push({ ...payload, created_at: new Date().toISOString() });
-      }
-      localStorage.setItem('admin_deliveries', JSON.stringify(stored));
+      const filtered = stored.filter(d => String(d.order_id).trim() !== orderId);
+      filtered.unshift({ ...payload, created_at: new Date().toISOString() });
+      localStorage.setItem('admin_deliveries', JSON.stringify(filtered));
     } catch {}
 
     // Dispatch real-time events for instant UI synchronization
@@ -2052,16 +2110,51 @@ export const supabaseOrders = {
       console.log('PUBLIC URL', publicUrl);
       console.log('UPDATE PAYLOAD', updatePayload);
 
-      const result = await supabase
-        .from('orders')
-        .update(updatePayload)
-        .eq('id', orderId);
-
-      console.log('UPDATE RESULT', result);
-
-      if (result.error) {
-        throw result.error;
+      // Update orders table
+      try {
+        await supabase
+          .from('orders')
+          .update(updatePayload)
+          .eq('id', orderId);
+      } catch (e) {
+        console.warn('Supabase orders update error in uploadSlip:', e);
       }
+
+      // Try updating preorders / pre_orders table if applicable
+      try {
+        await supabase
+          .from('preorders')
+          .update({ payment_slip_url: publicUrl, status: 'pending_verification' })
+          .eq('id', orderId);
+      } catch {}
+
+      try {
+        await supabase
+          .from('pre_orders')
+          .update({ payment_slip_url: publicUrl, status: 'pending_verification' })
+          .eq('id', orderId);
+      } catch {}
+
+      // Update local storage for immediate reactivity
+      try {
+        const localOrders = JSON.parse(localStorage.getItem('admin_orders') || '[]');
+        const updatedOrders = localOrders.map((o: any) => 
+          o.id === orderId 
+            ? { ...o, payment_slip_url: publicUrl, payment_status: 'pending_verification' } 
+            : o
+        );
+        localStorage.setItem('admin_orders', JSON.stringify(updatedOrders));
+
+        const localPre = JSON.parse(localStorage.getItem('admin_preorders') || '[]');
+        const updatedPre = localPre.map((p: any) =>
+          p.id === orderId
+            ? { ...p, payment_slip_url: publicUrl, status: 'pending_verification' }
+            : p
+        );
+        localStorage.setItem('admin_preorders', JSON.stringify(updatedPre));
+
+        window.dispatchEvent(new CustomEvent('orders-updated'));
+      } catch {}
 
       return publicUrl;
     } catch (err: any) {
@@ -2193,7 +2286,8 @@ export const supabasePreOrders = {
       estDelivery: row.estDelivery || row.est_delivery_date || row.est_delivery || 'ภายใน 3-5 วันทำการ',
       status: row.status || row.payment_status || 'AwaitingDeposit',
       address: row.address || '',
-      notes: row.notes || ''
+      notes: row.notes || '',
+      payment_slip_url: row.payment_slip_url || row.slip_url || ''
     };
   },
 

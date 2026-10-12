@@ -20,7 +20,7 @@ import {
   Flame,
   ListOrdered
 } from 'lucide-react';
-import { supabaseOrders, supabasePreOrders, formatQueueId } from '../lib/supabase';
+import { supabaseOrders, supabasePreOrders, formatQueueId, supabase, isSupabaseConfigured } from '../lib/supabase';
 
 interface CustomerOrderHistoryModalProps {
   isOpen: boolean;
@@ -71,9 +71,46 @@ export function CustomerOrderHistoryModal({
   }, [customer, triggerToast]);
 
   React.useEffect(() => {
-    if (isOpen && customer) {
-      fetchCustomerHistory();
+    if (!isOpen || !customer) return;
+
+    fetchCustomerHistory();
+
+    let channel: any = null;
+    if (isSupabaseConfigured && supabase) {
+      try {
+        channel = supabase
+          .channel(`public:customer-orders-history-${customer.id || 'all'}`)
+          .on(
+            'postgres_changes',
+            { event: '*', schema: 'public', table: 'orders' },
+            () => fetchCustomerHistory()
+          )
+          .on(
+            'postgres_changes',
+            { event: '*', schema: 'public', table: 'deliveries' },
+            () => fetchCustomerHistory()
+          )
+          .subscribe();
+      } catch (err) {
+        console.warn('Realtime subscription error in CustomerOrderHistoryModal:', err);
+      }
     }
+
+    const handleSync = () => fetchCustomerHistory();
+    window.addEventListener('orders-updated', handleSync);
+    window.addEventListener('pornpong-delivery-updated', handleSync);
+    window.addEventListener('pornpong-order-delivered', handleSync);
+
+    return () => {
+      if (channel && supabase) {
+        try {
+          supabase.removeChannel(channel);
+        } catch {}
+      }
+      window.removeEventListener('orders-updated', handleSync);
+      window.removeEventListener('pornpong-delivery-updated', handleSync);
+      window.removeEventListener('pornpong-order-delivered', handleSync);
+    };
   }, [isOpen, customer, fetchCustomerHistory]);
 
   if (!isOpen || !customer) return null;

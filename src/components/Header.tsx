@@ -1,7 +1,8 @@
 import React from 'react';
-import { Anchor, ShoppingCart, Menu, X, Search, PhoneCall, User, LogOut, Bell, ListOrdered } from 'lucide-react';
-import { CartItem } from '../types';
+import { Anchor, ShoppingCart, Menu, X, Search, PhoneCall, User, LogOut, Bell, ListOrdered, Truck } from 'lucide-react';
+import { CartItem, User as AppUser } from '../types';
 import NotificationDropdown, { AppNotification } from './NotificationDropdown';
+import { supabase, isSupabaseConfigured, supabaseOrders, supabasePreOrders, supabaseDeliveries } from '../lib/supabase';
 
 interface HeaderProps {
   activeTab: string;
@@ -10,7 +11,7 @@ interface HeaderProps {
   setIsCartOpen: (open: boolean) => void;
   onSearch: (term: string) => void;
   searchTerm: string;
-  currentUser: { name: string; email: string; phone: string } | null;
+  currentUser: AppUser | { id?: string; name?: string; fullName?: string; email?: string; phone?: string } | null;
   onOpenLogin: () => void;
   onOpenRegister: () => void;
   onLogout: () => void;
@@ -46,6 +47,203 @@ export default function Header({
   const [isNotificationOpen, setIsNotificationOpen] = React.useState(false);
   const totalCartItems = cart.reduce((sum, item) => sum + item.quantity, 0);
   const unreadNotificationsCount = notifications.filter(n => !n.isRead).length;
+
+  // Dynamic tracking button mode: 'producing' | 'shipping' | 'hidden'
+  const [trackingStatus, setTrackingStatus] = React.useState<'producing' | 'shipping' | 'hidden'>('hidden');
+
+  const checkUserOrders = React.useCallback(async () => {
+    if (!currentUser) {
+      setTrackingStatus('hidden');
+      return;
+    }
+
+    const cleanUserId = currentUser.id?.trim() || '';
+    const cleanEmail = (currentUser.email || '').toLowerCase().trim();
+    const cleanPhone = (currentUser.phone || '').replace(/\D/g, '');
+    const cleanName = (currentUser.name || (currentUser as any).fullName || '').toLowerCase().trim();
+
+    // Check for deleted orders stored locally for this user
+    const deletedOrdersKey = `pornpong_deleted_orders_${cleanUserId || cleanEmail || 'guest'}`;
+    let deletedIds: string[] = [];
+    try {
+      deletedIds = JSON.parse(localStorage.getItem(deletedOrdersKey) || '[]');
+    } catch {}
+
+    let fetchedOrders: any[] = [];
+    let fetchedPreOrders: any[] = [];
+    let deliveriesMap: Record<string, any> = {};
+
+    try {
+      const [oList, pList, dMap] = await Promise.all([
+        supabaseOrders.listByUserId(cleanUserId, cleanEmail, cleanPhone),
+        supabasePreOrders.listByUserId(cleanUserId, cleanPhone, cleanName),
+        supabaseDeliveries.getAll()
+      ]);
+      fetchedOrders = Array.isArray(oList) ? [...oList] : [];
+      fetchedPreOrders = Array.isArray(pList) ? [...pList] : [];
+      deliveriesMap = dMap || {};
+    } catch (fetchErr) {
+      console.warn('Header orders sync warning:', fetchErr);
+    }
+
+    // Merge with local storage admin_orders for immediate and offline consistency
+    try {
+      const localOrders: any[] = JSON.parse(localStorage.getItem('admin_orders') || '[]');
+      localOrders.forEach(lo => {
+        const matchUser = 
+          (cleanUserId && lo.customer_id === cleanUserId) ||
+          (cleanEmail && lo.customer_email && lo.customer_email.toLowerCase() === cleanEmail) ||
+          (cleanPhone && lo.customer_phone && lo.customer_phone.replace(/\D/g, '').includes(cleanPhone)) ||
+          (cleanName && lo.customer_name && lo.customer_name.toLowerCase().includes(cleanName));
+        if (matchUser && !fetchedOrders.some(fo => fo.id === lo.id)) {
+          fetchedOrders.push(lo);
+        }
+      });
+    } catch {}
+
+    // Merge with local storage admin_preorders
+    try {
+      const localPre: any[] = JSON.parse(localStorage.getItem('admin_preorders') || '[]');
+      localPre.forEach(lp => {
+        const matchUser = 
+          (cleanUserId && (lp.user_id === cleanUserId || lp.customer_id === cleanUserId)) ||
+          (cleanPhone && lp.phone && lp.phone.replace(/\D/g, '').includes(cleanPhone)) ||
+          (cleanName && lp.customerName && lp.customerName.toLowerCase().includes(cleanName));
+        if (matchUser && !fetchedPreOrders.some(fp => fp.id === lp.id)) {
+          fetchedPreOrders.push(lp);
+        }
+      });
+    } catch {}
+
+    // Filter out deleted IDs
+    const activeOrders = fetchedOrders.filter(o => !deletedIds.includes(o.id));
+    const activePreOrders = fetchedPreOrders.filter(p => !deletedIds.includes(p.id));
+
+    if (activeOrders.length === 0 && activePreOrders.length === 0) {
+      setTrackingStatus('hidden');
+      return;
+    }
+
+    let hasShipping = false;
+    let hasProducing = false;
+
+    // Check normal orders
+    for (const ord of activeOrders) {
+      const orderIdStr = String(ord.id).trim();
+      const delivery = deliveriesMap[orderIdStr] || deliveriesMap[ord.id];
+
+      const delivStatus = String(delivery?.delivery_status || ord.delivery_status || '').toLowerCase().trim();
+      const ordStatus = String(ord.status || ord.order_status || ord.payment_status || '').toLowerCase().trim();
+      const qStage = Number(ord.queue_stage || delivery?.queue_stage || 0);
+
+      // 1. Delivered / Completed / Cancelled check
+      if (
+        delivStatus === 'delivered' ||
+        delivStatus === 'completed' ||
+        ordStatus === 'delivered' ||
+        ordStatus === 'completed' ||
+        delivStatus === 'cancelled' ||
+        ordStatus === 'cancelled'
+      ) {
+        // Finished order - ignore
+        continue;
+      }
+
+      // 2. In Transit / Shipping check
+      if (
+        delivStatus === 'in_transit' ||
+        delivStatus === 'shipping' ||
+        ordStatus === 'in_transit' ||
+        ordStatus === 'shipping' ||
+        ordStatus === 'shipped' ||
+        qStage === 4
+      ) {
+        hasShipping = true;
+      } else {
+        // Any other in-progress status belongs to producing phase
+        hasProducing = true;
+      }
+    }
+
+    // Check custom pre-orders
+    for (const pre of activePreOrders) {
+      const preStatus = String(pre.status || pre.payment_status || '').toLowerCase().trim();
+      if (
+        preStatus === 'delivered' ||
+        preStatus === 'completed' ||
+        preStatus === 'cancelled' ||
+        preStatus === 'rejected'
+      ) {
+        continue;
+      }
+
+      if (preStatus === 'in_transit' || preStatus === 'shipping') {
+        hasShipping = true;
+      } else {
+        hasProducing = true;
+      }
+    }
+
+    if (hasShipping) {
+      setTrackingStatus('shipping');
+    } else if (hasProducing) {
+      setTrackingStatus('producing');
+    } else {
+      // All orders completed or delivered
+      setTrackingStatus('hidden');
+    }
+  }, [currentUser]);
+
+  // Real-time synchronization for Header Tracking Status
+  React.useEffect(() => {
+    checkUserOrders();
+
+    let channel: any = null;
+    if (isSupabaseConfigured && supabase) {
+      try {
+        channel = supabase
+          .channel('public:header-track-sync')
+          .on(
+            'postgres_changes',
+            { event: '*', schema: 'public', table: 'orders' },
+            () => checkUserOrders()
+          )
+          .on(
+            'postgres_changes',
+            { event: '*', schema: 'public', table: 'deliveries' },
+            () => checkUserOrders()
+          )
+          .on(
+            'postgres_changes',
+            { event: '*', schema: 'public', table: 'preorders' },
+            () => checkUserOrders()
+          )
+          .subscribe();
+      } catch (err) {
+        console.warn('Realtime subscription error in Header:', err);
+      }
+    }
+
+    const handleSync = () => checkUserOrders();
+    window.addEventListener('orders-updated', handleSync);
+    window.addEventListener('pornpong-delivery-updated', handleSync);
+    window.addEventListener('pornpong-order-delivered', handleSync);
+    window.addEventListener('pornpong-queue-updated', handleSync);
+    window.addEventListener('storage', handleSync);
+
+    return () => {
+      if (channel && supabase) {
+        try {
+          supabase.removeChannel(channel);
+        } catch {}
+      }
+      window.removeEventListener('orders-updated', handleSync);
+      window.removeEventListener('pornpong-delivery-updated', handleSync);
+      window.removeEventListener('pornpong-order-delivered', handleSync);
+      window.removeEventListener('pornpong-queue-updated', handleSync);
+      window.removeEventListener('storage', handleSync);
+    };
+  }, [checkUserOrders]);
 
   const displayName =
     currentUser?.name && currentUser.name.length > 14
@@ -152,20 +350,39 @@ export default function Header({
                 {item.label}
               </button>
             ))}
-            <button
-              type="button"
-              onClick={onOpenProfile}
-              className="px-3.5 py-1.5 text-xs font-bold rounded-full transition-all duration-200 cursor-pointer flex items-center gap-1.5 text-amber-800 bg-amber-50/90 hover:bg-amber-100 border border-amber-200/90 shadow-2xs hover:scale-102 active:scale-97"
-              id="nav-track-queue"
-              title="ติดตามคิวผลิตและจัดส่งเรือพลาสติก Real-time"
-            >
-              <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
-              </span>
-              <ListOrdered size={13} className="text-amber-700" />
-              <span>ติดตามคิวผลิต</span>
-            </button>
+            {trackingStatus !== 'hidden' && (
+              trackingStatus === 'shipping' ? (
+                <button
+                  type="button"
+                  onClick={onOpenProfile}
+                  className="px-3.5 py-1.5 text-xs font-bold rounded-full transition-all duration-200 cursor-pointer flex items-center gap-1.5 text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 shadow-2xs hover:scale-102 active:scale-97 animate-in fade-in"
+                  id="nav-track-queue"
+                  title="ติดตามการจัดส่งสินค้าและเรือพลาสติก Real-time"
+                >
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                  </span>
+                  <Truck size={14} className="text-emerald-700 animate-pulse" />
+                  <span>ติดตามการจัดส่ง</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={onOpenProfile}
+                  className="px-3.5 py-1.5 text-xs font-bold rounded-full transition-all duration-200 cursor-pointer flex items-center gap-1.5 text-amber-800 bg-amber-50/90 hover:bg-amber-100 border border-amber-200/90 shadow-2xs hover:scale-102 active:scale-97 animate-in fade-in"
+                  id="nav-track-queue"
+                  title="ติดตามคิวผลิตและจัดส่งเรือพลาสติก Real-time"
+                >
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+                  </span>
+                  <ListOrdered size={13} className="text-amber-700" />
+                  <span>ติดตามคิวผลิต</span>
+                </button>
+              )
+            )}
           </nav>
 
           {/* Cart Icon & Menu Button */}
@@ -384,27 +601,53 @@ export default function Header({
                 {item.label}
               </button>
             ))}
-            <button
-              type="button"
-              onClick={() => {
-                onOpenProfile();
-                setIsMobileMenuOpen(false);
-              }}
-              className="w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl font-bold text-xs bg-amber-50 text-amber-900 border border-amber-200 shadow-2xs mt-1"
-              id="mobile-nav-track-queue"
-            >
-              <div className="flex items-center gap-2">
-                <span className="relative flex h-2 w-2">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
-                </span>
-                <ListOrdered size={15} className="text-amber-700" />
-                <span>ติดตามคิวผลิต Real-time</span>
-              </div>
-              <span className="text-[10px] bg-amber-200/70 text-amber-900 px-2 py-0.5 rounded-full font-mono font-bold">
-                LIVE
-              </span>
-            </button>
+            {trackingStatus !== 'hidden' && (
+              trackingStatus === 'shipping' ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onOpenProfile();
+                    setIsMobileMenuOpen(false);
+                  }}
+                  className="w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl font-bold text-xs bg-emerald-50 text-emerald-900 border border-emerald-200 shadow-2xs mt-1 transition-all"
+                  id="mobile-nav-track-queue"
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="relative flex h-2 w-2">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                    </span>
+                    <Truck size={15} className="text-emerald-700" />
+                    <span>ติดตามการจัดส่ง</span>
+                  </div>
+                  <span className="text-[10px] bg-emerald-200/70 text-emerald-900 px-2 py-0.5 rounded-full font-mono font-bold">
+                    IN TRANSIT
+                  </span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onOpenProfile();
+                    setIsMobileMenuOpen(false);
+                  }}
+                  className="w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl font-bold text-xs bg-amber-50 text-amber-900 border border-amber-200 shadow-2xs mt-1 transition-all"
+                  id="mobile-nav-track-queue"
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="relative flex h-2 w-2">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+                    </span>
+                    <ListOrdered size={15} className="text-amber-700" />
+                    <span>ติดตามคิวผลิต Real-time</span>
+                  </div>
+                  <span className="text-[10px] bg-amber-200/70 text-amber-900 px-2 py-0.5 rounded-full font-mono font-bold">
+                    LIVE
+                  </span>
+                </button>
+              )
+            )}
           </div>
 
           {/* Mobile Auth Buttons */}

@@ -79,7 +79,8 @@ import {
   parseQueueNumber,
   getActiveProductionQueue,
   setActiveProductionQueue,
-  QUEUE_STAGES
+  QUEUE_STAGES,
+  isSupabaseConfigured
 } from '../lib/supabase';
 import { AppNotification } from './NotificationDropdown';
 import { CustomerOrderHistoryModal } from './CustomerOrderHistoryModal';
@@ -336,6 +337,55 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
     reloadWaitingVerifyOrders();
     reloadPreOrderSettings();
   }, [reloadOrders, reloadPreOrders, reloadCoupons, reloadReviews, reloadPromotions, reloadWaitingVerifyOrders, reloadPreOrderSettings]);
+
+  // Real-time synchronization for orders & deliveries tables in Admin Dashboard
+  React.useEffect(() => {
+    let channel: any = null;
+    if (isSupabaseConfigured && supabase) {
+      try {
+        channel = supabase
+          .channel('public:admin-orders-deliveries-realtime')
+          .on(
+            'postgres_changes',
+            { event: '*', schema: 'public', table: 'orders' },
+            () => {
+              reloadOrders();
+              reloadWaitingVerifyOrders();
+            }
+          )
+          .on(
+            'postgres_changes',
+            { event: '*', schema: 'public', table: 'deliveries' },
+            () => {
+              reloadOrders();
+            }
+          )
+          .subscribe();
+      } catch (err) {
+        console.warn('Realtime subscription caught error in AdminDashboard:', err);
+      }
+    }
+
+    const handleSync = () => {
+      reloadOrders();
+      reloadWaitingVerifyOrders();
+    };
+
+    window.addEventListener('orders-updated', handleSync);
+    window.addEventListener('pornpong-delivery-updated', handleSync);
+    window.addEventListener('pornpong-order-delivered', handleSync);
+
+    return () => {
+      if (channel && supabase) {
+        try {
+          supabase.removeChannel(channel);
+        } catch {}
+      }
+      window.removeEventListener('orders-updated', handleSync);
+      window.removeEventListener('pornpong-delivery-updated', handleSync);
+      window.removeEventListener('pornpong-order-delivered', handleSync);
+    };
+  }, [reloadOrders, reloadWaitingVerifyOrders]);
 
   // Website settings persistence auto-saver helper
   React.useEffect(() => {
@@ -3606,6 +3656,18 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                                   <option value="InProduction">กำลังหลอมขึ้นรูป</option>
                                   <option value="Ready">ประกอบพร้อมจัดส่ง</option>
                                 </select>
+
+                                 {pre.payment_slip_url && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setZoomedSlipUrl(pre.payment_slip_url)}
+                                    className="w-full inline-flex items-center justify-center gap-1 px-2 py-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 text-[10px] font-bold transition-all cursor-pointer shadow-2xs"
+                                    title="คลิกเพื่อขยายดูรูปสลิปหลักฐานมัดจำ"
+                                  >
+                                    <Eye size={11} />
+                                    <span>ดูสลิปมัดจำ</span>
+                                  </button>
+                                )}
 
                                 <button
                                   type="button"
