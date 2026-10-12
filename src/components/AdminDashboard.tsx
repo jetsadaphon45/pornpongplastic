@@ -48,7 +48,11 @@ import {
   UploadCloud,
   Image as ImageIcon,
   ZoomIn,
-  Link as LinkIcon
+  Link as LinkIcon,
+  Phone,
+  ListOrdered,
+  Play,
+  Flame
 } from 'lucide-react';
 import { Product } from '../types';
 import { 
@@ -69,7 +73,12 @@ import {
   DEFAULT_STICKER_OPTIONS,
   DEFAULT_PREORDER_SETTINGS,
   DEFAULT_BOAT_GALLERY_PHOTOS,
-  getLocalStoredProducts
+  getLocalStoredProducts,
+  formatQueueId,
+  parseQueueNumber,
+  getActiveProductionQueue,
+  setActiveProductionQueue,
+  QUEUE_STAGES
 } from '../lib/supabase';
 import { AppNotification } from './NotificationDropdown';
 import { CustomerOrderHistoryModal } from './CustomerOrderHistoryModal';
@@ -802,6 +811,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
   // Navigation Sidebar Lists
   const MENUS = [
     { id: 'dashboard', label: 'หน้าแดชบอร์ด', icon: LayoutDashboard },
+    { id: 'queue-management', label: 'จัดการคิวผลิตและจัดส่ง', icon: ListOrdered },
     { id: 'payment-verify', label: 'ตรวจสอบการชำระเงิน', icon: ShieldCheck },
     { id: 'products', label: 'จัดการรหัสสินค้า', icon: Package },
     { id: 'orders', label: 'คำสั่งซื้อสำเร็จ', icon: FileText },
@@ -825,60 +835,400 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
   const [ordersTabFilter, setOrdersTabFilter] = React.useState<'active' | 'completed'>('active');
   const [selectedOrderForDetail, setSelectedOrderForDetail] = React.useState<any | null>(null);
 
-  const changeOrderStatus = async (orderId: string, nextStatus: 'Pending' | 'Shipping' | 'Delivered') => {
+  // 4-Stage Delivery Workflow Modals
+  const [readyShippingOrder, setReadyShippingOrder] = React.useState<any | null>(null);
+  const [readyShippingDate, setReadyShippingDate] = React.useState<string>('');
+
+  const [inTransitOrder, setInTransitOrder] = React.useState<any | null>(null);
+  const [inTransitCarrier, setInTransitCarrier] = React.useState<string>('รถโรงงานพรพงศ์พลาสติก (สายส่ง)');
+  const [inTransitDriverPhone, setInTransitDriverPhone] = React.useState<string>('089-456-7890');
+  const [inTransitTrackingNo, setInTransitTrackingNo] = React.useState<string>('');
+
+  const executeOrderStatusChange = async (
+    orderId: string, 
+    nextStatus: string, 
+    meta: {
+      estimated_delivery_date?: string;
+      carrier_name?: string;
+      driver_phone?: string;
+      shipment_no?: string;
+      status_message?: string;
+    } = {},
+    statusLabel: string,
+    notificationMsg: string
+  ) => {
     try {
-      const trackingNo = `TH-EX-${String(orderId).replace(/[^0-9]/g, '').slice(-6) || '291823'}`;
+      const sLower = nextStatus.toLowerCase();
+      const isDeliv = sLower === 'delivered' || sLower === 'completed';
+      const isShip = sLower === 'in_transit' || sLower === 'shipped' || sLower === 'shipping';
+      const isReady = sLower === 'ready_for_shipping' || sLower === 'ready';
+      const mappedOrderStatus = isDeliv ? 'completed' : isShip ? 'in_transit' : isReady ? 'ready_for_shipping' : 'manufacturing';
+      const trackingNo = meta.shipment_no || `TH-EX-${String(orderId).replace(/[^0-9]/g, '').slice(-6) || '291823'}`;
+
       // Optimistically update React state immediately
       setAdminOrders(prev => prev.map(o => o.id === orderId ? {
         ...o,
         status: nextStatus,
-        order_status: nextStatus === 'Delivered' ? 'completed' : nextStatus === 'Shipping' ? 'shipping' : 'pending',
-        shipmentNo: o.shipmentNo || trackingNo,
-        shipment_no: o.shipment_no || trackingNo
+        order_status: mappedOrderStatus,
+        shipmentNo: trackingNo,
+        shipment_no: trackingNo,
+        ...(meta.estimated_delivery_date ? { estimated_delivery_date: meta.estimated_delivery_date } : {}),
+        ...(meta.carrier_name ? { carrier_name: meta.carrier_name } : {}),
+        ...(meta.driver_phone ? { driver_phone: meta.driver_phone } : {}),
+        ...(meta.status_message ? { status_message: meta.status_message } : {})
       } : o));
 
-      await supabaseOrders.updateStatus(orderId, nextStatus);
+      await supabaseOrders.updateStatus(orderId, nextStatus, {
+        ...meta,
+        shipment_no: trackingNo
+      });
       await reloadOrders();
 
-      if (nextStatus === 'Delivered') {
-        const delivMsg = `รายการสั่งซื้อหมายเลข #${orderId} จัดส่งสำเร็จเรียบร้อยแล้ว! ขอบคุณที่ไว้วางใจใช้บริการพรพงศ์พลาสติก`;
-        const newNoti: AppNotification = {
-          id: 'noti-deliv-' + Date.now(),
-          title: 'จัดส่งสำเร็จเรียบร้อยแล้ว!',
-          message: delivMsg,
-          type: 'order',
-          date: 'เมื่อครู่',
-          isRead: false
-        };
+      const newNoti: AppNotification = {
+        id: 'noti-status-' + Date.now(),
+        title: isDeliv ? 'จัดส่งสำเร็จเรียบร้อยแล้ว!' : `อัปเดตสถานะคำสั่งซื้อ #${orderId} [${statusLabel}]`,
+        message: notificationMsg,
+        type: 'order',
+        date: 'เมื่อครู่',
+        isRead: false
+      };
 
-        // 1. Update in-app notifications
-        setNotifications(prev => [newNoti, ...prev]);
-        try {
-          const current = JSON.parse(localStorage.getItem('pornpong_notifications') || '[]');
-          localStorage.setItem('pornpong_notifications', JSON.stringify([newNoti, ...current]));
-        } catch {}
+      // 1. Update in-app notifications
+      setNotifications(prev => [newNoti, ...prev]);
+      try {
+        const current = JSON.parse(localStorage.getItem('pornpong_notifications') || '[]');
+        localStorage.setItem('pornpong_notifications', JSON.stringify([newNoti, ...current]));
+      } catch {}
 
-        // 2. Unshown deliveries for customer popup alert
+      // 2. Unshown deliveries for customer popup alert if delivered
+      if (isDeliv) {
         try {
           const unshown = JSON.parse(localStorage.getItem('pornpong_unshown_deliveries') || '[]');
-          unshown.push({ orderId, message: delivMsg, timestamp: Date.now() });
+          unshown.push({ orderId, message: notificationMsg, timestamp: Date.now() });
           localStorage.setItem('pornpong_unshown_deliveries', JSON.stringify(unshown));
         } catch {}
-
-        // 3. Dispatch broadcast events
-        window.dispatchEvent(new CustomEvent('pornpong-order-delivered', {
-          detail: { orderId, notification: newNoti }
-        }));
-        window.dispatchEvent(new CustomEvent('orders-updated'));
-
-        triggerToast(`อัปเดตออเดอร์ #${orderId} เป็น [จัดส่งสำเร็จ] และส่งการแจ้งเตือนถึงลูกค้าเรียบร้อยแล้ว!`);
-      } else {
-        triggerToast(`อัปเดตสถานะออเดอร์ ${orderId} เป็น [${nextStatus === 'Shipping' ? 'จัดส่งแล้ว' : 'รอดำเนินการ'}]`);
       }
+
+      // Also save unshown status update for customer alert popup
+      try {
+        const unshownStatus = JSON.parse(localStorage.getItem('pornpong_unshown_status_updates') || '[]');
+        unshownStatus.push({
+          orderId,
+          stage: mappedOrderStatus,
+          statusLabel,
+          message: notificationMsg,
+          meta: {
+            ...meta,
+            shipment_no: trackingNo
+          },
+          timestamp: Date.now()
+        });
+        localStorage.setItem('pornpong_unshown_status_updates', JSON.stringify(unshownStatus));
+      } catch {}
+
+      // 3. Dispatch broadcast events
+      window.dispatchEvent(new CustomEvent('pornpong-order-status-updated', {
+        detail: {
+          orderId,
+          stage: mappedOrderStatus,
+          statusLabel,
+          message: notificationMsg,
+          meta: {
+            ...meta,
+            shipment_no: trackingNo
+          },
+          notification: newNoti
+        }
+      }));
+      window.dispatchEvent(new CustomEvent('pornpong-order-delivered', {
+        detail: { orderId, notification: newNoti, status: nextStatus, meta }
+      }));
+      window.dispatchEvent(new CustomEvent('orders-updated'));
+
+      triggerToast(`อัปเดตออเดอร์ #${orderId} เป็น [${statusLabel}] สำเร็จ`);
     } catch (err: any) {
       console.error('Failed to change order status:', err);
       triggerToast('เกิดข้อผิดพลาดในการอัปเดตสถานะ');
     }
+  };
+
+  const handleSelectManufacturing = (order: any) => {
+    const orderId = order.id;
+    const msg = `คำสั่งซื้อหมายเลข #${orderId} กำลังหลอมเรือตามสเปกที่คุณออกแบบ ทางโรงงานกำลังดำเนินการผลิตอย่างประณีต`;
+    executeOrderStatusChange(orderId, 'manufacturing', {
+      status_message: 'กำลังหลอมเรือตามสเปกที่คุณออกแบบ'
+    }, 'กำลังผลิต', msg);
+  };
+
+  const handleOpenReadyShippingModal = (order: any) => {
+    setReadyShippingOrder(order);
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const defaultDateStr = order.estimated_delivery_date || `${tomorrow.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' })} เวลา 14:00 น.`;
+    setReadyShippingDate(defaultDateStr);
+  };
+
+  const handleConfirmReadyShipping = () => {
+    if (!readyShippingOrder) return;
+    const orderId = readyShippingOrder.id;
+    const dateStr = readyShippingDate.trim() || 'ภายใน 1-2 วันทำการ';
+    const msg = `คำสั่งซื้อหมายเลข #${orderId} เรือผลิตเสร็จแล้ว - คาดว่าจะจัดส่งวันที่: ${dateStr}`;
+    executeOrderStatusChange(orderId, 'ready_for_shipping', {
+      estimated_delivery_date: dateStr,
+      status_message: `เรือผลิตเสร็จแล้ว - คาดว่าจะจัดส่งวันที่: ${dateStr}`
+    }, 'รอขนย้าย', msg);
+    setReadyShippingOrder(null);
+  };
+
+  const handleOpenInTransitModal = (order: any) => {
+    setInTransitOrder(order);
+    setInTransitCarrier(order.carrier_name || 'รถโรงงานพรพงศ์พลาสติก (สายส่งตรง)');
+    setInTransitDriverPhone(order.driver_phone || '089-456-7890');
+    const tracking = order.shipmentNo || order.shipment_no || `TH-EX-${String(order.id).replace(/[^0-9]/g, '').slice(-6) || '291823'}`;
+    setInTransitTrackingNo(tracking);
+  };
+
+  const handleConfirmInTransit = () => {
+    if (!inTransitOrder) return;
+    const orderId = inTransitOrder.id;
+    const carrier = inTransitCarrier.trim() || 'รถโรงงานพรพงศ์พลาสติก';
+    const driver = inTransitDriverPhone.trim() || '089-456-7890';
+    const tracking = inTransitTrackingNo.trim() || `TH-EX-${String(orderId).replace(/[^0-9]/g, '').slice(-6) || '291823'}`;
+    const msg = `คำสั่งซื้อหมายเลข #${orderId} สินค้าอยู่ระหว่างจัดส่ง - ขนส่ง: ${carrier} | เบอร์คนขับ/Tracking: ${driver} / ${tracking}`;
+    executeOrderStatusChange(orderId, 'in_transit', {
+      carrier_name: carrier,
+      driver_phone: driver,
+      shipment_no: tracking,
+      status_message: `สินค้าอยู่ระหว่างจัดส่ง - ขนส่ง: ${carrier} | เบอร์คนขับ/Tracking: ${driver} / ${tracking}`
+    }, 'อยู่ระหว่างจัดส่ง', msg);
+    setInTransitOrder(null);
+  };
+
+  const handleSelectDelivered = (order: any) => {
+    const orderId = order.id;
+    const msg = `รายการสั่งซื้อหมายเลข #${orderId} จัดส่งสำเร็จเรียบร้อยแล้ว - ขอบคุณที่ไว้วางใจใช้บริการพรพงศ์พลาสติก`;
+    executeOrderStatusChange(orderId, 'delivered', {
+      status_message: 'จัดส่งสำเร็จเรียบร้อยแล้ว - ขอบคุณที่ไว้วางใจใช้บริการพรพงศ์พลาสติก'
+    }, 'จัดส่งสำเร็จ', msg);
+  };
+
+  const changeOrderStatus = (orderId: string, nextStatus: string) => {
+    const sLower = nextStatus.toLowerCase();
+    const order = adminOrders.find(o => o.id === orderId) || { id: orderId };
+    if (sLower === 'manufacturing' || sLower === 'processing') {
+      handleSelectManufacturing(order);
+    } else if (sLower === 'ready_for_shipping' || sLower === 'ready') {
+      handleOpenReadyShippingModal(order);
+    } else if (sLower === 'in_transit' || sLower === 'shipped' || sLower === 'shipping') {
+      handleOpenInTransitModal(order);
+    } else if (sLower === 'delivered' || sLower === 'completed') {
+      handleSelectDelivered(order);
+    }
+  };
+
+  // -------------------------------------------------------------
+  // QUEUE MANAGEMENT STATE & HANDLERS (4-STAGE END-TO-END)
+  // -------------------------------------------------------------
+  const [activeProductionQueueId, setActiveProductionQueueId] = React.useState<string>(() => {
+    return getActiveProductionQueue();
+  });
+  const [queueSearch, setQueueSearch] = React.useState<string>('');
+  const [queueStageFilter, setQueueStageFilter] = React.useState<string>('all');
+  const [queueShippingModalOrder, setQueueShippingModalOrder] = React.useState<any | null>(null);
+  const [queueCarrier, setQueueCarrier] = React.useState<string>('รถโรงงานพรพงศ์พลาสติก (สายส่งด่วน)');
+  const [queueDriverPhone, setQueueDriverPhone] = React.useState<string>('089-456-7890');
+  const [queueTrackingNo, setQueueTrackingNo] = React.useState<string>('');
+
+  // Synchronize active production queue on mount and when external events occur
+  React.useEffect(() => {
+    const handleQueueSync = (e: any) => {
+      if (e?.detail?.activeQueueId) {
+        setActiveProductionQueueId(e.detail.activeQueueId);
+      } else {
+        setActiveProductionQueueId(getActiveProductionQueue());
+      }
+    };
+    window.addEventListener('pornpong-queue-updated', handleQueueSync);
+    return () => {
+      window.removeEventListener('pornpong-queue-updated', handleQueueSync);
+    };
+  }, []);
+
+  // Sorted Queue Orders (ordered by Q-YYMM-XXX)
+  const sortedQueueOrders = React.useMemo(() => {
+    const list = adminOrders.map((ord, idx) => {
+      const qId = ord.queue_id || formatQueueId(ord, idx);
+      const ordSt = (ord.order_status || ord.status || '').toLowerCase();
+      let defaultStage: 1 | 2 | 3 | 4 = 1;
+      if (ordSt === 'in_transit' || ordSt === 'shipped' || ordSt === 'shipping' || ordSt === 'delivered' || ordSt === 'completed') {
+        defaultStage = 4;
+      } else if (ordSt === 'ready_for_shipping' || ordSt === 'ready') {
+        defaultStage = 3;
+      } else if (ordSt === 'manufacturing' || ordSt === 'processing' || ordSt === 'paid') {
+        defaultStage = 2;
+      } else {
+        defaultStage = 1;
+      }
+      const qStage = Number(ord.queue_stage || defaultStage) as 1 | 2 | 3 | 4;
+      return {
+        ...ord,
+        queue_id: qId,
+        queue_stage: qStage
+      };
+    });
+
+    return list.sort((a, b) => parseQueueNumber(a.queue_id) - parseQueueNumber(b.queue_id));
+  }, [adminOrders]);
+
+  const filteredQueueOrders = React.useMemo(() => {
+    return sortedQueueOrders.filter(item => {
+      const term = queueSearch.toLowerCase().trim();
+      const matchesSearch = !term ||
+        item.queue_id.toLowerCase().includes(term) ||
+        (item.customerName || item.customer_name || '').toLowerCase().includes(term) ||
+        (item.id || '').toLowerCase().includes(term) ||
+        (item.productName || item.product_name || '').toLowerCase().includes(term) ||
+        (item.phone || item.customer_phone || '').includes(term);
+
+      const matchesStage = queueStageFilter === 'all' || String(item.queue_stage) === queueStageFilter;
+      return matchesSearch && matchesStage;
+    });
+  }, [sortedQueueOrders, queueSearch, queueStageFilter]);
+
+  const activeQueueOrder = React.useMemo(() => {
+    return sortedQueueOrders.find(o => o.queue_id === activeProductionQueueId) ||
+      sortedQueueOrders.find(o => o.queue_stage === 2) ||
+      sortedQueueOrders[0] || null;
+  }, [sortedQueueOrders, activeProductionQueueId]);
+
+  const handleStartNextProduction = () => {
+    const candidates = sortedQueueOrders.filter(o => (o.queue_stage || 1) === 1);
+    const nextOrder = candidates[0];
+
+    if (!nextOrder) {
+      triggerToast('ขณะนี้ไม่มีคิวที่รอเริ่มผลิตเพิ่มเติม (คิวทั้งหมดอยู่ในขั้นตอนการผลิตหรือจัดส่งแล้ว)');
+      return;
+    }
+
+    const nextQId = nextOrder.queue_id;
+    setActiveProductionQueueId(nextQId);
+    setActiveProductionQueue(nextQId);
+
+    // If current was in stage 2, bump it to stage 3
+    const prevProducing = sortedQueueOrders.find(o => o.queue_id === activeProductionQueueId && (o.queue_stage === 2 || o.order_status === 'manufacturing'));
+    if (prevProducing && prevProducing.id !== nextOrder.id) {
+      supabaseOrders.updateQueueStage(prevProducing.id, 3);
+      setAdminOrders(prev => prev.map(o => o.id === prevProducing.id ? { ...o, queue_stage: 3, order_status: 'ready_for_shipping', status: 'ready_for_shipping' } : o));
+    }
+
+    // Advance nextOrder to stage 2
+    supabaseOrders.updateQueueStage(nextOrder.id, 2);
+    setAdminOrders(prev => prev.map(o => o.id === nextOrder.id ? { ...o, queue_stage: 2, order_status: 'manufacturing', status: 'manufacturing' } : o));
+
+    triggerToast(`เริ่มหลอมผลิตคิวถัดไป: [${nextQId}] เรียบร้อยแล้ว!`);
+
+    const notif: AppNotification = {
+      id: 'noti-queue-' + Date.now(),
+      title: `เริ่มผลิตคิว ${nextQId} แล้ว`,
+      message: `โรงงานเริ่มกระบวนการหลอมขึ้นรูปเรือตามสเปกสำหรับคิว ${nextQId} ของคุณ ${nextOrder.customerName || 'ลูกค้า'}`,
+      type: 'order',
+      date: 'เมื่อสักครู่',
+      isRead: false
+    };
+    setNotifications(prev => [notif, ...prev]);
+  };
+
+  const handleQueueStageChange = (order: any, nextStage: 1 | 2 | 3 | 4) => {
+    if (nextStage === 4) {
+      setQueueShippingModalOrder(order);
+      setQueueCarrier(order.carrier_name || 'รถโรงงานพรพงศ์พลาสติก (สายส่งด่วน)');
+      setQueueDriverPhone(order.driver_phone || '089-456-7890');
+      const tracking = order.shipmentNo || order.shipment_no || `TH-EX-${String(order.id).replace(/[^0-9]/g, '').slice(-6) || '291823'}`;
+      setQueueTrackingNo(tracking);
+      return;
+    }
+
+    if (nextStage === 2) {
+      setActiveProductionQueueId(order.queue_id);
+      setActiveProductionQueue(order.queue_id);
+    }
+
+    const stageStatusMap: Record<number, string> = {
+      1: 'queue_received',
+      2: 'manufacturing',
+      3: 'ready_for_shipping',
+      4: 'in_transit'
+    };
+    const mapped = stageStatusMap[nextStage];
+
+    setAdminOrders(prev => prev.map(o => o.id === order.id ? {
+      ...o,
+      queue_stage: nextStage,
+      queue_status: mapped,
+      order_status: mapped,
+      status: mapped
+    } : o));
+
+    supabaseOrders.updateQueueStage(order.id, nextStage);
+
+    const labels: Record<number, string> = {
+      1: 'รับคิวผลิต',
+      2: 'กำลังหลอม/ผลิต',
+      3: 'รอขนย้าย',
+      4: 'อยู่ระหว่างจัดส่ง'
+    };
+    triggerToast(`อัปเดตคิว ${order.queue_id} เป็น [${labels[nextStage]}] สำเร็จ`);
+
+    const notif: AppNotification = {
+      id: 'noti-queue-st-' + Date.now(),
+      title: `อัปเดตสถานะคิว ${order.queue_id}: ${labels[nextStage]}`,
+      message: `คิว ${order.queue_id} (${order.productName || 'เรือพลาสติก'}) ปรับเข้าสู่ขั้นตอนที่ ${nextStage}: ${labels[nextStage]}`,
+      type: 'order',
+      date: 'เมื่อสักครู่',
+      isRead: false
+    };
+    setNotifications(prev => [notif, ...prev]);
+  };
+
+  const handleConfirmQueueShipping = () => {
+    if (!queueShippingModalOrder) return;
+    const orderId = queueShippingModalOrder.id;
+    const qId = queueShippingModalOrder.queue_id;
+    const carrier = queueCarrier.trim() || 'รถโรงงานพรพงศ์พลาสติก (สายส่งด่วน)';
+    const driver = queueDriverPhone.trim() || '089-456-7890';
+    const tracking = queueTrackingNo.trim() || `TH-EX-${String(orderId).replace(/[^0-9]/g, '').slice(-6) || '291823'}`;
+
+    setAdminOrders(prev => prev.map(o => o.id === orderId ? {
+      ...o,
+      queue_stage: 4,
+      queue_status: 'in_transit',
+      order_status: 'in_transit',
+      status: 'in_transit',
+      carrier_name: carrier,
+      driver_phone: driver,
+      shipmentNo: tracking,
+      shipment_no: tracking
+    } : o));
+
+    supabaseOrders.updateQueueStage(orderId, 4, {
+      carrier_name: carrier,
+      driver_phone: driver,
+      shipment_no: tracking
+    });
+
+    triggerToast(`คิว ${qId} บันทึกข้อมูลขนส่งและเข้าสู่ขั้นตอน [อยู่ระหว่างจัดส่ง] แล้ว!`);
+
+    const notif: AppNotification = {
+      id: 'noti-queue-ship-' + Date.now(),
+      title: `คิว ${qId} อยู่ระหว่างจัดส่งแล้ว!`,
+      message: `สินค้าขึ้นรถขนส่ง ${carrier} เบอร์คนขับ: ${driver} เลขพัสดุ: ${tracking}`,
+      type: 'order',
+      date: 'เมื่อสักครู่',
+      isRead: false
+    };
+    setNotifications(prev => [notif, ...prev]);
+
+    setQueueShippingModalOrder(null);
   };
 
   // Delete Order states & handlers
@@ -2074,6 +2424,381 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
           )}
 
           {/* -----------------------------------------------------------
+              QUEUE MANAGEMENT HUB (ADMIN PRODUCTION & DELIVERY QUEUES)
+              ----------------------------------------------------------- */}
+          {activeMenu === 'queue-management' && (
+            <div className="space-y-5 animate-fadeIn">
+              
+              {/* TOP HUB BANNER & ACTIVE PRODUCTION QUEUE CARD */}
+              <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-slate-900 via-slate-850 to-amber-950 p-6 text-white shadow-xl border border-slate-700/60">
+                <div className="absolute top-0 right-0 -mt-10 -mr-10 h-72 w-72 rounded-full bg-amber-500/10 blur-3xl pointer-events-none"></div>
+                <div className="absolute bottom-0 left-0 -mb-10 -ml-10 h-64 w-64 rounded-full bg-sky-500/10 blur-3xl pointer-events-none"></div>
+
+                <div className="relative z-10 flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+                  {/* Left: Active Queue Info */}
+                  <div className="space-y-3 max-w-2xl">
+                    <div className="flex items-center gap-2.5 flex-wrap">
+                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                        <Flame size={13} className="text-amber-400 animate-pulse" />
+                        <span>คิวปัจจุบันที่กำลังผลิต (Active Production Queue)</span>
+                      </span>
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium bg-emerald-500/10 text-emerald-300 border border-emerald-500/20">
+                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-ping"></span>
+                        <span>ซิงค์ตรง Supabase Real-time</span>
+                      </span>
+                    </div>
+
+                    <div className="flex items-baseline gap-4 flex-wrap">
+                      <h2 className="font-mono text-3xl sm:text-4xl font-black text-amber-400 tracking-tight drop-shadow-xs">
+                        {activeProductionQueueId}
+                      </h2>
+                      {activeQueueOrder && (
+                        <div className="text-xs text-slate-300 flex items-center gap-2">
+                          <span className="font-bold text-white">คุณ {activeQueueOrder.customerName || activeQueueOrder.customer_name || 'ลูกค้า'}</span>
+                          <span className="text-slate-400">•</span>
+                          <span>{activeQueueOrder.productName || activeQueueOrder.product_name || 'เรือพลาสติกสั่งผลิต'}</span>
+                        </div>
+                      )}
+                    </div>
+
+                    <p className="text-xs text-slate-300 leading-relaxed">
+                      🔥 <strong className="text-white">สถานะการทำงาน:</strong> กำลังหลอมขึ้นรูปเรือตามสเปกและมวลพลาสติกหนาพิเศษในเตาหลอมความร้อนสูง ลูกค้าสามารถดูความคืบหน้านี้ได้แบบสดๆ จากหน้าติดตามคิว
+                    </p>
+                  </div>
+
+                  {/* Right: Quick Action [เริ่มผลิตคิวถัดไป] */}
+                  <div className="flex flex-col sm:flex-row lg:flex-col gap-3 shrink-0">
+                    <button
+                      type="button"
+                      onClick={handleStartNextProduction}
+                      className="px-5 py-3.5 rounded-2xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white font-extrabold text-xs shadow-lg shadow-amber-500/30 flex items-center justify-center gap-2.5 transition-all transform active:scale-95 cursor-pointer hover:shadow-amber-500/40"
+                      id="btn-start-next-production"
+                    >
+                      <Play size={16} className="fill-white" />
+                      <span>เริ่มผลิตคิวถัดไป (Start Next Queue)</span>
+                    </button>
+                    <span className="text-[10px] text-center text-slate-400">
+                      ระบบจะปรับคิวถัดไปเข้าสู่ [กำลังหลอม/ผลิต] อัตโนมัติ
+                    </span>
+                  </div>
+                </div>
+
+                {/* 4-Stage Metric Pills */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 mt-5 pt-5 border-t border-slate-700/60 text-xs">
+                  <div className="bg-white/5 rounded-xl p-2.5 border border-white/5">
+                    <div className="text-[10px] text-slate-400 font-medium">1. รับคิวผลิต</div>
+                    <div className="text-lg font-black text-violet-300 font-mono mt-0.5">
+                      {sortedQueueOrders.filter(o => o.queue_stage === 1).length} <span className="text-[11px] font-sans font-normal text-slate-400">ลำ</span>
+                    </div>
+                  </div>
+                  <div className="bg-white/5 rounded-xl p-2.5 border border-white/5">
+                    <div className="text-[10px] text-slate-400 font-medium">2. กำลังหลอม/ผลิต</div>
+                    <div className="text-lg font-black text-amber-300 font-mono mt-0.5">
+                      {sortedQueueOrders.filter(o => o.queue_stage === 2).length} <span className="text-[11px] font-sans font-normal text-slate-400">ลำ</span>
+                    </div>
+                  </div>
+                  <div className="bg-white/5 rounded-xl p-2.5 border border-white/5">
+                    <div className="text-[10px] text-slate-400 font-medium">3. รอขนย้าย</div>
+                    <div className="text-lg font-black text-sky-300 font-mono mt-0.5">
+                      {sortedQueueOrders.filter(o => o.queue_stage === 3).length} <span className="text-[11px] font-sans font-normal text-slate-400">ลำ</span>
+                    </div>
+                  </div>
+                  <div className="bg-white/5 rounded-xl p-2.5 border border-white/5">
+                    <div className="text-[10px] text-slate-400 font-medium">4. อยู่ระหว่างจัดส่ง</div>
+                    <div className="text-lg font-black text-emerald-300 font-mono mt-0.5">
+                      {sortedQueueOrders.filter(o => o.queue_stage === 4).length} <span className="text-[11px] font-sans font-normal text-slate-400">ลำ</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* SEARCH & STAGE FILTERS BAR */}
+              <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-3">
+                {/* Search */}
+                <div className="relative flex-1 max-w-md">
+                  <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="text"
+                    value={queueSearch}
+                    onChange={(e) => setQueueSearch(e.target.value)}
+                    placeholder="ค้นหาเลขคิว (Q-...), ชื่อลูกค้า, รุ่นเรือ, เบอร์โทร..."
+                    className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 outline-none focus:bg-white focus:border-sky-500 focus:ring-1 focus:ring-sky-500/20"
+                    id="input-search-queues"
+                  />
+                  {queueSearch && (
+                    <button
+                      type="button"
+                      onClick={() => setQueueSearch('')}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                    >
+                      <X size={12} />
+                    </button>
+                  )}
+                </div>
+
+                {/* Stage Filter Buttons */}
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {[
+                    { id: 'all', label: 'ทั้งหมด', count: sortedQueueOrders.length },
+                    { id: '1', label: '1. รับคิวผลิต', count: sortedQueueOrders.filter(o => o.queue_stage === 1).length },
+                    { id: '2', label: '2. กำลังหลอม/ผลิต', count: sortedQueueOrders.filter(o => o.queue_stage === 2).length },
+                    { id: '3', label: '3. รอขนย้าย', count: sortedQueueOrders.filter(o => o.queue_stage === 3).length },
+                    { id: '4', label: '4. อยู่ระหว่างจัดส่ง', count: sortedQueueOrders.filter(o => o.queue_stage === 4).length }
+                  ].map((tab) => (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      onClick={() => setQueueStageFilter(tab.id)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                        queueStageFilter === tab.id
+                          ? 'bg-slate-850 text-white shadow-xs'
+                          : 'bg-slate-50 hover:bg-slate-100 text-slate-600 border border-slate-200'
+                      }`}
+                    >
+                      <span>{tab.label}</span>
+                      <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
+                        queueStageFilter === tab.id ? 'bg-white/20 text-white' : 'bg-slate-200 text-slate-700'
+                      }`}>
+                        {tab.count}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* QUEUE TABLE (SORTED BY Q-YYMM-XXX) */}
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+                <div className="p-4 border-b border-slate-150 flex items-center justify-between gap-3 bg-slate-50/50">
+                  <div className="flex items-center gap-2">
+                    <ListOrdered size={16} className="text-sky-600" />
+                    <h3 className="font-display font-extrabold text-xs text-slate-800">
+                      ตารางรายการคิวการผลิตทั้งหมด (เรียงตามเลขคิว Q-YYMM-XXX)
+                    </h3>
+                  </div>
+                  <span className="text-[11px] text-slate-500 font-medium">
+                    แสดง {filteredQueueOrders.length} จาก {sortedQueueOrders.length} รายการ
+                  </span>
+                </div>
+
+                {filteredQueueOrders.length === 0 ? (
+                  <div className="p-12 text-center text-slate-400 space-y-2">
+                    <ListOrdered size={32} className="mx-auto text-slate-300" />
+                    <p className="text-xs font-bold text-slate-600">ไม่พบคิวที่ตรงกับเงื่อนไขการค้นหา</p>
+                    <p className="text-[11px] text-slate-400">กรุณาลองปรับคำค้นหาหรือตัวกรองขั้นตอนคิว</p>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr className="border-b border-slate-200 bg-slate-50 text-[10.5px] font-extrabold text-slate-500 uppercase tracking-wider">
+                          <th className="py-3 px-4">เลขคิว (Queue ID)</th>
+                          <th className="py-3 px-4">ข้อมูลลูกค้า & วันที่</th>
+                          <th className="py-3 px-4">สเปกเรือ / คำสั่งซื้อ</th>
+                          <th className="py-3 px-4">ความคืบหน้า (4 ขั้นตอน)</th>
+                          <th className="py-3 px-4 text-center">ปรับเปลี่ยนสถานะคิว (Admin Actions)</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-150">
+                        {filteredQueueOrders.map((order) => {
+                          const isCurrentActive = order.queue_id === activeProductionQueueId;
+                          const currentStage = order.queue_stage || 1;
+
+                          return (
+                            <tr 
+                              key={order.id} 
+                              className={`transition-colors hover:bg-slate-50/80 ${
+                                isCurrentActive ? 'bg-amber-50/30' : ''
+                              }`}
+                            >
+                              {/* 1. Queue ID */}
+                              <td className="py-3.5 px-4 align-top">
+                                <div className="space-y-1">
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="font-mono text-xs font-black px-2.5 py-1 rounded-lg bg-slate-900 text-amber-400 border border-slate-800 shadow-2xs">
+                                      {order.queue_id}
+                                    </span>
+                                    {isCurrentActive && (
+                                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                                        <Flame size={10} className="text-amber-600 animate-pulse" />
+                                        <span>กำลังผลิต</span>
+                                      </span>
+                                    )}
+                                  </div>
+                                  <span className="block text-[10px] text-slate-400 font-mono">
+                                    #{order.id}
+                                  </span>
+                                </div>
+                              </td>
+
+                              {/* 2. Customer & Date */}
+                              <td className="py-3.5 px-4 align-top">
+                                <div className="space-y-0.5">
+                                  <span className="font-bold text-slate-800 block text-xs">
+                                    {order.customerName || order.customer_name || 'ลูกค้า'}
+                                  </span>
+                                  {(order.phone || order.customer_phone) && (
+                                    <span className="text-[10.5px] text-slate-500 font-mono flex items-center gap-1">
+                                      <Phone size={10} className="text-slate-400" />
+                                      {order.phone || order.customer_phone}
+                                    </span>
+                                  )}
+                                  <span className="text-[10px] text-slate-400 block">
+                                    สั่งเมื่อ {order.date || 'เร็วๆ นี้'}
+                                  </span>
+                                </div>
+                              </td>
+
+                              {/* 3. Boat Specs */}
+                              <td className="py-3.5 px-4 align-top max-w-[240px]">
+                                <div className="space-y-1">
+                                  <span className="font-bold text-slate-800 block line-clamp-1">
+                                    {order.productName || order.product_name || 'เรือพลาสติกสั่งผลิต'}
+                                  </span>
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    {order.color && (
+                                      <span className="inline-flex items-center gap-1 text-[10px] bg-sky-50 text-sky-700 px-2 py-0.5 rounded-md border border-sky-150 font-medium">
+                                        สี: {order.color}
+                                      </span>
+                                    )}
+                                    {order.boat_size && (
+                                      <span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded-md font-medium">
+                                        {order.boat_size}
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              </td>
+
+                              {/* 4. Mini Stepper Progress */}
+                              <td className="py-3.5 px-4 align-top">
+                                <div className="space-y-1.5">
+                                  <div className="flex items-center gap-1">
+                                    {[1, 2, 3, 4].map((st) => (
+                                      <div
+                                        key={st}
+                                        className={`h-2 flex-1 rounded-full transition-all ${
+                                          st < currentStage
+                                            ? 'bg-emerald-500'
+                                            : st === currentStage
+                                            ? currentStage === 4 ? 'bg-emerald-600 animate-pulse' :
+                                              currentStage === 3 ? 'bg-sky-500 animate-pulse' :
+                                              currentStage === 2 ? 'bg-amber-500 animate-pulse' :
+                                              'bg-violet-500 animate-pulse'
+                                            : 'bg-slate-200'
+                                        }`}
+                                      />
+                                    ))}
+                                  </div>
+
+                                  <div className="text-[10.5px] font-bold">
+                                    {currentStage === 1 && (
+                                      <span className="text-violet-700 font-extrabold flex items-center gap-1">
+                                        <Package size={11} /> 1. รับคิวผลิต
+                                      </span>
+                                    )}
+                                    {currentStage === 2 && (
+                                      <span className="text-amber-700 font-extrabold flex items-center gap-1">
+                                        <Flame size={11} className="text-amber-500" /> 2. กำลังหลอม/ผลิต
+                                      </span>
+                                    )}
+                                    {currentStage === 3 && (
+                                      <span className="text-sky-700 font-extrabold flex items-center gap-1">
+                                        <Clock size={11} /> 3. รอขนย้าย
+                                      </span>
+                                    )}
+                                    {currentStage === 4 && (
+                                      <span className="text-emerald-700 font-extrabold flex items-center gap-1">
+                                        <Truck size={11} /> 4. อยู่ระหว่างจัดส่ง
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  {/* In transit metadata preview */}
+                                  {currentStage === 4 && order.shipmentNo && (
+                                    <div className="text-[9.5px] text-slate-500 font-mono">
+                                      ขนส่ง: {order.carrier_name || 'รถโรงงาน'} • Tracking: {order.shipmentNo}
+                                    </div>
+                                  )}
+                                </div>
+                              </td>
+
+                              {/* 5. 4-Stage Action Buttons */}
+                              <td className="py-3.5 px-4 align-top">
+                                <div className="flex items-center justify-center gap-1.5 flex-wrap">
+                                  {/* Button 1: รับคิวผลิต */}
+                                  <button
+                                    type="button"
+                                    onClick={() => handleQueueStageChange(order, 1)}
+                                    className={`px-2.5 py-1.5 rounded-xl text-[10.5px] font-bold transition-all cursor-pointer flex items-center gap-1 ${
+                                      currentStage === 1
+                                        ? 'bg-violet-600 text-white shadow-xs font-black scale-102 ring-2 ring-violet-200'
+                                        : 'bg-slate-100 hover:bg-violet-50 text-slate-600 hover:text-violet-700 border border-slate-200/80'
+                                    }`}
+                                    title="ขั้นตอนที่ 1: รับคิวผลิต"
+                                  >
+                                    <Check size={11} className={currentStage === 1 ? 'block' : 'hidden'} />
+                                    <span>1. รับคิว</span>
+                                  </button>
+
+                                  {/* Button 2: กำลังหลอม/ผลิต */}
+                                  <button
+                                    type="button"
+                                    onClick={() => handleQueueStageChange(order, 2)}
+                                    className={`px-2.5 py-1.5 rounded-xl text-[10.5px] font-bold transition-all cursor-pointer flex items-center gap-1 ${
+                                      currentStage === 2
+                                        ? 'bg-amber-500 text-white shadow-xs font-black scale-102 ring-2 ring-amber-200'
+                                        : 'bg-slate-100 hover:bg-amber-50 text-slate-600 hover:text-amber-700 border border-slate-200/80'
+                                    }`}
+                                    title="ขั้นตอนที่ 2: กำลังหลอม/ผลิต"
+                                  >
+                                    <Flame size={11} className={currentStage === 2 ? 'block' : 'hidden'} />
+                                    <span>2. กำลังหลอม</span>
+                                  </button>
+
+                                  {/* Button 3: รอขนย้าย */}
+                                  <button
+                                    type="button"
+                                    onClick={() => handleQueueStageChange(order, 3)}
+                                    className={`px-2.5 py-1.5 rounded-xl text-[10.5px] font-bold transition-all cursor-pointer flex items-center gap-1 ${
+                                      currentStage === 3
+                                        ? 'bg-sky-600 text-white shadow-xs font-black scale-102 ring-2 ring-sky-200'
+                                        : 'bg-slate-100 hover:bg-sky-50 text-slate-600 hover:text-sky-700 border border-slate-200/80'
+                                    }`}
+                                    title="ขั้นตอนที่ 3: รอขนย้าย"
+                                  >
+                                    <Clock size={11} className={currentStage === 3 ? 'block' : 'hidden'} />
+                                    <span>3. รอขนย้าย</span>
+                                  </button>
+
+                                  {/* Button 4: อยู่ระหว่างจัดส่ง */}
+                                  <button
+                                    type="button"
+                                    onClick={() => handleQueueStageChange(order, 4)}
+                                    className={`px-2.5 py-1.5 rounded-xl text-[10.5px] font-bold transition-all cursor-pointer flex items-center gap-1 ${
+                                      currentStage === 4
+                                        ? 'bg-emerald-600 text-white shadow-xs font-black scale-102 ring-2 ring-emerald-200'
+                                        : 'bg-slate-100 hover:bg-emerald-50 text-slate-600 hover:text-emerald-700 border border-slate-200/80'
+                                    }`}
+                                    title="ขั้นตอนที่ 4: อยู่ระหว่างจัดส่ง (เปิดแบบฟอร์มกรอกข้อมูลขนส่ง)"
+                                  >
+                                    <Truck size={11} className={currentStage === 4 ? 'block' : 'hidden'} />
+                                    <span>4. อยู่ระหว่างจัดส่ง</span>
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+            </div>
+          )}
+
+          {/* -----------------------------------------------------------
               3. SUCCESS DIRECT ORDERS WINDOW TAB (ACTIVE & COMPLETED TABS)
               ----------------------------------------------------------- */}
           {activeMenu === 'orders' && (
@@ -2165,7 +2890,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                         <th className="py-3 px-3 text-right">ยอดเรียกเก็บ</th>
                         <th className="py-3 px-3 text-center">รหัสสิ่งส่งของขนส่ง</th>
                         <th className="py-3 px-3 text-center">
-                          {ordersTabFilter === 'active' ? 'อัปเดตสถานะขนย้าย' : 'สถานะ / การจัดการ'}
+                          {ordersTabFilter === 'active' ? 'ขั้นตอนจัดส่ง (4 ขั้นตอน)' : 'สถานะ / การจัดการ'}
                         </th>
                       </tr>
                     </thead>
@@ -2217,31 +2942,104 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                             </td>
                             <td className="py-3.5 px-3 text-center">
                               {ordersTabFilter === 'active' ? (
-                                <div className="flex items-center justify-center gap-1">
-                                  <button
-                                    onClick={() => changeOrderStatus(ord.id, 'Pending')}
-                                    className={`px-2 py-1 rounded text-[9px] font-extrabold cursor-pointer transition-all ${
-                                      ord.status === 'Pending' ? 'bg-amber-500 text-white font-black shadow-xs' : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
-                                    }`}
-                                  >
-                                    รอขนย้าย
-                                  </button>
-                                  <button
-                                    onClick={() => changeOrderStatus(ord.id, 'Shipping')}
-                                    className={`px-2 py-1 rounded text-[9px] font-extrabold cursor-pointer transition-all ${
-                                      ord.status === 'Shipping' ? 'bg-sky-500 text-white font-black shadow-xs' : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
-                                    }`}
-                                  >
-                                    ส่งของ
-                                  </button>
-                                  <button
-                                    onClick={() => changeOrderStatus(ord.id, 'Delivered')}
-                                    className="px-2.5 py-1 rounded text-[9px] font-extrabold cursor-pointer transition-all bg-emerald-500 hover:bg-emerald-600 text-white font-black shadow-xs"
-                                    title="คลิกเพื่อย้ายรายการนี้ไปยังประวัติคำสั่งซื้อสำเร็จ และส่งแจ้งเตือนหาลูกค้า"
-                                  >
-                                    ✓ ส่งสำเร็จ
-                                  </button>
-                                </div>
+                                (() => {
+                                  const sLower = String(ord.status || '').toLowerCase();
+                                  const osLower = String(ord.order_status || '').toLowerCase();
+
+                                  // 1. [กำลังผลิต] (Manufacturing)
+                                  const isMfgActive = sLower === 'manufacturing' || (
+                                    sLower !== 'ready_for_shipping' && sLower !== 'ready' &&
+                                    sLower !== 'in_transit' && sLower !== 'shipped' && sLower !== 'shipping' &&
+                                    sLower !== 'delivered' && sLower !== 'completed' &&
+                                    osLower !== 'ready_for_shipping' && osLower !== 'in_transit' &&
+                                    osLower !== 'shipped' && osLower !== 'completed'
+                                  );
+
+                                  // 2. [รอขนย้าย] (Ready for Shipping)
+                                  const isReadyActive = sLower === 'ready_for_shipping' || sLower === 'ready' || osLower === 'ready_for_shipping';
+
+                                  // 3. [อยู่ระหว่างจัดส่ง] (In Transit)
+                                  const isInTransitActive = sLower === 'in_transit' || sLower === 'shipped' || sLower === 'shipping' || osLower === 'in_transit' || osLower === 'shipped';
+
+                                  // 4. [จัดส่งสำเร็จ] (Delivered)
+                                  const isDeliveredActive = sLower === 'completed' || sLower === 'delivered' || osLower === 'completed' || osLower === 'delivered';
+
+                                  return (
+                                    <div className="flex flex-col items-center gap-1.5 py-0.5">
+                                      <div className="flex items-center justify-center gap-1 flex-wrap">
+                                        {/* ขั้นตอน 1: กำลังผลิต */}
+                                        <button
+                                          type="button"
+                                          onClick={() => handleSelectManufacturing(ord)}
+                                          className={`px-2 py-1 rounded-md text-[9px] font-black cursor-pointer transition-all ${
+                                            isMfgActive
+                                              ? 'bg-violet-600 hover:bg-violet-700 text-white shadow-xs ring-1 ring-violet-700/20'
+                                              : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
+                                          }`}
+                                          title="ขั้นตอนที่ 1: กำลังผลิต (กำลังหลอมเรือตามสเปก)"
+                                        >
+                                          กำลังผลิต
+                                        </button>
+
+                                        {/* ขั้นตอน 2: รอขนย้าย */}
+                                        <button
+                                          type="button"
+                                          onClick={() => handleOpenReadyShippingModal(ord)}
+                                          className={`px-2 py-1 rounded-md text-[9px] font-black cursor-pointer transition-all ${
+                                            isReadyActive
+                                              ? 'bg-amber-500 hover:bg-amber-600 text-white shadow-xs ring-1 ring-amber-600/20'
+                                              : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
+                                          }`}
+                                          title="ขั้นตอนที่ 2: รอขนย้าย (ระบุวัน/เวลา คาดว่าจะจัดส่ง)"
+                                        >
+                                          รอขนย้าย
+                                        </button>
+
+                                        {/* ขั้นตอน 3: อยู่ระหว่างจัดส่ง */}
+                                        <button
+                                          type="button"
+                                          onClick={() => handleOpenInTransitModal(ord)}
+                                          className={`px-2 py-1 rounded-md text-[9px] font-black cursor-pointer transition-all ${
+                                            isInTransitActive
+                                              ? 'bg-sky-500 hover:bg-sky-600 text-white shadow-xs ring-1 ring-sky-600/20'
+                                              : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
+                                          }`}
+                                          title="ขั้นตอนที่ 3: อยู่ระหว่างจัดส่ง (กรอกชื่อขนส่ง, เบอร์คนขับ, Tracking)"
+                                        >
+                                          อยู่ระหว่างจัดส่ง
+                                        </button>
+
+                                        {/* ขั้นตอน 4: จัดส่งสำเร็จ */}
+                                        <button
+                                          type="button"
+                                          onClick={() => handleSelectDelivered(ord)}
+                                          className={`px-2.5 py-1 rounded-md text-[9px] font-black cursor-pointer transition-all ${
+                                            isDeliveredActive
+                                              ? 'bg-emerald-500 hover:bg-emerald-600 text-white shadow-xs ring-1 ring-emerald-600/20'
+                                              : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
+                                          }`}
+                                          title="ขั้นตอนที่ 4: จัดส่งสำเร็จ (คลิกเพื่อย้ายไปประวัติคำสั่งซื้อสำเร็จ)"
+                                        >
+                                          ✓ ส่งสำเร็จ
+                                        </button>
+                                      </div>
+
+                                      {/* ข้อมูลเสริมใต้ปุ่ม */}
+                                      {isReadyActive && ord.estimated_delivery_date && (
+                                        <span className="text-[9.5px] font-medium text-amber-800 bg-amber-50 border border-amber-200/80 px-2 py-0.5 rounded-md inline-flex items-center gap-1 max-w-[210px] truncate" title={ord.estimated_delivery_date}>
+                                          <Clock size={10} className="shrink-0 text-amber-600" />
+                                          <span className="truncate">คาดส่ง: {ord.estimated_delivery_date}</span>
+                                        </span>
+                                      )}
+                                      {isInTransitActive && (ord.carrier_name || ord.driver_phone) && (
+                                        <span className="text-[9.5px] font-medium text-sky-800 bg-sky-50 border border-sky-200/80 px-2 py-0.5 rounded-md inline-flex items-center gap-1 max-w-[210px] truncate" title={`${ord.carrier_name || 'ขนส่ง'} โทร: ${ord.driver_phone || '-'}`}>
+                                          <Truck size={10} className="shrink-0 text-sky-600" />
+                                          <span className="truncate">{ord.carrier_name || 'ขนส่ง'}: {ord.driver_phone || ord.shipmentNo}</span>
+                                        </span>
+                                      )}
+                                    </div>
+                                  );
+                                })()
                               ) : (
                                 <div className="flex items-center justify-center gap-1.5">
                                   <span className="px-2.5 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 font-bold text-[9.5px] inline-flex items-center gap-1">
@@ -4796,6 +5594,362 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
               </button>
             </div>
 
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 1: READY FOR SHIPPING (ระบุวัน/เวลา คาดว่าจะจัดส่ง) */}
+      {readyShippingOrder && (
+        <div 
+          className="fixed inset-0 z-[115] flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 animate-fadeIn font-sans"
+          onClick={() => setReadyShippingOrder(null)}
+        >
+          <div 
+            className="bg-white rounded-3xl max-w-md w-full p-6 sm:p-7 shadow-2xl border border-slate-200 text-left space-y-4.5 animate-scaleIn relative"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between pb-3 border-b border-slate-150">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center font-bold border border-amber-200 shadow-xs">
+                  <Clock size={20} />
+                </div>
+                <div>
+                  <h3 className="font-display text-base font-black text-slate-800">
+                    ระบุวัน/เวลา คาดว่าจะจัดส่ง
+                  </h3>
+                  <span className="font-mono text-xs font-bold text-amber-600">
+                    #{readyShippingOrder.id} - ขั้นตอน: รอขนย้าย
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setReadyShippingOrder(null)}
+                className="p-1.5 rounded-full hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Order Brief */}
+            <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200 text-xs flex justify-between items-center">
+              <div>
+                <span className="text-slate-400 text-[10px] block">ลูกค้า:</span>
+                <strong className="text-slate-800">{readyShippingOrder.customerName || 'ลูกค้า'}</strong>
+              </div>
+              <div className="text-right">
+                <span className="text-slate-400 text-[10px] block">สินค้า:</span>
+                <span className="font-medium text-slate-700 truncate max-w-[160px] inline-block">{readyShippingOrder.productName}</span>
+              </div>
+            </div>
+
+            {/* Input field */}
+            <div className="space-y-2">
+              <label className="block text-xs font-bold text-slate-700">
+                วัน/เวลา คาดว่าจะจัดส่งถึงลูกค้า <span className="text-rose-500">*</span>
+              </label>
+              <input 
+                type="text"
+                value={readyShippingDate}
+                onChange={(e) => setReadyShippingDate(e.target.value)}
+                placeholder="เช่น 12 ต.ค. 2026 เวลา 14:00 น."
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 outline-none focus:bg-white focus:border-amber-500 focus:ring-1 focus:ring-amber-500/20"
+                autoFocus
+              />
+              {/* Shortcut buttons */}
+              <div className="flex flex-wrap gap-1.5 pt-1">
+                {[
+                  'วันนี้ 16:00 น.',
+                  'พรุ่งนี้ 10:00 น.',
+                  'พรุ่งนี้ 14:00 น.',
+                  'ภายใน 2-3 วันทำการ'
+                ].map((tag) => (
+                  <button
+                    key={tag}
+                    type="button"
+                    onClick={() => setReadyShippingDate(tag)}
+                    className="text-[10px] font-semibold bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200/80 px-2 py-0.5 rounded-lg cursor-pointer transition-colors"
+                  >
+                    {tag}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <p className="text-[11px] text-slate-500 leading-relaxed bg-amber-50/70 p-3 rounded-xl border border-amber-150">
+              💡 เมื่อยืนยัน ระบบจะส่งการแจ้งเตือนไปยังลูกค้าว่า: <i>"เรือผลิตเสร็จแล้ว - คาดว่าจะจัดส่งวันที่: {readyShippingDate || '...'}"</i>
+            </p>
+
+            {/* Action buttons */}
+            <div className="flex items-center gap-3 pt-1">
+              <button
+                type="button"
+                onClick={() => setReadyShippingOrder(null)}
+                className="flex-1 py-2.5 rounded-xl border border-slate-200 hover:bg-slate-100 text-slate-600 font-bold text-xs cursor-pointer transition-colors"
+              >
+                ยกเลิก
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmReadyShipping}
+                className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs shadow-md shadow-amber-500/20 cursor-pointer transition-all active:scale-[0.99]"
+              >
+                บันทึกและปรับเป็น [รอขนย้าย]
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 2: IN TRANSIT (กรอกข้อมูล ขนส่ง, เบอร์คนขับ, Tracking) */}
+      {inTransitOrder && (
+        <div 
+          className="fixed inset-0 z-[115] flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 animate-fadeIn font-sans"
+          onClick={() => setInTransitOrder(null)}
+        >
+          <div 
+            className="bg-white rounded-3xl max-w-md w-full p-6 sm:p-7 shadow-2xl border border-slate-200 text-left space-y-4.5 animate-scaleIn relative"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between pb-3 border-b border-slate-150">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-2xl bg-sky-50 text-sky-600 flex items-center justify-center font-bold border border-sky-200 shadow-xs">
+                  <Truck size={20} />
+                </div>
+                <div>
+                  <h3 className="font-display text-base font-black text-slate-800">
+                    กรอกข้อมูลการจัดส่งสินค้า
+                  </h3>
+                  <span className="font-mono text-xs font-bold text-sky-600">
+                    #{inTransitOrder.id} - ขั้นตอน: อยู่ระหว่างจัดส่ง
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setInTransitOrder(null)}
+                className="p-1.5 rounded-full hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Inputs Form */}
+            <div className="space-y-3">
+              {/* Carrier Name */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  ชื่อขนส่ง / รถโรงงาน <span className="text-rose-500">*</span>
+                </label>
+                <input 
+                  type="text"
+                  value={inTransitCarrier}
+                  onChange={(e) => setInTransitCarrier(e.target.value)}
+                  placeholder="เช่น รถโรงงานพรพงศ์พลาสติก, Flash Express"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs text-slate-800 outline-none focus:bg-white focus:border-sky-500 focus:ring-1 focus:ring-sky-500/20"
+                />
+                <div className="flex flex-wrap gap-1.5 pt-1.5">
+                  {[
+                    'รถโรงงานพรพงศ์ (สายส่งตรง)',
+                    'Inter Express',
+                    'Flash Express',
+                    'Kerry Logistics'
+                  ].map((carrier) => (
+                    <button
+                      key={carrier}
+                      type="button"
+                      onClick={() => setInTransitCarrier(carrier)}
+                      className="text-[10px] font-semibold bg-sky-50 hover:bg-sky-100 text-sky-800 border border-sky-200/80 px-2 py-0.5 rounded-lg cursor-pointer transition-colors"
+                    >
+                      {carrier}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Driver Phone */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  เบอร์โทรคนขับ / ผู้ประสานงานส่งของ <span className="text-rose-500">*</span>
+                </label>
+                <input 
+                  type="text"
+                  value={inTransitDriverPhone}
+                  onChange={(e) => setInTransitDriverPhone(e.target.value)}
+                  placeholder="เช่น 089-123-4567"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs text-slate-800 outline-none focus:bg-white focus:border-sky-500 focus:ring-1 focus:ring-sky-500/20"
+                />
+              </div>
+
+              {/* Tracking No */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  เลข Tracking / รหัสพัสดุขนส่ง <span className="text-rose-500">*</span>
+                </label>
+                <input 
+                  type="text"
+                  value={inTransitTrackingNo}
+                  onChange={(e) => setInTransitTrackingNo(e.target.value)}
+                  placeholder="เช่น TH-EX-291823"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs text-slate-800 font-mono outline-none focus:bg-white focus:border-sky-500 focus:ring-1 focus:ring-sky-500/20"
+                />
+              </div>
+            </div>
+
+            <p className="text-[11px] text-slate-500 leading-relaxed bg-sky-50/70 p-3 rounded-xl border border-sky-150">
+              💡 เมื่อยืนยัน ระบบจะส่งการแจ้งเตือนไปยังลูกค้าว่า: <i>"สินค้าอยู่ระหว่างจัดส่ง - ขนส่ง: {inTransitCarrier || '...'} | เบอร์คนขับ/Tracking: {inTransitDriverPhone || '...'} / {inTransitTrackingNo || '...'}"</i>
+            </p>
+
+            {/* Action buttons */}
+            <div className="flex items-center gap-3 pt-1">
+              <button
+                type="button"
+                onClick={() => setInTransitOrder(null)}
+                className="flex-1 py-2.5 rounded-xl border border-slate-200 hover:bg-slate-100 text-slate-600 font-bold text-xs cursor-pointer transition-colors"
+              >
+                ยกเลิก
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmInTransit}
+                className="flex-1 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs shadow-md shadow-sky-600/20 cursor-pointer transition-all active:scale-[0.99]"
+              >
+                ยืนยันเริ่มจัดส่ง [อยู่ระหว่างจัดส่ง]
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 3: QUEUE SHIPPING (ขั้นตอนที่ 4: อยู่ระหว่างจัดส่ง ในหน้าจัดการคิว) */}
+      {queueShippingModalOrder && (
+        <div 
+          className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 animate-fadeIn font-sans"
+          onClick={() => setQueueShippingModalOrder(null)}
+        >
+          <div 
+            className="bg-white rounded-3xl max-w-md w-full p-6 sm:p-7 shadow-2xl border border-slate-200 text-left space-y-4.5 animate-scaleIn relative"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between pb-3 border-b border-slate-150">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center font-bold border border-emerald-200 shadow-xs">
+                  <Truck size={20} />
+                </div>
+                <div>
+                  <h3 className="font-display text-base font-black text-slate-800">
+                    บันทึกข้อมูลการจัดส่งสินค้า (คิว)
+                  </h3>
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-xs font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
+                      {queueShippingModalOrder.queue_id}
+                    </span>
+                    <span className="text-[11px] text-slate-400 font-mono">
+                      #{queueShippingModalOrder.id}
+                    </span>
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setQueueShippingModalOrder(null)}
+                className="p-1.5 rounded-full hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Inputs Form */}
+            <div className="space-y-3.5">
+              {/* Field 1: ชื่อบริษัทขนส่ง / รถโรงงาน */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  ชื่อบริษัทขนส่ง / รถโรงงาน <span className="text-rose-500">*</span>
+                </label>
+                <input 
+                  type="text"
+                  value={queueCarrier}
+                  onChange={(e) => setQueueCarrier(e.target.value)}
+                  placeholder="เช่น รถโรงงานพรพงศ์พลาสติก (สายส่งด่วน)"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 outline-none focus:bg-white focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/20"
+                  id="input-queue-carrier"
+                />
+                <div className="flex flex-wrap gap-1.5 pt-1.5">
+                  {[
+                    'รถโรงงานพรพงศ์ (สายส่งด่วน)',
+                    'Flash Express Bulk',
+                    'KEX Logistics',
+                    'Inter Express Cold'
+                  ].map((carrier) => (
+                    <button
+                      key={carrier}
+                      type="button"
+                      onClick={() => setQueueCarrier(carrier)}
+                      className="text-[10px] font-semibold bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200/80 px-2 py-0.5 rounded-lg cursor-pointer transition-colors"
+                    >
+                      {carrier}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Field 2: เบอร์โทรคนขับ */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  เบอร์โทรคนขับ / ผู้ส่งสินค้า <span className="text-rose-500">*</span>
+                </label>
+                <input 
+                  type="text"
+                  value={queueDriverPhone}
+                  onChange={(e) => setQueueDriverPhone(e.target.value)}
+                  placeholder="เช่น 089-456-7890"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 outline-none focus:bg-white focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/20"
+                  id="input-queue-driver-phone"
+                />
+              </div>
+
+              {/* Field 3: เลข Tracking */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  เลข Tracking / รหัสพัสดุขนส่ง <span className="text-rose-500">*</span>
+                </label>
+                <input 
+                  type="text"
+                  value={queueTrackingNo}
+                  onChange={(e) => setQueueTrackingNo(e.target.value)}
+                  placeholder="เช่น TH-EX-261089"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 font-mono outline-none focus:bg-white focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/20"
+                  id="input-queue-tracking-no"
+                />
+              </div>
+            </div>
+
+            <p className="text-[11px] text-slate-600 leading-relaxed bg-emerald-50/70 p-3 rounded-xl border border-emerald-150">
+              ⚡ เมื่อกดบันทึก ระบบจะอัปเดตตาราง <code className="font-mono text-emerald-700 font-bold">orders</code> ใน Supabase ทันที พร้อมยิงข้อมูล Real-time ไปแสดงผลใน <b>"บัตรติดตามคิว"</b> ฝั่งลูกค้า
+            </p>
+
+            {/* Action buttons */}
+            <div className="flex items-center gap-3 pt-1">
+              <button
+                type="button"
+                onClick={() => setQueueShippingModalOrder(null)}
+                className="flex-1 py-2.5 rounded-xl border border-slate-200 hover:bg-slate-100 text-slate-600 font-bold text-xs cursor-pointer transition-colors"
+              >
+                ยกเลิก
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmQueueShipping}
+                className="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-md shadow-emerald-600/20 cursor-pointer transition-all active:scale-[0.99] flex items-center justify-center gap-1.5"
+                id="btn-confirm-queue-shipping"
+              >
+                <Check size={14} />
+                <span>ยืนยันเข้าสู่ [อยู่ระหว่างจัดส่ง]</span>
+              </button>
+            </div>
           </div>
         </div>
       )}

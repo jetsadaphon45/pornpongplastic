@@ -1,5 +1,5 @@
 import React from 'react';
-import { Anchor, ShoppingCart, Menu, X, Search, PhoneCall, User, LogOut, Bell } from 'lucide-react';
+import { Anchor, ShoppingCart, Menu, X, Search, PhoneCall, User, LogOut, Bell, ListOrdered } from 'lucide-react';
 import { CartItem } from '../types';
 import NotificationDropdown, { AppNotification } from './NotificationDropdown';
 
@@ -152,6 +152,20 @@ export default function Header({
                 {item.label}
               </button>
             ))}
+            <button
+              type="button"
+              onClick={onOpenProfile}
+              className="px-3.5 py-1.5 text-xs font-bold rounded-full transition-all duration-200 cursor-pointer flex items-center gap-1.5 text-amber-800 bg-amber-50/90 hover:bg-amber-100 border border-amber-200/90 shadow-2xs hover:scale-102 active:scale-97"
+              id="nav-track-queue"
+              title="ติดตามคิวผลิตและจัดส่งเรือพลาสติก Real-time"
+            >
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+              </span>
+              <ListOrdered size={13} className="text-amber-700" />
+              <span>ติดตามคิวผลิต</span>
+            </button>
           </nav>
 
           {/* Cart Icon & Menu Button */}
@@ -370,6 +384,27 @@ export default function Header({
                 {item.label}
               </button>
             ))}
+            <button
+              type="button"
+              onClick={() => {
+                onOpenProfile();
+                setIsMobileMenuOpen(false);
+              }}
+              className="w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl font-bold text-xs bg-amber-50 text-amber-900 border border-amber-200 shadow-2xs mt-1"
+              id="mobile-nav-track-queue"
+            >
+              <div className="flex items-center gap-2">
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+                </span>
+                <ListOrdered size={15} className="text-amber-700" />
+                <span>ติดตามคิวผลิต Real-time</span>
+              </div>
+              <span className="text-[10px] bg-amber-200/70 text-amber-900 px-2 py-0.5 rounded-full font-mono font-bold">
+                LIVE
+              </span>
+            </button>
           </div>
 
           {/* Mobile Auth Buttons */}

@@ -16,9 +16,11 @@ import {
   Loader2,
   ExternalLink,
   RefreshCw,
-  Truck
+  Truck,
+  Flame,
+  ListOrdered
 } from 'lucide-react';
-import { supabaseOrders, supabasePreOrders } from '../lib/supabase';
+import { supabaseOrders, supabasePreOrders, formatQueueId } from '../lib/supabase';
 
 interface CustomerOrderHistoryModalProps {
   isOpen: boolean;
@@ -214,46 +216,74 @@ export function CustomerOrderHistoryModal({
                   const isPaid = ord.payment_status === 'paid' || ord.payment_status === 'approved' || ord.payment_status === 'processing';
                   const isWaiting = ord.payment_status === 'waiting_verify' || ord.payment_status === 'pending_verification' || ord.payment_status === 'waiting_approval';
                   const isDelivered = ord.order_status === 'completed' || ord.order_status === 'delivered' || ord.status === 'Delivered';
+                  const qId = ord.queue_id || ord.queueId || formatQueueId(ord, idx);
+                  const qStage = ord.queue_stage || (ord.order_status === 'in_transit' || ord.status === 'Shipping' || ord.order_status === 'completed' || isDelivered ? 4 : ord.order_status === 'ready_for_shipping' ? 3 : ord.order_status === 'manufacturing' ? 2 : 1);
+
                   return (
                     <div 
                       key={ord.id || idx}
-                      className="border border-slate-200 hover:border-sky-200 rounded-2xl p-4 bg-white hover:bg-sky-50/10 transition-all shadow-2xs space-y-3"
-                    >
-                      <div className="flex items-center justify-between gap-2 flex-wrap">
-                        <div className="flex items-center gap-2">
-                          <span className="px-2.5 py-0.5 rounded-lg bg-slate-100 text-slate-700 text-xs font-mono font-bold">
-                            #{ord.id}
-                          </span>
-                          <span className="text-[11px] text-slate-400">
-                            {ord.created_at ? new Date(ord.created_at).toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'}
-                          </span>
-                        </div>
+                          className="border border-slate-200 hover:border-sky-200 rounded-2xl p-4 bg-white hover:bg-sky-50/10 transition-all shadow-2xs space-y-3"
+                        >
+                          <div className="flex items-center justify-between gap-2 flex-wrap">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="px-2.5 py-0.5 rounded-lg bg-slate-900 text-amber-400 font-mono text-xs font-bold shadow-2xs">
+                                {qId}
+                              </span>
+                              <span className="text-[11px] font-mono text-slate-500 font-bold">
+                                #{ord.id}
+                              </span>
+                              <span className="text-[11px] text-slate-400">
+                                {ord.created_at ? new Date(ord.created_at).toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'}
+                              </span>
+                            </div>
 
-                        <div className="flex items-center gap-2">
-                          {/* Payment status badge */}
-                          <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold inline-flex items-center gap-1 ${
-                            isDelivered || isPaid
-                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                              : isWaiting
-                              ? 'bg-amber-50 text-amber-700 border border-amber-200'
-                              : 'bg-rose-50 text-rose-700 border border-rose-200'
-                          }`}>
-                            {isDelivered || isPaid ? <CheckCircle2 size={11} /> : <Clock size={11} />}
-                            {isDelivered || isPaid ? 'ชำระเงินเสร็จสิ้น' : isWaiting ? 'กำลังตรวจสอบการชำระเงิน' : 'รอชำระเงิน'}
-                          </span>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              {/* 4-Stage Queue status pill */}
+                              <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold inline-flex items-center gap-1 ${
+                                qStage === 4
+                                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                  : qStage === 3
+                                  ? 'bg-sky-50 text-sky-700 border border-sky-200'
+                                  : qStage === 2
+                                  ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                                  : 'bg-violet-50 text-violet-700 border border-violet-200'
+                              }`}>
+                                {qStage === 4 ? (
+                                  <>
+                                    <Truck size={11} className="text-emerald-600" />
+                                    <span>คิว 4. อยู่ระหว่างจัดส่ง</span>
+                                  </>
+                                ) : qStage === 3 ? (
+                                  <>
+                                    <Clock size={11} className="text-sky-600" />
+                                    <span>คิว 3. รอขนย้าย</span>
+                                  </>
+                                ) : qStage === 2 ? (
+                                  <>
+                                    <Flame size={11} className="text-amber-600" />
+                                    <span>คิว 2. กำลังหลอม/ผลิต</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Package size={11} className="text-violet-600" />
+                                    <span>คิว 1. รับคิวผลิต</span>
+                                  </>
+                                )}
+                              </span>
 
-                          {/* Order Status */}
-                          {isDelivered ? (
-                            <span className="px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-bold inline-flex items-center gap-1">
-                              <CheckCircle2 size={11} /> จัดส่งสำเร็จ
-                            </span>
-                          ) : (
-                            <span className="px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-600 text-[10px] font-bold">
-                              {ord.order_status === 'confirmed' || ord.order_status === 'processing' ? 'จัดเตรียมสินค้า' : ord.order_status === 'shipped' || ord.status === 'Shipping' ? 'กำลังจัดส่ง' : 'รอดำเนินการ'}
-                            </span>
-                          )}
-                        </div>
-                      </div>
+                              {/* Payment status badge */}
+                              <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold inline-flex items-center gap-1 ${
+                                isDelivered || isPaid
+                                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                  : isWaiting
+                                  ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                                  : 'bg-rose-50 text-rose-700 border border-rose-200'
+                              }`}>
+                                {isDelivered || isPaid ? <CheckCircle2 size={11} /> : <Clock size={11} />}
+                                {isDelivered || isPaid ? 'ชำระเงินเสร็จสิ้น' : isWaiting ? 'ตรวจสลิป' : 'รอชำระ'}
+                              </span>
+                            </div>
+                          </div>
 
                       <div className="flex items-start justify-between gap-4 pt-2 border-t border-slate-100">
                         <div>
@@ -317,10 +347,15 @@ export function CustomerOrderHistoryModal({
                     className="border border-slate-200 hover:border-sky-200 rounded-2xl p-4 bg-white hover:bg-sky-50/10 transition-all shadow-2xs space-y-3"
                   >
                     <div className="flex items-center justify-between gap-2 flex-wrap">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <span className="px-2.5 py-0.5 rounded-lg bg-sky-50 text-sky-700 text-xs font-mono font-bold border border-sky-100">
                           PRE #{pre.id}
                         </span>
+                        {(pre.queue_id || pre.queueId || pre.queue_number) && (
+                          <span className="px-2 py-0.5 rounded-lg bg-slate-900 text-amber-400 font-mono text-xs font-bold shadow-2xs">
+                            {pre.queue_id || pre.queueId || pre.queue_number}
+                          </span>
+                        )}
                         <span className="text-[11px] text-slate-400">
                           วันที่จอง: {pre.date || '-'}
                         </span>

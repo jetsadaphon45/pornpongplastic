@@ -13,7 +13,9 @@ import {
   ChevronRight,
   CheckCircle,
   Check,
-  Truck
+  Truck,
+  Clock,
+  Package
 } from 'lucide-react';
 
 import { Product, CartItem, User } from './types';
@@ -247,10 +249,21 @@ export default function App() {
 
   // Pop-up Alert when admin approves payment slip
   const [approvedPaymentAlert, setApprovedPaymentAlert] = React.useState<{ orderId: string; message: string } | null>(null);
-  // Pop-up Alert when admin marks order as delivered
-  const [deliveryCompletedAlert, setDeliveryCompletedAlert] = React.useState<{ orderId: string; message: string } | null>(null);
+  // Pop-up Alert for 4-Stage delivery workflow status updates
+  const [orderStatusAlert, setOrderStatusAlert] = React.useState<{
+    orderId: string;
+    stage: 'manufacturing' | 'ready_for_shipping' | 'in_transit' | 'delivered';
+    statusLabel: string;
+    message: string;
+    meta?: {
+      estimated_delivery_date?: string;
+      carrier_name?: string;
+      driver_phone?: string;
+      shipment_no?: string;
+    };
+  } | null>(null);
 
-  // Listen for admin order approval & delivery and show Pop-up alert
+  // Listen for admin order approval & 4-stage delivery status updates and show Pop-up alert
   React.useEffect(() => {
     const checkUnshownApprovals = () => {
       try {
@@ -290,7 +303,13 @@ export default function App() {
           if (Array.isArray(list) && list.length > 0) {
             const latest = list[list.length - 1];
             const msg = latest.message || `รายการสั่งซื้อหมายเลข #${latest.orderId} จัดส่งสำเร็จเรียบร้อยแล้ว! ขอบคุณที่ไว้วางใจใช้บริการพรพงศ์พลาสติก`;
-            setDeliveryCompletedAlert({ orderId: latest.orderId, message: msg });
+            setOrderStatusAlert({
+              orderId: latest.orderId,
+              stage: 'delivered',
+              statusLabel: 'จัดส่งสำเร็จ',
+              message: msg,
+              meta: { shipment_no: `TH-EX-${String(latest.orderId).replace(/[^0-9]/g, '').slice(-6) || '291823'}` }
+            });
             setNotifications(prev => {
               if (prev.some(n => n.id === `noti-deliv-${latest.orderId}`)) return prev;
               const noti: AppNotification = {
@@ -311,8 +330,31 @@ export default function App() {
       }
     };
 
+    const checkUnshownStatusUpdates = () => {
+      try {
+        const raw = localStorage.getItem('pornpong_unshown_status_updates');
+        if (raw) {
+          const list = JSON.parse(raw);
+          if (Array.isArray(list) && list.length > 0) {
+            const latest = list[list.length - 1];
+            setOrderStatusAlert({
+              orderId: latest.orderId,
+              stage: latest.stage || 'manufacturing',
+              statusLabel: latest.statusLabel || 'อัปเดตสถานะการจัดส่ง',
+              message: latest.message,
+              meta: latest.meta
+            });
+            localStorage.removeItem('pornpong_unshown_status_updates');
+          }
+        }
+      } catch (err) {
+        console.error('Error checking unshown status updates:', err);
+      }
+    };
+
     checkUnshownApprovals();
     checkUnshownDeliveries();
+    checkUnshownStatusUpdates();
 
     const handleOrderApproved = (e: any) => {
       const detail = e.detail;
@@ -328,11 +370,36 @@ export default function App() {
       }
     };
 
+    const handleOrderStatusUpdated = (e: any) => {
+      const detail = e.detail;
+      if (detail?.orderId) {
+        setOrderStatusAlert({
+          orderId: detail.orderId,
+          stage: detail.stage || 'manufacturing',
+          statusLabel: detail.statusLabel || 'อัปเดตสถานะ',
+          message: detail.message,
+          meta: detail.meta
+        });
+        if (detail.notification) {
+          setNotifications(prev => {
+            if (prev.some(n => n.id === detail.notification.id)) return prev;
+            return [detail.notification, ...prev];
+          });
+        }
+      }
+    };
+
     const handleOrderDelivered = (e: any) => {
       const detail = e.detail;
       if (detail?.orderId) {
         const msg = detail.notification?.message || `รายการสั่งซื้อหมายเลข #${detail.orderId} จัดส่งสำเร็จเรียบร้อยแล้ว! ขอบคุณที่ไว้วางใจใช้บริการพรพงศ์พลาสติก`;
-        setDeliveryCompletedAlert({ orderId: detail.orderId, message: msg });
+        setOrderStatusAlert({
+          orderId: detail.orderId,
+          stage: 'delivered',
+          statusLabel: 'จัดส่งสำเร็จ',
+          message: msg,
+          meta: detail.meta || { shipment_no: `TH-EX-${String(detail.orderId).replace(/[^0-9]/g, '').slice(-6) || '291823'}` }
+        });
         if (detail.notification) {
           setNotifications(prev => {
             if (prev.some(n => n.id === detail.notification.id)) return prev;
@@ -349,15 +416,20 @@ export default function App() {
       if (e.key === 'pornpong_unshown_deliveries' && e.newValue) {
         checkUnshownDeliveries();
       }
+      if (e.key === 'pornpong_unshown_status_updates' && e.newValue) {
+        checkUnshownStatusUpdates();
+      }
     };
 
     window.addEventListener('pornpong-order-approved', handleOrderApproved);
     window.addEventListener('pornpong-order-delivered', handleOrderDelivered);
+    window.addEventListener('pornpong-order-status-updated', handleOrderStatusUpdated);
     window.addEventListener('storage', handleStorageChange);
 
     return () => {
       window.removeEventListener('pornpong-order-approved', handleOrderApproved);
       window.removeEventListener('pornpong-order-delivered', handleOrderDelivered);
+      window.removeEventListener('pornpong-order-status-updated', handleOrderStatusUpdated);
       window.removeEventListener('storage', handleStorageChange);
     };
   }, []);
@@ -793,39 +865,192 @@ export default function App() {
         </div>
       )}
 
-      {/* 2.6 POP-UP MODAL: DELIVERY COMPLETED NOTIFICATION */}
-      {deliveryCompletedAlert && (
+      {/* 2.6 POP-UP MODAL: 4-STAGE DELIVERY STATUS NOTIFICATION */}
+      {orderStatusAlert && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs font-sans animate-fadeIn">
-          <div className="relative w-full max-w-md bg-white rounded-3xl p-6 sm:p-7 shadow-2xl border border-emerald-150 text-center space-y-5 animate-scaleUp">
+          <div className="relative w-full max-w-md bg-white rounded-3xl p-6 sm:p-7 shadow-2xl border border-slate-150 text-center space-y-4 animate-scaleUp">
             
-            {/* Animated Delivery / Truck Icon */}
+            {/* Top Status Icon according to stage */}
             <div className="flex justify-center">
               <div className="relative inline-flex items-center justify-center">
-                <div className="absolute -inset-2 rounded-full bg-emerald-400/25 blur-md animate-ping"></div>
-                <div className="relative h-16 w-16 rounded-2xl bg-gradient-to-tr from-emerald-600 to-teal-500 text-white flex items-center justify-center shadow-lg shadow-emerald-200">
-                  <Truck size={34} className="animate-pulse" />
+                <div className={`absolute -inset-2 rounded-full blur-md animate-ping ${
+                  orderStatusAlert.stage === 'delivered'
+                    ? 'bg-emerald-400/25'
+                    : orderStatusAlert.stage === 'in_transit'
+                    ? 'bg-sky-400/25'
+                    : orderStatusAlert.stage === 'ready_for_shipping'
+                    ? 'bg-amber-400/25'
+                    : 'bg-violet-400/25'
+                }`}></div>
+                <div className={`relative h-16 w-16 rounded-2xl text-white flex items-center justify-center shadow-lg ${
+                  orderStatusAlert.stage === 'delivered'
+                    ? 'bg-gradient-to-tr from-emerald-600 to-teal-500 shadow-emerald-200'
+                    : orderStatusAlert.stage === 'in_transit'
+                    ? 'bg-gradient-to-tr from-sky-600 to-cyan-500 shadow-sky-200'
+                    : orderStatusAlert.stage === 'ready_for_shipping'
+                    ? 'bg-gradient-to-tr from-amber-500 to-orange-400 shadow-amber-200'
+                    : 'bg-gradient-to-tr from-violet-600 to-purple-500 shadow-violet-200'
+                }`}>
+                  {orderStatusAlert.stage === 'delivered' ? (
+                    <CheckCircle2 size={34} className="animate-pulse" />
+                  ) : orderStatusAlert.stage === 'in_transit' ? (
+                    <Truck size={34} className="animate-pulse" />
+                  ) : orderStatusAlert.stage === 'ready_for_shipping' ? (
+                    <Clock size={34} className="animate-pulse" />
+                  ) : (
+                    <Package size={34} className="animate-pulse" />
+                  )}
                 </div>
               </div>
             </div>
 
-            <div className="space-y-2">
-              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 text-emerald-700 font-bold text-[11px] border border-emerald-200">
-                <Check size={12} strokeWidth={3} />
-                <span>สินค้าจัดส่งถึงปลายทางแล้ว</span>
+            <div className="space-y-1.5">
+              <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full font-bold text-[11px] border ${
+                orderStatusAlert.stage === 'delivered'
+                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                  : orderStatusAlert.stage === 'in_transit'
+                  ? 'bg-sky-50 text-sky-700 border border-sky-200'
+                  : orderStatusAlert.stage === 'ready_for_shipping'
+                  ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                  : 'bg-violet-50 text-violet-700 border border-violet-200'
+              }`}>
+                {orderStatusAlert.stage === 'delivered' ? (
+                  <>
+                    <Check size={12} strokeWidth={3} />
+                    <span>ขั้นตอนที่ 4: จัดส่งสำเร็จเรียบร้อยแล้ว</span>
+                  </>
+                ) : orderStatusAlert.stage === 'in_transit' ? (
+                  <>
+                    <Truck size={12} />
+                    <span>ขั้นตอนที่ 3: สินค้าอยู่ระหว่างจัดส่ง</span>
+                  </>
+                ) : orderStatusAlert.stage === 'ready_for_shipping' ? (
+                  <>
+                    <Clock size={12} />
+                    <span>ขั้นตอนที่ 2: สินค้าผลิตเสร็จ - รอขนย้าย</span>
+                  </>
+                ) : (
+                  <>
+                    <Package size={12} />
+                    <span>ขั้นตอนที่ 1: กำลังหลอมผลิตเรือ</span>
+                  </>
+                )}
               </span>
+
               <h3 className="font-display text-xl sm:text-2xl font-black text-slate-850">
-                จัดส่งสำเร็จเรียบร้อยแล้ว!
+                {orderStatusAlert.stage === 'delivered'
+                  ? 'จัดส่งสำเร็จเรียบร้อยแล้ว!'
+                  : orderStatusAlert.stage === 'in_transit'
+                  ? 'สินค้ากำลังเดินทางไปส่งคุณ!'
+                  : orderStatusAlert.stage === 'ready_for_shipping'
+                  ? 'สินค้าพร้อมจัดส่งแล้ว!'
+                  : 'กำลังดำเนินการผลิตเรือ!'}
               </h3>
-              <p className="text-xs sm:text-sm text-slate-600 leading-relaxed font-sans">
-                {deliveryCompletedAlert.message}
+              <p className="text-xs sm:text-sm text-slate-600 leading-relaxed font-sans px-1">
+                {orderStatusAlert.message}
               </p>
             </div>
 
-            {/* Order info badge */}
-            <div className="bg-slate-50 p-3 rounded-2xl border border-dashed border-slate-200 text-xs flex justify-between items-center font-mono">
+            {/* Stepper Graphic inside popup */}
+            <div className="bg-slate-50 p-3 rounded-2xl border border-slate-200/80">
+              <div className="flex items-center justify-between text-[10px] font-bold text-slate-400 mb-2">
+                <span>ลำดับขั้นตอนการจัดส่ง (4 ขั้นตอน)</span>
+                <span className="font-mono text-slate-700">
+                  {orderStatusAlert.stage === 'delivered' ? '4/4' : orderStatusAlert.stage === 'in_transit' ? '3/4' : orderStatusAlert.stage === 'ready_for_shipping' ? '2/4' : '1/4'}
+                </span>
+              </div>
+              <div className="relative flex items-center justify-between px-3">
+                <div className="absolute left-5 right-5 top-3 h-0.5 bg-slate-200">
+                  <div 
+                    className="h-full bg-gradient-to-r from-violet-500 via-sky-500 to-emerald-500 transition-all duration-300"
+                    style={{
+                      width: orderStatusAlert.stage === 'delivered' ? '100%' : orderStatusAlert.stage === 'in_transit' ? '66%' : orderStatusAlert.stage === 'ready_for_shipping' ? '33%' : '0%'
+                    }}
+                  />
+                </div>
+                {[
+                  { id: 'manufacturing', num: 1, label: 'กำลังผลิต' },
+                  { id: 'ready_for_shipping', num: 2, label: 'รอขนย้าย' },
+                  { id: 'in_transit', num: 3, label: 'อยู่ระหว่างจัดส่ง' },
+                  { id: 'delivered', num: 4, label: 'จัดส่งสำเร็จ' }
+                ].map((s) => {
+                  const stageOrder = ['manufacturing', 'ready_for_shipping', 'in_transit', 'delivered'];
+                  const curIdx = stageOrder.indexOf(orderStatusAlert.stage);
+                  const thisIdx = stageOrder.indexOf(s.id);
+                  const isDone = thisIdx < curIdx || (curIdx === 3 && thisIdx === 3);
+                  const isCurrent = thisIdx === curIdx;
+
+                  return (
+                    <div key={s.id} className="relative z-10 flex flex-col items-center">
+                      <div className={`w-6 h-6 rounded-full flex items-center justify-center font-bold text-[10px] transition-all ${
+                        isCurrent
+                          ? 'bg-slate-900 text-white ring-2 ring-sky-300 scale-105'
+                          : isDone
+                          ? 'bg-emerald-600 text-white'
+                          : 'bg-slate-200 text-slate-500'
+                      }`}>
+                        {isDone ? <Check size={11} strokeWidth={3} /> : s.num}
+                      </div>
+                      <span className={`text-[9px] mt-1 font-bold ${
+                        isCurrent ? 'text-slate-900' : isDone ? 'text-emerald-700' : 'text-slate-400'
+                      }`}>
+                        {s.label}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Stage-specific metadata pill */}
+            {orderStatusAlert.stage === 'ready_for_shipping' && orderStatusAlert.meta?.estimated_delivery_date && (
+              <div className="bg-amber-50 p-2.5 rounded-xl border border-amber-200 text-xs flex items-center justify-between text-amber-900">
+                <span className="font-bold flex items-center gap-1.5">
+                  <Clock size={13} className="text-amber-600" />
+                  <span>วัน/เวลา คาดว่าจะจัดส่ง:</span>
+                </span>
+                <span className="font-mono font-extrabold bg-white px-2 py-0.5 rounded border border-amber-200">
+                  {orderStatusAlert.meta.estimated_delivery_date}
+                </span>
+              </div>
+            )}
+
+            {orderStatusAlert.stage === 'in_transit' && (
+              <div className="bg-sky-50 p-2.5 rounded-xl border border-sky-200 text-xs space-y-1 text-sky-900 text-left">
+                <div className="flex justify-between items-center">
+                  <span className="text-[11px] text-sky-700">🚚 ขนส่ง: <b>{orderStatusAlert.meta?.carrier_name || 'รถโรงงาน'}</b></span>
+                  {orderStatusAlert.meta?.driver_phone && (
+                    <span className="text-[11px] text-sky-700">📞 โทร: <b className="font-mono">{orderStatusAlert.meta.driver_phone}</b></span>
+                  )}
+                </div>
+                {orderStatusAlert.meta?.shipment_no && (
+                  <div className="pt-1 border-t border-sky-100 flex justify-between items-center">
+                    <span className="text-[10.5px] text-sky-600 font-sans">เลขพัสดุ / Tracking:</span>
+                    <code className="font-mono font-bold text-sky-950 bg-white px-2 py-0.5 rounded border border-sky-200 text-[11px]">
+                      {orderStatusAlert.meta.shipment_no}
+                    </code>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {orderStatusAlert.stage === 'delivered' && orderStatusAlert.meta?.shipment_no && (
+              <div className="bg-emerald-50 p-2.5 rounded-xl border border-emerald-200 text-xs flex justify-between items-center text-emerald-900">
+                <span className="font-bold flex items-center gap-1.5">
+                  <Truck size={13} className="text-emerald-600" />
+                  <span>รหัสพัสดุขนส่ง:</span>
+                </span>
+                <code className="font-mono font-bold bg-white px-2 py-0.5 rounded border border-emerald-200">
+                  {orderStatusAlert.meta.shipment_no}
+                </code>
+              </div>
+            )}
+
+            {/* Order ID badge */}
+            <div className="bg-slate-50 p-2.5 rounded-xl border border-dashed border-slate-200 text-xs flex justify-between items-center font-mono">
               <span className="text-slate-400 font-sans">รหัสคำสั่งซื้อ:</span>
               <span className="font-bold text-slate-800 bg-white px-2.5 py-0.5 rounded-lg border border-slate-200">
-                #{deliveryCompletedAlert.orderId}
+                #{orderStatusAlert.orderId}
               </span>
             </div>
 
@@ -833,20 +1058,28 @@ export default function App() {
             <div className="grid grid-cols-2 gap-3 pt-1">
               <button
                 type="button"
-                onClick={() => setDeliveryCompletedAlert(null)}
+                onClick={() => setOrderStatusAlert(null)}
                 className="w-full py-3 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-700 font-bold text-xs cursor-pointer transition-all"
-                id="btn-dismiss-delivery-alert"
+                id="btn-dismiss-status-alert"
               >
                 รับทราบ
               </button>
               <button
                 type="button"
                 onClick={() => {
-                  setDeliveryCompletedAlert(null);
+                  setOrderStatusAlert(null);
                   setIsProfileOpen(true);
                 }}
-                className="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs cursor-pointer shadow-md transition-all flex items-center justify-center gap-1.5 active:scale-[0.99]"
-                id="btn-view-delivered-orders"
+                className={`w-full py-3 rounded-xl text-white font-bold text-xs cursor-pointer shadow-md transition-all flex items-center justify-center gap-1.5 active:scale-[0.99] ${
+                  orderStatusAlert.stage === 'delivered'
+                    ? 'bg-emerald-600 hover:bg-emerald-700'
+                    : orderStatusAlert.stage === 'in_transit'
+                    ? 'bg-sky-600 hover:bg-sky-700'
+                    : orderStatusAlert.stage === 'ready_for_shipping'
+                    ? 'bg-amber-500 hover:bg-amber-600'
+                    : 'bg-violet-600 hover:bg-violet-700'
+                }`}
+                id="btn-view-order-status"
               >
                 <ShoppingBag size={14} />
                 <span>ดูประวัติคำสั่งซื้อ</span>

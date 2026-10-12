@@ -17,9 +17,24 @@ import {
   AlertTriangle,
   Loader2,
   Truck,
-  CheckCircle2
+  CheckCircle2,
+  Clock,
+  Package,
+  Flame,
+  Copy,
+  ListOrdered,
+  PhoneCall
 } from 'lucide-react';
-import { supabaseOrders, supabasePreOrders } from '../lib/supabase';
+import { 
+  supabaseOrders, 
+  supabasePreOrders, 
+  supabase, 
+  isSupabaseConfigured,
+  formatQueueId,
+  parseQueueNumber,
+  getActiveProductionQueue,
+  QUEUE_STAGES
+} from '../lib/supabase';
 import AddressManagementView from './AddressManagementView';
 
 interface UserData {
@@ -41,12 +56,19 @@ interface ProfileModalProps {
 
 interface OrderItem {
   id: string;
+  queueId: string;
   date: string;
   productName: string;
   color: string;
   amount: string;
   status: string;
+  stageNumber: 1 | 2 | 3 | 4;
+  stageLabel: string;
+  statusMessage: string;
   shipmentNo: string;
+  estimatedDeliveryDate?: string;
+  carrierName?: string;
+  driverPhone?: string;
 }
 
 interface PreOrderItem {
@@ -66,25 +88,64 @@ interface ItemToDelete {
   productName: string;
 }
 
-// Highly realistic mock order and pre-order datasets
+// Realistic mock orders demonstrating 4-stage delivery flow
 const MOCK_ORDERS: OrderItem[] = [
   {
     id: "ORD-2026-9874",
+    queueId: "Q-2610-008",
     date: "12 มี.ค. 2026",
     productName: "เรือพายพลาสติก ตราพรพงศ์ รุ่น 2.5 เมตร - ท้องเรือแบนสัญจรง่าย",
     color: "สีน้ำเงินพรีเมียม (Royal Blue)",
     amount: "4,900 บาท",
     status: "จัดส่งสำเร็จ",
-    shipmentNo: "TH-EX-291823"
+    stageNumber: 4,
+    stageLabel: "จัดส่งสำเร็จ",
+    statusMessage: "จัดส่งสำเร็จเรียบร้อยแล้ว - ขอบคุณที่ไว้วางใจใช้บริการพรพงศ์พลาสติก",
+    shipmentNo: "TH-EX-291823",
+    carrierName: "รถโรงงานพรพงศ์พลาสติก (สายส่งตรง)",
+    driverPhone: "089-456-7890"
   },
   {
     id: "ORD-2026-4512",
+    queueId: "Q-2610-011",
     date: "04 ม.ค. 2026",
     productName: "พายพลาสติกเกรดพรีเมียม ใบพายหนาเหนียวพิเศษ",
     color: "สีเหลืองพาสเทล (Pastel Yellow)",
     amount: "350 บาท",
-    status: "จัดส่งสำเร็จ",
-    shipmentNo: "TH-EX-104928"
+    status: "อยู่ระหว่างจัดส่ง",
+    stageNumber: 4,
+    stageLabel: "อยู่ระหว่างจัดส่ง",
+    statusMessage: "สินค้าอยู่ระหว่างจัดส่ง - ขนส่ง: Flash Express | เบอร์คนขับ/Tracking: 081-234-5678 / TH-EX-104928",
+    shipmentNo: "TH-EX-104928",
+    carrierName: "Flash Express",
+    driverPhone: "081-234-5678"
+  },
+  {
+    id: "ORD-2026-3391",
+    queueId: "Q-2610-013",
+    date: "07 ต.ค. 2026",
+    productName: "เรือไฟเบอร์พลาสติก รุ่น 3 ที่นั่ง สั่งหลอมพิเศษ",
+    color: "สีส้มประกายมุก",
+    amount: "7,500 บาท",
+    status: "รอขนย้าย",
+    stageNumber: 3,
+    stageLabel: "รอขนย้าย",
+    statusMessage: "เรือผลิตเสร็จแล้ว - คาดว่าจะจัดส่งวันที่: พรุ่งนี้ 14:00 น.",
+    shipmentNo: "TH-EX-339101",
+    estimatedDeliveryDate: "พรุ่งนี้ 14:00 น."
+  },
+  {
+    id: "ORD-2026-1185",
+    queueId: "Q-2610-015",
+    date: "08 ต.ค. 2026",
+    productName: "เรือหัวแหลมกู้ภัยน้ำท่วม ตราพรพงศ์ รุ่น 2.8 เมตร",
+    color: "สีเขียวทหาร (Military Green)",
+    amount: "5,800 บาท",
+    status: "รับคิวผลิต",
+    stageNumber: 1,
+    stageLabel: "รับคิวผลิต",
+    statusMessage: "กำลังหลอมเรือตามสเปกที่คุณออกแบบ ทางโรงงานกำลังดำเนินการผลิตอย่างประณีต",
+    shipmentNo: "TH-EX-118520"
   }
 ];
 
@@ -115,6 +176,16 @@ export function ProfileModal({ isOpen, onClose, currentUser, onUpdateProfile, on
   const [preOrders, setPreOrders] = React.useState<PreOrderItem[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = React.useState(false);
 
+  // Active Production Queue ID (real-time from factory)
+  const [activeFactoryQueue, setActiveFactoryQueue] = React.useState<string>(() => {
+    return getActiveProductionQueue();
+  });
+
+  // Track primary order for the top Live Queue Card (in-progress orders first)
+  const primaryTrackedOrder = React.useMemo(() => {
+    return orders.find(o => o.stageNumber !== 4 || o.status !== 'จัดส่งสำเร็จ') || orders[0] || null;
+  }, [orders]);
+
   // Delete confirmation state
   const [itemToDelete, setItemToDelete] = React.useState<ItemToDelete | null>(null);
   const [isDeleting, setIsDeleting] = React.useState(false);
@@ -144,23 +215,39 @@ export function ProfileModal({ isOpen, onClose, currentUser, onUpdateProfile, on
         return false;
       });
 
-      const mappedRemoteOrders: OrderItem[] = userOrders.map((o: any) => {
-        let statusDisplay = 'จัดส่งสำเร็จ';
+      const mappedRemoteOrders: OrderItem[] = userOrders.map((o: any, idx: number) => {
         const ordStatus = (o.status || o.order_status || '').toLowerCase();
-        const pStatus = (o.payment_status || '').toLowerCase();
+        const qId = o.queue_id || formatQueueId(o, idx);
+
+        const estDate = o.estimated_delivery_date || o.est_delivery || 'กำลังประสานงานคิวจัดส่ง';
+        const carrier = o.carrier_name || 'รถโรงงานพรพงศ์พลาสติก';
+        const driver = o.driver_phone || '089-456-7890';
+        const trackingNo = o.shipmentNo || o.shipment_no || `TH-EX-${String(o.id).replace(/[^0-9]/g, '').slice(-6) || '291823'}`;
+
+        let stageNumber: 1 | 2 | 3 | 4 = 1;
+        let stageLabel = 'รับคิวผลิต';
+        let statusMessage = 'โรงงานลงทะเบียนรับคิวผลิตของคุณเข้าระบบเรียบร้อยแล้ว';
 
         if (ordStatus === 'delivered' || ordStatus === 'completed') {
-          statusDisplay = 'จัดส่งสำเร็จ';
-        } else if (ordStatus === 'shipping') {
-          statusDisplay = 'กำลังจัดส่ง';
-        } else if (pStatus === 'waiting_verify' || pStatus === 'pending_verification' || pStatus === 'waiting_approval') {
-          statusDisplay = 'กำลังตรวจสอบการชำระเงิน';
-        } else if (pStatus === 'paid' || pStatus === 'processing' || pStatus === 'approved') {
-          statusDisplay = 'ชำระเงินเสร็จสิ้น';
-        } else if (pStatus === 'pending') {
-          statusDisplay = 'รอชำระเงิน';
-        } else if (pStatus === 'rejected') {
-          statusDisplay = 'สลิปไม่ถูกต้อง';
+          stageNumber = 4;
+          stageLabel = 'จัดส่งสำเร็จ';
+          statusMessage = 'จัดส่งสำเร็จเรียบร้อยแล้ว - ขอบคุณที่ไว้วางใจใช้บริการพรพงศ์พลาสติก';
+        } else if (ordStatus === 'in_transit' || ordStatus === 'shipped' || ordStatus === 'shipping' || o.queue_stage === 4) {
+          stageNumber = 4;
+          stageLabel = 'อยู่ระหว่างจัดส่ง';
+          statusMessage = `สินค้าอยู่ระหว่างจัดส่ง - ขนส่ง: ${carrier} | เบอร์คนขับ/Tracking: ${driver} / ${trackingNo}`;
+        } else if (ordStatus === 'ready_for_shipping' || ordStatus === 'ready' || o.queue_stage === 3) {
+          stageNumber = 3;
+          stageLabel = 'รอขนย้าย';
+          statusMessage = `เรือผลิตเสร็จแล้ว - คาดว่าจะจัดส่งวันที่: ${estDate}`;
+        } else if (ordStatus === 'manufacturing' || ordStatus === 'processing' || ordStatus === 'paid' || o.queue_stage === 2) {
+          stageNumber = 2;
+          stageLabel = 'กำลังหลอม/ผลิต';
+          statusMessage = 'กำลังหลอมเรือตามสเปกที่คุณออกแบบ';
+        } else {
+          stageNumber = 1;
+          stageLabel = 'รับคิวผลิต';
+          statusMessage = 'โรงงานลงทะเบียนรับคิวผลิตของคุณเข้าระบบเรียบร้อยแล้ว';
         }
 
         const rawAmount = typeof o.amount === 'number' ? o.amount : (Number(o.total_amount || 0));
@@ -168,12 +255,19 @@ export function ProfileModal({ isOpen, onClose, currentUser, onUpdateProfile, on
 
         return {
           id: o.id,
+          queueId: qId,
           date: o.date || (o.created_at ? new Date(o.created_at).toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric' }) : 'เมื่อเร็วๆ นี้'),
           productName: o.productName || 'เรือพลาสติกและอุปกรณ์',
           color: o.color || 'คละสี',
           amount: formattedAmount,
-          status: statusDisplay,
-          shipmentNo: o.shipmentNo || `TH-EX-${String(o.id).replace(/[^0-9]/g, '').slice(-6) || '291823'}`
+          status: stageLabel,
+          stageNumber,
+          stageLabel,
+          statusMessage,
+          shipmentNo: trackingNo,
+          estimatedDeliveryDate: estDate,
+          carrierName: carrier,
+          driverPhone: driver
         };
       });
 
@@ -245,19 +339,59 @@ export function ProfileModal({ isOpen, onClose, currentUser, onUpdateProfile, on
     }
   }, [currentUser, isOpen, loadHistory]);
 
-  // Real-time synchronization for order delivery and approvals
+  // Real-time synchronization for order delivery, approvals, and factory queue
   React.useEffect(() => {
     if (!isOpen) return;
+
     const handleSync = () => {
       loadHistory();
+      setActiveFactoryQueue(getActiveProductionQueue());
     };
+
+    const handleQueueSync = (e: any) => {
+      if (e?.detail?.activeQueueId) {
+        setActiveFactoryQueue(e.detail.activeQueueId);
+      } else {
+        setActiveFactoryQueue(getActiveProductionQueue());
+      }
+      loadHistory();
+    };
+
     window.addEventListener('orders-updated', handleSync);
     window.addEventListener('pornpong-order-delivered', handleSync);
     window.addEventListener('pornpong-order-approved', handleSync);
+    window.addEventListener('pornpong-queue-updated', handleQueueSync);
+    window.addEventListener('storage', handleSync);
+
+    // Supabase Realtime Channel Subscription
+    let channel: any = null;
+    if (isSupabaseConfigured && supabase) {
+      try {
+        channel = supabase
+          .channel('public:orders-queue-realtime')
+          .on(
+            'postgres_changes',
+            { event: '*', schema: 'public', table: 'orders' },
+            () => {
+              loadHistory();
+              setActiveFactoryQueue(getActiveProductionQueue());
+            }
+          )
+          .subscribe();
+      } catch (err) {
+        console.warn('Realtime subscription caught error in ProfileModal:', err);
+      }
+    }
+
     return () => {
       window.removeEventListener('orders-updated', handleSync);
       window.removeEventListener('pornpong-order-delivered', handleSync);
       window.removeEventListener('pornpong-order-approved', handleSync);
+      window.removeEventListener('pornpong-queue-updated', handleQueueSync);
+      window.removeEventListener('storage', handleSync);
+      if (channel && supabase) {
+        supabase.removeChannel(channel);
+      }
     };
   }, [isOpen, loadHistory]);
 
@@ -589,6 +723,247 @@ export function ProfileModal({ isOpen, onClose, currentUser, onUpdateProfile, on
             {activeSection === 'history' && (
               <div className="space-y-6 animate-fadeIn">
 
+            {/* -------------------------------------------------------------
+                LIVE QUEUE TRACKING & PRE-ORDER STATUS CARD (บัตรติดตามคิว)
+                ------------------------------------------------------------- */}
+            {primaryTrackedOrder && (
+              <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-slate-900 via-slate-850 to-sky-950 p-5 sm:p-6 text-white shadow-xl border border-sky-500/30">
+                <div className="absolute top-0 right-0 -mt-10 -mr-10 h-64 w-64 rounded-full bg-sky-500/15 blur-3xl pointer-events-none"></div>
+                <div className="absolute bottom-0 left-0 -mb-10 -ml-10 h-64 w-64 rounded-full bg-amber-500/10 blur-3xl pointer-events-none"></div>
+
+                <div className="relative z-10 space-y-4">
+                  {/* Top Bar: Title & Realtime Badge */}
+                  <div className="flex items-center justify-between gap-3 flex-wrap">
+                    <div className="flex items-center gap-2">
+                      <div className="h-8 w-8 rounded-xl bg-sky-500/20 text-sky-300 flex items-center justify-center border border-sky-400/30 shadow-xs">
+                        <ListOrdered size={16} />
+                      </div>
+                      <div>
+                        <h3 className="font-display font-black text-sm text-white tracking-wide">
+                          บัตรติดตามคิวและสถานะพรีออเดอร์
+                        </h3>
+                        <span className="text-[10.5px] text-slate-300">
+                          {primaryTrackedOrder.productName} ({primaryTrackedOrder.color})
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10.5px] font-bold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 shadow-2xs">
+                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-ping"></span>
+                        <span>⚡ ระบบ Real-time จากโรงงาน</span>
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Main Queue Status Grid */}
+                  <div className="bg-white/5 border border-white/10 rounded-2xl p-4 backdrop-blur-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
+                    {/* Left: Customer's Queue Number */}
+                    <div className="space-y-1">
+                      <span className="text-[10px] uppercase tracking-wider font-extrabold text-sky-300 block">
+                        เลขคิวของคุณ (Your Queue ID)
+                      </span>
+                      <div className="flex items-center gap-3">
+                        <span className="font-mono text-3xl sm:text-4xl font-black text-amber-400 tracking-tight drop-shadow-sm">
+                          {primaryTrackedOrder.queueId || 'Q-2610-015'}
+                        </span>
+                        <span className={`px-2.5 py-1 rounded-full text-[10.5px] font-extrabold border ${
+                          primaryTrackedOrder.stageNumber === 4
+                            ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                            : primaryTrackedOrder.stageNumber === 3
+                            ? 'bg-sky-500/20 text-sky-300 border-sky-500/40'
+                            : primaryTrackedOrder.stageNumber === 2
+                            ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                            : 'bg-violet-500/20 text-violet-300 border-violet-500/40'
+                        }`}>
+                          {primaryTrackedOrder.stageLabel}
+                        </span>
+                      </div>
+                      <span className="text-[10.5px] text-slate-400 font-mono block">
+                        รหัสคำสั่งซื้อ: #{primaryTrackedOrder.id}
+                      </span>
+                    </div>
+
+                    {/* Right: Real-time Queue Calculation Box */}
+                    <div className="bg-black/30 border border-white/10 rounded-xl p-3 md:max-w-md w-full space-y-1.5">
+                      <div className="flex items-center justify-between text-[11px]">
+                        <span className="text-slate-400 flex items-center gap-1">
+                          <Flame size={12} className="text-amber-400 animate-pulse" />
+                          <span>โรงงานกำลังผลิตคิว:</span>
+                        </span>
+                        <span className="font-mono font-black text-amber-400 text-xs">
+                          {activeFactoryQueue}
+                        </span>
+                      </div>
+
+                      {/* Remaining Calculation */}
+                      <div className="text-xs font-bold text-white pt-0.5">
+                        {(() => {
+                          const myQ = parseQueueNumber(primaryTrackedOrder.queueId || 'Q-2610-015');
+                          const activeQ = parseQueueNumber(activeFactoryQueue || 'Q-2610-012');
+                          const remaining = myQ - activeQ;
+
+                          if (remaining > 0) {
+                            return (
+                              <p className="text-amber-300">
+                                ขณะนี้โรงงานกำลังผลิตคิว <span className="font-mono underline">{activeFactoryQueue}</span> (อีก <strong className="text-white text-sm bg-amber-500/30 px-1.5 py-0.2 rounded-md">{remaining}</strong> คิวจะถึงเรือของคุณ)
+                              </p>
+                            );
+                          } else if (remaining === 0 || primaryTrackedOrder.stageNumber === 2) {
+                            return (
+                              <p className="text-amber-300 flex items-center gap-1.5 font-extrabold">
+                                <Flame size={14} className="text-orange-400 animate-bounce" />
+                                <span>🎉 ขณะนี้โรงงานกำลังหลอมขึ้นรูปเรือของคุณในเตาหลอม (คิวปัจจุบัน)!</span>
+                              </p>
+                            );
+                          } else if (primaryTrackedOrder.stageNumber === 3) {
+                            return (
+                              <p className="text-sky-300 flex items-center gap-1.5 font-bold">
+                                <Clock size={13} className="text-sky-400" />
+                                <span>✨ เรือของคุณผลิตเสร็จสมบูรณ์แล้ว - อยู่ระหว่างรอขนย้าย</span>
+                              </p>
+                            );
+                          } else {
+                            return (
+                              <p className="text-emerald-300 flex items-center gap-1.5 font-bold">
+                                <Truck size={13} className="text-emerald-400" />
+                                <span>🚚 สินค้าอยู่ระหว่างจัดส่งไปยังที่อยู่ของคุณ</span>
+                              </p>
+                            );
+                          }
+                        })()}
+                      </div>
+
+                      <p className="text-[10px] text-slate-400 leading-tight">
+                        {primaryTrackedOrder.statusMessage}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Visual Stepper (4 ขั้นตอน) */}
+                  <div className="pt-2 pb-1">
+                    <div className="relative flex items-center justify-between px-2 sm:px-6 mb-2">
+                      {/* Background Connector Bar */}
+                      <div className="absolute left-6 right-6 top-3.5 h-1 bg-white/10 rounded-full">
+                        <div 
+                          className="h-full bg-gradient-to-r from-violet-500 via-amber-500 via-sky-500 to-emerald-400 transition-all duration-500 rounded-full"
+                          style={{
+                            width: (primaryTrackedOrder.stageNumber || 1) === 1 ? '0%' :
+                              (primaryTrackedOrder.stageNumber || 1) === 2 ? '33%' :
+                              (primaryTrackedOrder.stageNumber || 1) === 3 ? '66%' : '100%'
+                          }}
+                        />
+                      </div>
+
+                      {/* 4 Step Nodes */}
+                      {[
+                        { step: 1, label: '1. รับคิวผลิต', desc: 'ลงทะเบียนรับคิว' },
+                        { step: 2, label: '2. กำลังหลอม/ผลิต', desc: 'หลอมขึ้นรูปเรซิ่น' },
+                        { step: 3, label: '3. รอขนย้าย', desc: 'ผลิตเสร็จ-รอรถ' },
+                        { step: 4, label: '4. อยู่ระหว่างจัดส่ง', desc: 'ขึ้นรถจัดส่งแล้ว' }
+                      ].map((s) => {
+                        const cur = primaryTrackedOrder.stageNumber || 1;
+                        const isPast = cur > s.step;
+                        const isCur = cur === s.step;
+
+                        return (
+                          <div key={s.step} className="relative z-10 flex flex-col items-center">
+                            <div className={`w-7 h-7 rounded-full flex items-center justify-center font-bold text-xs transition-all ${
+                              isCur
+                                ? s.step === 4 
+                                  ? 'bg-emerald-500 text-white ring-4 ring-emerald-500/30 scale-110 shadow-lg shadow-emerald-500/40' 
+                                  : s.step === 3 
+                                  ? 'bg-sky-500 text-white ring-4 ring-sky-500/30 scale-110 shadow-lg shadow-sky-500/40'
+                                  : s.step === 2
+                                  ? 'bg-amber-500 text-white ring-4 ring-amber-500/30 scale-110 shadow-lg shadow-amber-500/40'
+                                  : 'bg-violet-500 text-white ring-4 ring-violet-500/30 scale-110 shadow-lg shadow-violet-500/40'
+                                : isPast
+                                ? 'bg-emerald-500 text-white shadow-xs'
+                                : 'bg-slate-800 text-slate-400 border border-slate-700'
+                            }`}>
+                              {isPast || (isCur && s.step === 4) ? (
+                                <Check size={13} strokeWidth={3} />
+                              ) : (
+                                <span>{s.step}</span>
+                              )}
+                            </div>
+                            <span className={`text-[10px] mt-1 font-bold ${
+                              isCur ? 'text-white font-black' : isPast ? 'text-emerald-300' : 'text-slate-400'
+                            }`}>
+                              {s.label}
+                            </span>
+                            <span className="text-[8.5px] text-slate-400 max-w-[85px] text-center truncate hidden sm:block">
+                              {s.desc}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* ข้อมูลขนส่ง (Driver Info) - แสดงทันทีเมื่อเข้าสู่สถานะอยู่ระหว่างจัดส่ง (Step 4) */}
+                  {primaryTrackedOrder.stageNumber === 4 && (
+                    <div className="bg-emerald-950/60 border border-emerald-500/40 rounded-2xl p-4 text-xs space-y-2.5 animate-fadeIn">
+                      <div className="flex items-center justify-between">
+                        <span className="font-extrabold text-emerald-300 flex items-center gap-1.5">
+                          <Truck size={14} className="text-emerald-400" />
+                          <span>ข้อมูลการจัดส่งสินค้า (Driver & Shipping Information)</span>
+                        </span>
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-200 border border-emerald-500/30">
+                          สินค้าขึ้นรถจัดส่งเรียบร้อย
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-1">
+                        {/* Carrier Name */}
+                        <div className="bg-black/30 p-2.5 rounded-xl border border-white/5 space-y-0.5">
+                          <span className="text-[10px] text-slate-400 block font-medium">🚚 บริษัทขนส่ง / รถโรงงาน:</span>
+                          <span className="font-bold text-white text-xs block">
+                            {primaryTrackedOrder.carrierName || 'รถโรงงานพรพงศ์พลาสติก (สายส่งด่วน)'}
+                          </span>
+                        </div>
+
+                        {/* Driver Phone */}
+                        <div className="bg-black/30 p-2.5 rounded-xl border border-white/5 space-y-0.5">
+                          <span className="text-[10px] text-slate-400 block font-medium">📞 เบอร์โทรคนขับ / ผู้ประสานงาน:</span>
+                          <a 
+                            href={`tel:${primaryTrackedOrder.driverPhone || '0894567890'}`}
+                            className="font-bold text-emerald-300 hover:text-emerald-200 text-xs font-mono flex items-center gap-1 transition-colors"
+                          >
+                            <Phone size={11} />
+                            <span>{primaryTrackedOrder.driverPhone || '089-456-7890'}</span>
+                          </a>
+                        </div>
+
+                        {/* Tracking No & Copy */}
+                        <div className="bg-black/30 p-2.5 rounded-xl border border-white/5 space-y-0.5">
+                          <span className="text-[10px] text-slate-400 block font-medium">📦 เลข Tracking / รหัสพัสดุ:</span>
+                          <div className="flex items-center justify-between gap-1">
+                            <span className="font-mono font-black text-amber-400 text-xs truncate">
+                              {primaryTrackedOrder.shipmentNo || 'TH-EX-291823'}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                navigator.clipboard.writeText(primaryTrackedOrder.shipmentNo || 'TH-EX-291823');
+                                triggerToast('คัดลอกเลข Tracking เรียบร้อยแล้ว!');
+                              }}
+                              className="px-2 py-0.5 rounded-md bg-white/10 hover:bg-white/20 text-[10px] text-white flex items-center gap-1 transition-colors cursor-pointer"
+                              title="คัดลอกเลข Tracking"
+                            >
+                              <Copy size={10} />
+                              <span>คัดลอก</span>
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                </div>
+              </div>
+            )}
+
             {/* 1. ORDER HISTORY SECTION */}
             <div className="space-y-2.5">
               <div className="flex items-center justify-between pb-1 border-b border-slate-100">
@@ -615,35 +990,44 @@ export function ProfileModal({ isOpen, onClose, currentUser, onUpdateProfile, on
                   orders.map((order) => (
                     <div key={order.id} className="p-3.5 border border-slate-100 rounded-xl hover:border-sky-100 hover:shadow-xs transition-colors bg-slate-50/40 relative group">
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 mb-2">
-                        <div className="flex items-center gap-2">
-                          <span className="text-[11px] font-extrabold text-slate-800 font-mono">{order.id}</span>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-[11px] font-extrabold text-slate-800 font-mono">#{order.id}</span>
+                          {order.queueId && (
+                            <span className="font-mono text-[10px] font-black px-2 py-0.5 rounded-md bg-slate-900 text-amber-400 border border-slate-800 shadow-2xs">
+                              {order.queueId}
+                            </span>
+                          )}
                           <span className="text-[10px] font-semibold text-slate-400">เมื่อ {order.date}</span>
                         </div>
                         <div className="flex items-center gap-2">
                           <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[10px] font-bold ${
-                            order.status === 'จัดส่งสำเร็จ'
+                            order.stageNumber === 4
                               ? 'bg-emerald-100 text-emerald-800 border border-emerald-300 font-black shadow-2xs'
-                              : order.status === 'กำลังจัดส่ง'
+                              : order.stageNumber === 3
                               ? 'bg-sky-50 text-sky-700 border border-sky-200 font-bold'
-                              : order.status === 'กำลังตรวจสอบการชำระเงิน' || order.status === 'รอตรวจสอบสลิป'
-                              ? 'bg-amber-50 text-amber-700 border border-amber-200'
-                              : order.status === 'ชำระเงินแล้ว' || order.status === 'ชำระเงินเสร็จสิ้น' || order.status === 'อนุมัติเรียบร้อย'
-                              ? 'bg-teal-50 text-teal-700 border border-teal-200'
-                              : 'bg-slate-100 text-slate-600'
+                              : order.stageNumber === 2
+                              ? 'bg-amber-50 text-amber-700 border border-amber-200 font-bold'
+                              : 'bg-violet-50 text-violet-700 border border-violet-200 font-bold'
                           }`}>
-                            {order.status === 'จัดส่งสำเร็จ' ? (
+                            {order.stageNumber === 4 ? (
                               <>
-                                <CheckCircle2 size={12} className="text-emerald-600" />
-                                <span>จัดส่งสำเร็จ</span>
+                                <Truck size={12} className="text-emerald-600" />
+                                <span>ขั้นตอนที่ 4: อยู่ระหว่างจัดส่ง</span>
+                              </>
+                            ) : order.stageNumber === 3 ? (
+                              <>
+                                <Clock size={12} className="text-sky-600" />
+                                <span>ขั้นตอนที่ 3: รอขนย้าย</span>
+                              </>
+                            ) : order.stageNumber === 2 ? (
+                              <>
+                                <Flame size={12} className="text-amber-600" />
+                                <span>ขั้นตอนที่ 2: กำลังหลอม/ผลิต</span>
                               </>
                             ) : (
                               <>
-                                <span className={`w-1.5 h-1.5 rounded-full ${
-                                  order.status === 'กำลังตรวจสอบการชำระเงิน' || order.status === 'รอตรวจสอบสลิป'
-                                    ? 'bg-amber-500 animate-pulse'
-                                    : 'bg-slate-400'
-                                }`}></span>
-                                <span>{order.status}</span>
+                                <Package size={12} className="text-violet-600" />
+                                <span>ขั้นตอนที่ 1: รับคิวผลิต</span>
                               </>
                             )}
                           </span>
@@ -659,18 +1043,151 @@ export function ProfileModal({ isOpen, onClose, currentUser, onUpdateProfile, on
                           </button>
                         </div>
                       </div>
-                      <p className="text-xs font-bold text-slate-700">{order.productName}</p>
+
+                      <p className="text-xs font-bold text-slate-800">{order.productName}</p>
+
+                      {/* 4-STAGE STEPPER & TRACKING PROGRESS BAR */}
+                      <div className="my-3 pt-2.5 pb-2.5 px-3 bg-white rounded-xl border border-slate-150 shadow-2xs">
+                        <div className="flex items-center justify-between text-[11px] font-bold text-slate-500 mb-3">
+                          <span className="flex items-center gap-1.5 text-slate-700 font-extrabold">
+                            <ListOrdered size={13} className="text-sky-600" />
+                            <span>ขั้นตอนการผลิตและจัดส่ง (4 ขั้นตอน)</span>
+                          </span>
+                          <span className={`text-[10px] font-mono font-extrabold px-2 py-0.5 rounded-full ${
+                            (order.stageNumber || 1) === 4 
+                              ? 'bg-emerald-100 text-emerald-800' 
+                              : (order.stageNumber || 1) === 3
+                              ? 'bg-sky-100 text-sky-800'
+                              : (order.stageNumber || 1) === 2
+                              ? 'bg-amber-100 text-amber-800'
+                              : 'bg-violet-100 text-violet-800'
+                          }`}>
+                            ขั้นตอนที่ {order.stageNumber || 1} / 4: {order.stageLabel}
+                          </span>
+                        </div>
+
+                        {/* Stepper Line and Circles */}
+                        <div className="relative flex items-center justify-between px-2 sm:px-6 mb-2">
+                          {/* Background Connector Line */}
+                          <div className="absolute left-6 right-6 top-3.5 h-1 bg-slate-200">
+                            {/* Filled Track */}
+                            <div 
+                              className="h-full bg-gradient-to-r from-violet-500 via-amber-500 via-sky-500 to-emerald-500 transition-all duration-500 rounded-full"
+                              style={{
+                                width: (order.stageNumber || 1) === 1 ? '0%' : (order.stageNumber || 1) === 2 ? '33%' : (order.stageNumber || 1) === 3 ? '66%' : '100%'
+                              }}
+                            />
+                          </div>
+
+                          {/* 4 Steps */}
+                          {[
+                            { step: 1, label: 'รับคิวผลิต', desc: 'ลงทะเบียนคิว' },
+                            { step: 2, label: 'กำลังหลอม/ผลิต', desc: 'หลอมตามสเปก' },
+                            { step: 3, label: 'รอขนย้าย', desc: 'รอคิวรถขนส่ง' },
+                            { step: 4, label: 'อยู่ระหว่างจัดส่ง', desc: 'ขึ้นรถจัดส่งแล้ว' },
+                          ].map((s) => {
+                            const currentStage = order.stageNumber || 1;
+                            const isPast = currentStage > s.step;
+                            const isCurrent = currentStage === s.step;
+
+                            return (
+                              <div key={s.step} className="relative z-10 flex flex-col items-center">
+                                <div className={`w-7 h-7 rounded-full flex items-center justify-center font-bold text-xs transition-all ${
+                                  isCurrent
+                                    ? s.step === 4 
+                                      ? 'bg-emerald-600 text-white ring-4 ring-emerald-100 scale-110 shadow-sm' 
+                                      : s.step === 3 
+                                      ? 'bg-sky-600 text-white ring-4 ring-sky-100 scale-110 shadow-sm'
+                                      : s.step === 2
+                                      ? 'bg-amber-500 text-white ring-4 ring-amber-100 scale-110 shadow-sm'
+                                      : 'bg-violet-600 text-white ring-4 ring-violet-100 scale-110 shadow-sm'
+                                    : isPast
+                                    ? 'bg-emerald-600 text-white shadow-xs'
+                                    : 'bg-slate-200 text-slate-500'
+                                }`}>
+                                  {isPast ? (
+                                    <Check size={13} strokeWidth={3} />
+                                  ) : isCurrent && s.step === 4 ? (
+                                    <Check size={13} strokeWidth={3} />
+                                  ) : (
+                                    <span>{s.step}</span>
+                                  )}
+                                </div>
+                                <span className={`text-[10px] mt-1 font-bold ${
+                                  isCurrent ? 'text-slate-900 font-extrabold' : isPast ? 'text-emerald-700' : 'text-slate-400'
+                                }`}>
+                                  {s.label}
+                                </span>
+                                <span className="text-[8.5px] text-slate-400 max-w-[85px] text-center truncate hidden sm:block">
+                                  {s.desc}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        {/* Current Active Step Highlight Info Box */}
+                        <div className={`mt-2.5 p-2.5 rounded-xl text-xs border ${
+                          (order.stageNumber || 1) === 4
+                            ? 'bg-emerald-50/80 border-emerald-200 text-emerald-900'
+                            : (order.stageNumber || 1) === 3
+                            ? 'bg-sky-50/80 border-sky-200 text-sky-900'
+                            : (order.stageNumber || 1) === 2
+                            ? 'bg-amber-50/80 border-amber-200 text-amber-900'
+                            : 'bg-violet-50/80 border-violet-200 text-violet-900'
+                        }`}>
+                          <div className="flex items-start gap-2.5">
+                            <div className="mt-0.5 shrink-0">
+                              {(order.stageNumber || 1) === 4 ? (
+                                <Truck size={16} className="text-emerald-600" />
+                              ) : (order.stageNumber || 1) === 3 ? (
+                                <Clock size={16} className="text-sky-600" />
+                              ) : (order.stageNumber || 1) === 2 ? (
+                                <Flame size={16} className="text-amber-600" />
+                              ) : (
+                                <Package size={16} className="text-violet-600" />
+                              )}
+                            </div>
+                            <div className="flex-1 space-y-1">
+                              <div className="font-bold text-[11.5px] flex items-center justify-between flex-wrap gap-1">
+                                <span>{order.statusMessage || `ขั้นตอน: ${order.stageLabel || order.status}`}</span>
+                                {(order.stageNumber || 1) === 4 && (
+                                  <span className="font-bold text-emerald-800 bg-white/90 px-2 py-0.5 rounded-md text-[10px] border border-emerald-200 shadow-2xs">
+                                    ขึ้นรถจัดส่งเรียบร้อย ✓
+                                  </span>
+                                )}
+                              </div>
+
+                              {/* Stage 4: ข้อมูลขนส่ง (Driver Info) */}
+                              {(order.stageNumber || 1) === 4 && (
+                                <div className="text-[10.5px] text-emerald-900 flex flex-wrap items-center gap-x-3 gap-y-1 pt-1 font-medium bg-white/70 p-2 rounded-lg border border-emerald-200/60 mt-1">
+                                  <span className="inline-flex items-center gap-1">
+                                    🚚 <b>ขนส่ง:</b> {order.carrierName || 'รถโรงงานพรพงศ์พลาสติก'}
+                                  </span>
+                                  {order.driverPhone && (
+                                    <span className="inline-flex items-center gap-1">
+                                      📞 <b>เบอร์คนขับ:</b> <a href={`tel:${order.driverPhone}`} className="underline font-bold text-emerald-700">{order.driverPhone}</a>
+                                    </span>
+                                  )}
+                                  {order.shipmentNo && (
+                                    <span className="inline-flex items-center gap-1">
+                                      📦 <b>Tracking:</b> <code className="text-emerald-950 font-mono font-bold bg-emerald-100/60 px-1 rounded">{order.shipmentNo}</code>
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
                       <div className="flex flex-wrap items-center justify-between gap-2 mt-2 pt-2 border-t border-slate-100/60 text-[11px]">
                         <span className="text-slate-500">สีที่สั่ง: <b className="text-slate-700 font-semibold">{order.color}</b></span>
                         <div className="flex items-center gap-2">
-                          {order.status === 'จัดส่งสำเร็จ' ? (
-                            <span className="inline-flex items-center gap-1.5 bg-emerald-50/80 text-emerald-800 border border-emerald-200/80 px-2.5 py-0.5 rounded-lg text-[10.5px] font-mono">
-                              <Truck size={12} className="text-emerald-600" />
-                              <span className="font-sans text-[10px] text-slate-500">เลขพัสดุ:</span>
-                              <strong>{order.shipmentNo}</strong>
+                          {order.shipmentNo && (
+                            <span className="text-slate-500 text-[10.5px]">
+                              รหัสพัสดุ: <code className="text-slate-800 font-medium font-mono bg-slate-100 px-1.5 py-0.5 rounded">{order.shipmentNo}</code>
                             </span>
-                          ) : (
-                            <span className="text-slate-400">รหัสสิ่งส่งของ: <code className="text-slate-700 font-medium font-mono">{order.shipmentNo}</code></span>
                           )}
                           <span className="font-black text-brand-blue">{order.amount}</span>
                         </div>

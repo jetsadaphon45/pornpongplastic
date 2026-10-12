@@ -18,6 +18,133 @@ export const supabase = isSupabaseConfigured
   ? createClient(supabaseUrl, supabaseAnonKey)
   : null;
 
+// -------------------------------------------------------------
+// END-TO-END PRODUCTION & DELIVERY QUEUE CONSTANTS & HELPERS
+// -------------------------------------------------------------
+export interface QueueStageInfo {
+  step: 1 | 2 | 3 | 4;
+  key: 'queue_received' | 'manufacturing' | 'ready_for_shipping' | 'in_transit';
+  label: string;
+  badgeLabel: string;
+  desc: string;
+  customerMsg: string;
+  color: string;
+}
+
+export const QUEUE_STAGES: QueueStageInfo[] = [
+  {
+    step: 1,
+    key: 'queue_received',
+    label: 'รับคิวผลิต',
+    badgeLabel: '1. รับคิวผลิต',
+    desc: 'โรงงานลงทะเบียนรับคิวผลิตเข้าระบบ',
+    customerMsg: 'โรงงานลงทะเบียนรับคิวผลิตของคุณเข้าระบบเรียบร้อยแล้ว',
+    color: 'violet'
+  },
+  {
+    step: 2,
+    key: 'manufacturing',
+    label: 'กำลังหลอม/ผลิต',
+    badgeLabel: '2. กำลังหลอม/ผลิต',
+    desc: 'กำลังหลอมขึ้นรูปเรซิ่นและโพลีเอทิลีนหนาพิเศษตามสเปก',
+    customerMsg: 'กำลังหลอมเรือตามสเปกที่คุณออกแบบ',
+    color: 'amber'
+  },
+  {
+    step: 3,
+    key: 'ready_for_shipping',
+    label: 'รอขนย้าย',
+    badgeLabel: '3. รอขนย้าย',
+    desc: 'เรือผลิตเสร็จแล้ว - รอคิวรถโรงงาน/ขนส่งเข้ารับสินค้า',
+    customerMsg: 'เรือผลิตเสร็จแล้ว - อยู่ระหว่างรอขนย้าย',
+    color: 'sky'
+  },
+  {
+    step: 4,
+    key: 'in_transit',
+    label: 'อยู่ระหว่างจัดส่ง',
+    badgeLabel: '4. อยู่ระหว่างจัดส่ง',
+    desc: 'สินค้าขึ้นรถจัดส่งแล้ว - กำลังเดินทางไปยังหน้างาน/ที่อยู่ปลายทาง',
+    customerMsg: 'สินค้าอยู่ระหว่างจัดส่ง',
+    color: 'emerald'
+  }
+];
+
+export function formatQueueId(seed?: any, index?: number): string {
+  if (typeof seed === 'string') {
+    const trimmed = seed.trim().toUpperCase();
+    if (/^Q-\d{4}-\d{3}$/.test(trimmed)) {
+      return trimmed;
+    }
+  }
+  if (seed && typeof seed === 'object') {
+    if (seed.queue_id && /^Q-\d{4}-\d{3}$/i.test(String(seed.queue_id).trim())) {
+      return String(seed.queue_id).trim().toUpperCase();
+    }
+    if (seed.queue_number && /^Q-\d{4}-\d{3}$/i.test(String(seed.queue_number).trim())) {
+      return String(seed.queue_number).trim().toUpperCase();
+    }
+  }
+
+  const now = new Date();
+  const yy = String(now.getFullYear()).slice(-2);
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+
+  let num = 1;
+  if (typeof index === 'number' && index >= 0) {
+    num = index + 1;
+  } else if (typeof seed === 'number' && !isNaN(seed)) {
+    num = Math.max(1, Math.floor(seed));
+  } else if (seed && typeof seed === 'object' && seed.id) {
+    const digits = String(seed.id).replace(/\D/g, '');
+    num = digits.length > 0 ? (parseInt(digits.slice(-4), 10) % 899) + 1 : 1;
+  } else if (typeof seed === 'string') {
+    const digits = seed.replace(/\D/g, '');
+    num = digits.length > 0 ? (parseInt(digits.slice(-4), 10) % 899) + 1 : 1;
+  }
+
+  return `Q-${yy}${mm}-${String(num).padStart(3, '0')}`;
+}
+
+export function parseQueueNumber(queueId?: string): number {
+  if (!queueId) return 0;
+  const match = String(queueId).match(/Q-\d{4}-(\d+)/i);
+  if (match && match[1]) {
+    return parseInt(match[1], 10);
+  }
+  return 0;
+}
+
+export function getActiveProductionQueue(orders?: any[]): string {
+  if (typeof window !== 'undefined') {
+    const saved = localStorage.getItem('pornpong_active_production_queue_id');
+    if (saved && /^Q-\d{4}-\d{3}$/i.test(saved.trim())) {
+      return saved.trim().toUpperCase();
+    }
+  }
+  if (orders && orders.length > 0) {
+    const stage2 = orders.find((o: any) => o.queue_stage === 2 || o.order_status === 'manufacturing');
+    if (stage2) {
+      return formatQueueId(stage2);
+    }
+    const firstActive = orders.find((o: any) => o.queue_stage !== 4 && o.order_status !== 'completed' && o.order_status !== 'delivered');
+    if (firstActive) {
+      return formatQueueId(firstActive);
+    }
+  }
+  return 'Q-2610-012';
+}
+
+export function setActiveProductionQueue(queueId: string): void {
+  if (typeof window !== 'undefined') {
+    const clean = queueId.trim().toUpperCase();
+    localStorage.setItem('pornpong_active_production_queue_id', clean);
+    window.dispatchEvent(new CustomEvent('pornpong-queue-updated', {
+      detail: { activeQueueId: clean }
+    }));
+  }
+}
+
 export interface DbProduct {
   id?: string;
   name: string;
@@ -1056,27 +1183,53 @@ export const supabaseOrders = {
         return [];
       }
 
-      return (data || []).map((row: any) => ({
-        ...row,
-        // Old view compatible fields:
-        id: row.id,
-        customerName: row.customer_name || row.customerName || '',
-        date: row.created_at ? new Date(row.created_at).toISOString().split('T')[0] : '',
-        productName: row.productName || row.product_name || 'เรือพลาสติกและอุปกรณ์',
-        color: row.color || 'คละสี',
-        amount: Number(row.total_amount || row.amount || 0),
-        status: row.status || (row.order_status === 'completed' || row.order_status === 'Delivered' ? 'Delivered' : row.order_status === 'shipping' || row.order_status === 'Shipping' ? 'Shipping' : row.payment_status || 'Pending'),
-        order_status: row.order_status || (row.status === 'Delivered' ? 'completed' : row.status === 'Shipping' ? 'shipping' : 'pending'),
-        shipmentNo: row.shipmentNo || row.shipment_no || '',
-        
-        // New view exact fields:
-        customer_id: row.customer_id || null,
-        customer_name: row.customer_name || row.customerName || '',
-        customer_email: row.customer_email || 'guest@example.com',
-        total_amount: Number(row.total_amount || row.amount || 0),
-        payment_status: row.payment_status || (row.status === 'Delivered' ? 'paid' : 'pending'),
-        created_at: row.created_at || row.date || ''
-      }));
+      return (data || []).map((row: any, idx: number) => {
+        const ordStatus = (row.order_status || row.status || '').toLowerCase();
+        let qStage: 1 | 2 | 3 | 4 = 1;
+        if (ordStatus === 'in_transit' || ordStatus === 'shipped' || ordStatus === 'shipping' || ordStatus === 'delivered' || ordStatus === 'completed') {
+          qStage = 4;
+        } else if (ordStatus === 'ready_for_shipping' || ordStatus === 'ready') {
+          qStage = 3;
+        } else if (ordStatus === 'manufacturing' || ordStatus === 'processing' || ordStatus === 'paid') {
+          qStage = 2;
+        } else {
+          qStage = 1;
+        }
+
+        const stageKey = qStage === 4 ? 'in_transit' : qStage === 3 ? 'ready_for_shipping' : qStage === 2 ? 'manufacturing' : 'queue_received';
+        const qId = row.queue_id || row.queue_number || formatQueueId(row, idx);
+
+        return {
+          ...row,
+          // Old view compatible fields:
+          id: row.id,
+          customerName: row.customer_name || row.customerName || '',
+          date: row.created_at ? new Date(row.created_at).toISOString().split('T')[0] : '',
+          productName: row.productName || row.product_name || 'เรือพลาสติกและอุปกรณ์',
+          color: row.color || 'คละสี',
+          amount: Number(row.total_amount || row.amount || 0),
+          status: row.status || (row.order_status === 'completed' || row.order_status === 'Delivered' ? 'Delivered' : row.order_status === 'shipping' || row.order_status === 'Shipping' ? 'Shipping' : row.payment_status || 'Pending'),
+          order_status: row.order_status || (row.status === 'Delivered' ? 'completed' : row.status === 'Shipping' ? 'shipping' : 'pending'),
+          shipmentNo: row.shipmentNo || row.shipment_no || '',
+          estimated_delivery_date: row.estimated_delivery_date || '',
+          carrier_name: row.carrier_name || '',
+          driver_phone: row.driver_phone || '',
+          status_message: row.status_message || '',
+          
+          // Queue System Fields:
+          queue_id: qId,
+          queue_stage: row.queue_stage || qStage,
+          queue_status: row.queue_status || stageKey,
+
+          // New view exact fields:
+          customer_id: row.customer_id || null,
+          customer_name: row.customer_name || row.customerName || '',
+          customer_email: row.customer_email || 'guest@example.com',
+          total_amount: Number(row.total_amount || row.amount || 0),
+          payment_status: row.payment_status || (row.status === 'Delivered' ? 'paid' : 'pending'),
+          created_at: row.created_at || row.date || ''
+        };
+      });
     } catch (e: any) {
       console.warn('Orders fetch caught error:', e.message);
       return [];
@@ -1146,26 +1299,53 @@ export const supabaseOrders = {
         });
       }
 
-      return matchedRows.map((row: any) => ({
-        ...row,
-        id: row.id,
-        customerName: row.customer_name || row.customerName || '',
-        date: row.created_at ? new Date(row.created_at).toISOString().split('T')[0] : '',
-        productName: row.productName || row.product_name || 'เรือพลาสติกและอุปกรณ์',
-        color: row.color || 'คละสี',
-        amount: Number(row.total_amount || row.amount || 0),
-        status: row.payment_status || row.status || 'Pending',
-        shipmentNo: row.shipmentNo || row.shipment_no || '',
-        payment_slip_url: row.payment_slip_url || '',
-        customer_id: row.customer_id || row.user_id || cleanUserId,
-        customer_name: row.customer_name || row.customerName || '',
-        customer_email: row.customer_email || cleanEmail,
-        customer_phone: row.customer_phone || '',
-        total_amount: Number(row.total_amount || row.amount || 0),
-        payment_status: row.payment_status || row.status || 'pending',
-        order_status: row.order_status || 'waiting_payment',
-        created_at: row.created_at || row.date || ''
-      }));
+      return matchedRows.map((row: any, idx: number) => {
+        const ordStatus = (row.order_status || row.status || '').toLowerCase();
+        let qStage: 1 | 2 | 3 | 4 = 1;
+        if (ordStatus === 'in_transit' || ordStatus === 'shipped' || ordStatus === 'shipping' || ordStatus === 'delivered' || ordStatus === 'completed') {
+          qStage = 4;
+        } else if (ordStatus === 'ready_for_shipping' || ordStatus === 'ready') {
+          qStage = 3;
+        } else if (ordStatus === 'manufacturing' || ordStatus === 'processing' || ordStatus === 'paid') {
+          qStage = 2;
+        } else {
+          qStage = 1;
+        }
+
+        const stageKey = qStage === 4 ? 'in_transit' : qStage === 3 ? 'ready_for_shipping' : qStage === 2 ? 'manufacturing' : 'queue_received';
+        const qId = row.queue_id || row.queue_number || formatQueueId(row, idx);
+
+        return {
+          ...row,
+          id: row.id,
+          customerName: row.customer_name || row.customerName || '',
+          date: row.created_at ? new Date(row.created_at).toISOString().split('T')[0] : '',
+          productName: row.productName || row.product_name || 'เรือพลาสติกและอุปกรณ์',
+          color: row.color || 'คละสี',
+          amount: Number(row.total_amount || row.amount || 0),
+          status: row.payment_status || row.status || 'Pending',
+          shipmentNo: row.shipmentNo || row.shipment_no || '',
+          payment_slip_url: row.payment_slip_url || '',
+          estimated_delivery_date: row.estimated_delivery_date || '',
+          carrier_name: row.carrier_name || '',
+          driver_phone: row.driver_phone || '',
+          status_message: row.status_message || '',
+          
+          // Queue fields:
+          queue_id: qId,
+          queue_stage: row.queue_stage || qStage,
+          queue_status: row.queue_status || stageKey,
+
+          customer_id: row.customer_id || row.user_id || cleanUserId,
+          customer_name: row.customer_name || row.customerName || '',
+          customer_email: row.customer_email || cleanEmail,
+          customer_phone: row.customer_phone || '',
+          total_amount: Number(row.total_amount || row.amount || 0),
+          payment_status: row.payment_status || row.status || 'pending',
+          order_status: row.order_status || 'waiting_payment',
+          created_at: row.created_at || row.date || ''
+        };
+      });
     } catch (e: any) {
       console.warn('Orders listByUserId caught error:', e.message);
       return [];
@@ -1358,9 +1538,23 @@ export const supabaseOrders = {
     }
   },
 
-  async updateStatus(id: string, status: string): Promise<boolean> {
-    const mappedOrderStatus = status === 'Delivered' ? 'completed' : status === 'Shipping' ? 'shipping' : 'pending';
-    const trackingNo = `TH-EX-${String(id).replace(/[^0-9]/g, '').slice(-6) || '291823'}`;
+  async updateStatus(
+    id: string, 
+    status: string,
+    meta?: {
+      estimated_delivery_date?: string;
+      carrier_name?: string;
+      driver_phone?: string;
+      shipment_no?: string;
+      status_message?: string;
+    }
+  ): Promise<boolean> {
+    const sLower = status.toLowerCase();
+    const isDeliv = sLower === 'delivered' || sLower === 'completed';
+    const isShip = sLower === 'shipped' || sLower === 'shipping' || sLower === 'in_transit';
+    const isReady = sLower === 'ready_for_shipping' || sLower === 'ready';
+    const mappedOrderStatus = isDeliv ? 'completed' : isShip ? 'in_transit' : isReady ? 'ready_for_shipping' : 'manufacturing';
+    const trackingNo = meta?.shipment_no || `TH-EX-${String(id).replace(/[^0-9]/g, '').slice(-6) || '291823'}`;
 
     try {
       if (isSupabaseConfigured && supabase) {
@@ -1370,12 +1564,15 @@ export const supabaseOrders = {
             status: status,
             order_status: mappedOrderStatus,
             shipment_no: trackingNo,
-            shipmentNo: trackingNo
+            shipmentNo: trackingNo,
+            ...(meta?.estimated_delivery_date ? { estimated_delivery_date: meta.estimated_delivery_date } : {}),
+            ...(meta?.carrier_name ? { carrier_name: meta.carrier_name } : {}),
+            ...(meta?.driver_phone ? { driver_phone: meta.driver_phone } : {})
           }).eq('id', id);
         } catch {
           // Fallback to simpler payload if columns differ
           await supabase.from('orders').update({
-            payment_status: status === 'Delivered' ? 'paid' : status
+            payment_status: isDeliv ? 'paid' : status
           }).eq('id', id);
         }
       }
@@ -1391,12 +1588,97 @@ export const supabaseOrders = {
           ...o, 
           status: status, 
           order_status: mappedOrderStatus,
-          shipmentNo: o.shipmentNo || trackingNo,
-          shipment_no: o.shipment_no || trackingNo
+          shipmentNo: trackingNo,
+          shipment_no: trackingNo,
+          ...(meta?.estimated_delivery_date ? { estimated_delivery_date: meta.estimated_delivery_date } : {}),
+          ...(meta?.carrier_name ? { carrier_name: meta.carrier_name } : {}),
+          ...(meta?.driver_phone ? { driver_phone: meta.driver_phone } : {})
         } : o
       );
       localStorage.setItem('admin_orders', JSON.stringify(updated));
     } catch {}
+
+    return true;
+  },
+
+  async updateQueueStage(
+    id: string,
+    stage: 1 | 2 | 3 | 4,
+    meta?: {
+      carrier_name?: string;
+      driver_phone?: string;
+      shipment_no?: string;
+      estimated_delivery_date?: string;
+    }
+  ): Promise<boolean> {
+    const stageMap: Record<number, { status: string; orderStatus: string; label: string }> = {
+      1: { status: 'processing', orderStatus: 'queue_received', label: 'รับคิวผลิต' },
+      2: { status: 'manufacturing', orderStatus: 'manufacturing', label: 'กำลังหลอม/ผลิต' },
+      3: { status: 'ready_for_shipping', orderStatus: 'ready_for_shipping', label: 'รอขนย้าย' },
+      4: { status: 'in_transit', orderStatus: 'in_transit', label: 'อยู่ระหว่างจัดส่ง' }
+    };
+    const currentStageInfo = stageMap[stage] || stageMap[1];
+    const trackingNo = meta?.shipment_no || `TH-EX-${String(id).replace(/[^0-9]/g, '').slice(-6) || '291823'}`;
+
+    if (isSupabaseConfigured && supabase) {
+      try {
+        await supabase.from('orders').update({
+          queue_stage: stage,
+          queue_status: currentStageInfo.orderStatus,
+          order_status: currentStageInfo.orderStatus,
+          status: currentStageInfo.status,
+          shipment_no: trackingNo,
+          shipmentNo: trackingNo,
+          ...(meta?.carrier_name ? { carrier_name: meta.carrier_name } : {}),
+          ...(meta?.driver_phone ? { driver_phone: meta.driver_phone } : {}),
+          ...(meta?.estimated_delivery_date ? { estimated_delivery_date: meta.estimated_delivery_date } : {})
+        }).eq('id', id);
+      } catch (err: any) {
+        console.warn('Supabase updateQueueStage error:', err?.message);
+        try {
+          await supabase.from('orders').update({
+            order_status: currentStageInfo.orderStatus,
+            status: currentStageInfo.status
+          }).eq('id', id);
+        } catch {}
+      }
+    }
+
+    // Persist in local storage
+    try {
+      const local = JSON.parse(localStorage.getItem('admin_orders') || '[]');
+      const updated = local.map((o: any) =>
+        o.id === id ? {
+          ...o,
+          queue_stage: stage,
+          queue_status: currentStageInfo.orderStatus,
+          order_status: currentStageInfo.orderStatus,
+          status: currentStageInfo.status,
+          shipment_no: trackingNo,
+          shipmentNo: trackingNo,
+          ...(meta?.carrier_name ? { carrier_name: meta.carrier_name } : {}),
+          ...(meta?.driver_phone ? { driver_phone: meta.driver_phone } : {}),
+          ...(meta?.estimated_delivery_date ? { estimated_delivery_date: meta.estimated_delivery_date } : {})
+        } : o
+      );
+      localStorage.setItem('admin_orders', JSON.stringify(updated));
+    } catch {}
+
+    // Dispatch realtime broadcast events
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('pornpong-queue-updated', {
+        detail: {
+          orderId: id,
+          stage,
+          queueStatus: currentStageInfo.orderStatus,
+          meta: {
+            ...meta,
+            shipment_no: trackingNo
+          }
+        }
+      }));
+      window.dispatchEvent(new Event('orders-updated'));
+    }
 
     return true;
   },
@@ -1449,7 +1731,8 @@ export const supabaseOrders = {
           .from('orders')
           .update({
             payment_status: 'paid',
-            order_status: 'processing'
+            status: 'manufacturing',
+            order_status: 'manufacturing'
           })
           .eq('id', id);
         if (error) {
@@ -1460,7 +1743,7 @@ export const supabaseOrders = {
       try {
         const local = JSON.parse(localStorage.getItem('admin_orders') || '[]');
         const updated = local.map((o: any) => 
-          o.id === id ? { ...o, payment_status: 'paid', order_status: 'processing' } : o
+          o.id === id ? { ...o, payment_status: 'paid', status: 'manufacturing', order_status: 'manufacturing' } : o
         );
         localStorage.setItem('admin_orders', JSON.stringify(updated));
       } catch {}
