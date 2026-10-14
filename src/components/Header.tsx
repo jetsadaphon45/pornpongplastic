@@ -1,8 +1,8 @@
 import React from 'react';
-import { Anchor, ShoppingCart, Menu, X, Search, PhoneCall, User, LogOut, Bell, ListOrdered, Truck } from 'lucide-react';
+import { Anchor, ShoppingCart, Menu, X, Search, PhoneCall, User, LogOut, Bell, ListOrdered, Truck, ClipboardList } from 'lucide-react';
 import { CartItem, User as AppUser } from '../types';
 import NotificationDropdown, { AppNotification } from './NotificationDropdown';
-import { supabase, isSupabaseConfigured, supabaseOrders, supabasePreOrders, supabaseDeliveries } from '../lib/supabase';
+import { supabase, isSupabaseConfigured, supabaseOrders, supabasePreOrders, supabaseDeliveries, isOrderPreOrder } from '../lib/supabase';
 
 interface HeaderProps {
   activeTab: string;
@@ -107,6 +107,27 @@ export default function Header({
       }
     }
 
+    // Merge with localStorage admin_orders and admin_deliveries for instantaneous client-side reactivity
+    try {
+      const localOrders: any[] = JSON.parse(localStorage.getItem('admin_orders') || '[]');
+      if (Array.isArray(localOrders) && localOrders.length > 0) {
+        const map = new Map<string, any>();
+        rawOrders.forEach(o => map.set(String(o.id).trim(), o));
+        localOrders.forEach(lo => {
+          const lId = String(lo.id).trim();
+          const matchUser = 
+            (cleanUserId && (lo.customer_id === cleanUserId || lo.user_id === cleanUserId)) ||
+            (cleanEmail && lo.customer_email && lo.customer_email.toLowerCase() === cleanEmail) ||
+            (cleanPhone && lo.customer_phone && lo.customer_phone.replace(/\D/g, '').includes(cleanPhone));
+          if (matchUser) {
+            const existing = map.get(lId);
+            map.set(lId, existing ? { ...existing, ...lo } : lo);
+          }
+        });
+        rawOrders = Array.from(map.values());
+      }
+    } catch {}
+
     // Filter strictly for active orders (must be in pending/producing/shipping status and NOT finished)
     const validActiveOrders = rawOrders.filter((ord: any) => {
       const orderIdStr = String(ord.id).trim();
@@ -157,31 +178,37 @@ export default function Header({
     // Update activeOrders state directly
     setActiveOrders(validActiveOrders);
 
-    // If activeOrders.length === 0 or all orders completed/delivered, strictly hide the button
+    // If validActiveOrders.length === 0 or all orders completed/delivered, strictly hide the button
     if (validActiveOrders.length === 0) {
       setTrackingStatus('hidden');
       return;
     }
 
-    // Determine whether to display "ติดตามการจัดส่ง" (in transit) or "ติดตามคิวผลิต" (in production)
-    const hasShipping = validActiveOrders.some((ord: any) => {
+    // Determine whether to display "🚚 ติดตามสถานะจัดส่ง" (In-Stock / Shipping) or "📋 ติดตามคิวผลิต" (Pre-Order in production)
+    // 1. In-Stock orders do not need furnace casting/melting and immediately show "ติดตามสถานะจัดส่ง"
+    // 2. Pre-Order orders show "ติดตามคิวผลิต" while in queue/manufacturing, and switch to "ติดตามสถานะจัดส่ง" when shipped
+    const hasPreOrderProducing = validActiveOrders.some((ord: any) => {
+      const isPre = isOrderPreOrder(ord);
+      if (!isPre) return false; // In-stock orders never wait in production queue
+
       const orderIdStr = String(ord.id).trim();
       const delivery = deliveriesMap[orderIdStr] || deliveriesMap[ord.id];
       const delivStatus = String(delivery?.delivery_status || ord.delivery_status || '').toLowerCase().trim();
       const ordStatus = String(ord.status || ord.order_status || '').toLowerCase().trim();
       const qStage = Number(ord.queue_stage || delivery?.queue_stage || 0);
 
-      return (
-        delivStatus === 'in_transit' ||
-        delivStatus === 'shipping' ||
-        ordStatus === 'in_transit' ||
-        ordStatus === 'shipping' ||
-        ordStatus === 'shipped' ||
-        qStage === 4
-      );
+      const isShipping = 
+        delivStatus === 'in_transit' || 
+        delivStatus === 'shipping' || 
+        ordStatus === 'in_transit' || 
+        ordStatus === 'shipping' || 
+        ordStatus === 'shipped' || 
+        qStage === 4;
+
+      return !isShipping;
     });
 
-    setTrackingStatus(hasShipping ? 'shipping' : 'producing');
+    setTrackingStatus(hasPreOrderProducing ? 'producing' : 'shipping');
   }, [currentUser]);
 
   // Real-time synchronization for Header Tracking Status & Active Orders
@@ -342,14 +369,14 @@ export default function Header({
                   onClick={() => onOpenProfile('deliveries')}
                   className="px-3.5 py-1.5 text-xs font-bold rounded-full transition-all duration-200 cursor-pointer flex items-center gap-1.5 text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 shadow-2xs hover:scale-102 active:scale-97 animate-in fade-in"
                   id="nav-track-queue"
-                  title="ติดตามการจัดส่งสินค้าและเรือพลาสติก Real-time"
+                  title="ติดตามสถานะจัดส่งสินค้า (In-Stock / Ready to Ship)"
                 >
                   <span className="relative flex h-2 w-2">
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                     <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
                   </span>
                   <Truck size={14} className="text-emerald-700 animate-pulse" />
-                  <span>ติดตามการจัดส่ง</span>
+                  <span>🚚 ติดตามสถานะจัดส่ง</span>
                 </button>
               ) : (
                 <button
@@ -357,14 +384,14 @@ export default function Header({
                   onClick={() => onOpenProfile('deliveries')}
                   className="px-3.5 py-1.5 text-xs font-bold rounded-full transition-all duration-200 cursor-pointer flex items-center gap-1.5 text-amber-800 bg-amber-50/90 hover:bg-amber-100 border border-amber-200/90 shadow-2xs hover:scale-102 active:scale-97 animate-in fade-in"
                   id="nav-track-queue"
-                  title="ติดตามคิวผลิตและจัดส่งเรือพลาสติก Real-time"
+                  title="ติดตามคิวผลิตเรือพรีออเดอร์และเตาหลอมโรงงาน Real-time"
                 >
                   <span className="relative flex h-2 w-2">
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
                     <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
                   </span>
-                  <ListOrdered size={13} className="text-amber-700" />
-                  <span>ติดตามคิวผลิต</span>
+                  <ClipboardList size={13} className="text-amber-700" />
+                  <span>📋 ติดตามคิวผลิต</span>
                 </button>
               )
             )}
@@ -603,10 +630,10 @@ export default function Header({
                       <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
                     </span>
                     <Truck size={15} className="text-emerald-700" />
-                    <span>ติดตามการจัดส่ง</span>
+                    <span>ติดตามสถานะจัดส่ง</span>
                   </div>
                   <span className="text-[10px] bg-emerald-200/70 text-emerald-900 px-2 py-0.5 rounded-full font-mono font-bold">
-                    IN TRANSIT
+                    IN-STOCK / SHIPPING
                   </span>
                 </button>
               ) : (
@@ -624,11 +651,11 @@ export default function Header({
                       <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
                       <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
                     </span>
-                    <ListOrdered size={15} className="text-amber-700" />
+                    <ClipboardList size={15} className="text-amber-700" />
                     <span>ติดตามคิวผลิต Real-time</span>
                   </div>
                   <span className="text-[10px] bg-amber-200/70 text-amber-900 px-2 py-0.5 rounded-full font-mono font-bold">
-                    LIVE
+                    PRE-ORDER
                   </span>
                 </button>
               )

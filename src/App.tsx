@@ -537,6 +537,14 @@ export default function App() {
       const productNameSummary = cart.map(item => `${item.product.name} x${item.quantity}`).join(', ');
       const colorsSummary = cart.map(item => item.selectedColor).join(', ');
 
+      const isPreOrder = cart.some(item => 
+        item.product.status === 'preorder' || 
+        item.product.inStock === false ||
+        item.product.name.includes('พรีออเดอร์') ||
+        item.product.name.includes('สั่งผลิต') ||
+        item.product.name.includes('เปิดจอง')
+      );
+
       const payload = {
         customer_id: customerId,
         customer_name: orderDetails.fullName,
@@ -544,9 +552,12 @@ export default function App() {
         customer_phone: orderDetails.phone,
         total_amount: totalSum,
         payment_status: 'pending',
-        order_status: 'waiting_payment',
+        order_status: isPreOrder ? 'waiting_payment' : 'ready_for_shipping',
         productName: productNameSummary,
-        color: colorsSummary
+        color: colorsSummary,
+        order_type: isPreOrder ? 'preorder' : 'instock',
+        is_preorder: isPreOrder,
+        notes: `${orderDetails.notes || ''} [${isPreOrder ? 'Pre-Order / สั่งผลิต' : 'In-Stock / สินค้าพร้อมส่ง'}]`
       };
 
       console.log('ORDER PAYLOAD', payload);
@@ -554,20 +565,34 @@ export default function App() {
       const createdOrder = await supabaseOrders.create(payload);
 
       const fallbackOrder = {
-        id: 'ORD-2026-' + Math.floor(1000 + Math.random() * 9000),
+        id: (isPreOrder ? 'ORD-PRE-' : 'ORD-2026-') + Math.floor(1000 + Math.random() * 9000),
         customer_id: customerId,
         customer_name: orderDetails.fullName,
         customer_email: customerEmail,
         customer_phone: orderDetails.phone,
         total_amount: totalSum,
         payment_status: 'pending',
-        order_status: 'waiting_payment',
+        order_status: isPreOrder ? 'waiting_payment' : 'ready_for_shipping',
         productName: productNameSummary,
-        color: colorsSummary
+        color: colorsSummary,
+        order_type: isPreOrder ? 'preorder' : 'instock',
+        is_preorder: isPreOrder,
+        notes: `${orderDetails.notes || ''} [${isPreOrder ? 'Pre-Order / สั่งผลิต' : 'In-Stock / สินค้าพร้อมส่ง'}]`
       };
 
       const finalOrder = createdOrder || fallbackOrder;
       setCurrentOrder(finalOrder);
+
+      // Sync into admin_orders in localStorage for immediate reflection in Admin Dashboard & Order History
+      try {
+        const localOrders = JSON.parse(localStorage.getItem('admin_orders') || '[]');
+        const exists = localOrders.some((o: any) => o.id === finalOrder.id);
+        if (!exists) {
+          localOrders.unshift(finalOrder);
+          localStorage.setItem('admin_orders', JSON.stringify(localOrders));
+        }
+      } catch {}
+      window.dispatchEvent(new Event('orders-updated'));
 
       // Save/Upsert delivery address and profile details to Supabase profiles table
       // Safety check: ทำการ upsert ลง profiles เฉพาะกรณีผู้ใช้ล็อกอินเรียบร้อย (มี currentUser.id ที่ถูกต้อง)

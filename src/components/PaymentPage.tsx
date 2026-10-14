@@ -23,7 +23,7 @@ import {
   ExternalLink,
   Image as ImageIcon
 } from 'lucide-react';
-import { supabaseOrders, isSupabaseConfigured, supabase } from '../lib/supabase';
+import { supabaseOrders, isSupabaseConfigured, supabase, isOrderPreOrder } from '../lib/supabase';
 
 interface PaymentPageProps {
   order: any;
@@ -213,17 +213,19 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, t
           if (found) {
             const isApproved = 
               ['paid', 'completed', 'approved'].includes(found.payment_status) ||
-              ['paid', 'completed', 'processing'].includes(found.order_status);
+              ['paid', 'completed', 'processing', 'ready_to_ship', 'ready_for_shipping'].includes(found.order_status);
 
             if (isApproved) {
+              const isPre = isOrderPreOrder(found);
+              const targetStatus = found.order_status || (isPre ? 'manufacturing' : 'ready_to_ship');
               setActiveOrder((prev: any) => ({
                 ...prev,
                 ...found,
                 payment_status: 'paid',
-                order_status: found.order_status || 'processing'
+                order_status: targetStatus
               }));
               setCurrentPaymentStatus('paid');
-              setCurrentOrderStatus(found.order_status || 'processing');
+              setCurrentOrderStatus(targetStatus);
               if (found.payment_slip_url) {
                 setUploadedSlipUrl(found.payment_slip_url);
               }
@@ -241,12 +243,14 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, t
     const handleBroadcastApproval = (e: any) => {
       const targetOrderId = e.detail?.orderId;
       if (targetOrderId && targetOrderId === activeOrder.id) {
+        const isPre = isOrderPreOrder(activeOrder);
+        const targetStatus = e.detail?.orderStatus || (isPre ? 'manufacturing' : 'ready_to_ship');
         setCurrentPaymentStatus('paid');
-        setCurrentOrderStatus('processing');
+        setCurrentOrderStatus(targetStatus);
         setActiveOrder((prev: any) => ({
           ...prev,
           payment_status: 'paid',
-          order_status: 'processing'
+          order_status: targetStatus
         }));
         setStep('approved');
         triggerToast('ชำระเงินเสร็จสิ้นเรียบร้อยแล้ว!');
@@ -272,16 +276,18 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, t
               const updated = payload.new;
               if (
                 ['paid', 'completed', 'approved'].includes(updated?.payment_status) ||
-                ['paid', 'completed', 'processing'].includes(updated?.order_status)
+                ['paid', 'completed', 'processing', 'ready_to_ship', 'ready_for_shipping'].includes(updated?.order_status)
               ) {
+                const isPre = isOrderPreOrder(updated || activeOrder);
+                const targetStatus = updated?.order_status || (isPre ? 'manufacturing' : 'ready_to_ship');
                 setActiveOrder((prev: any) => ({
                   ...prev,
                   ...updated,
                   payment_status: 'paid',
-                  order_status: updated?.order_status || 'processing'
+                  order_status: targetStatus
                 }));
                 setCurrentPaymentStatus('paid');
-                setCurrentOrderStatus(updated?.order_status || 'processing');
+                setCurrentOrderStatus(targetStatus);
                 if (updated?.payment_slip_url) {
                   setUploadedSlipUrl(updated.payment_slip_url);
                 }
@@ -658,17 +664,26 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, t
           </div>
 
           {/* Delivery & Production Notice */}
-          <div className="border border-emerald-200/80 p-3.5 rounded-2xl bg-emerald-50/70 text-slate-700 text-xs flex items-center gap-3 text-left">
-            <ShieldCheck size={22} className="text-emerald-600 shrink-0" />
-            <div className="space-y-0.5">
-              <p className="font-bold text-slate-850">
-                ฝ่ายผลิตกำลังเตรียมหลอมขึ้นรูปและจัดส่งสินค้าตามกำหนดการ
-              </p>
-              <p className="text-[11px] text-slate-500 leading-snug">
-                เจ้าหน้าที่จะติดต่อประสานงานยืนยันวันนัดหมายจัดส่งล่วงหน้า ท่านสามารถเช็กสถานะการผลิตได้ในประวัติคำสั่งซื้อ
-              </p>
-            </div>
-          </div>
+          {(() => {
+            const isPre = isOrderPreOrder(activeOrder);
+            return (
+              <div className="border border-emerald-200/80 p-3.5 rounded-2xl bg-emerald-50/70 text-slate-700 text-xs flex items-center gap-3 text-left">
+                <ShieldCheck size={22} className="text-emerald-600 shrink-0" />
+                <div className="space-y-0.5">
+                  <p className="font-bold text-slate-850">
+                    {isPre 
+                      ? 'ฝ่ายผลิตกำลังเตรียมหลอมขึ้นรูปและจัดส่งสินค้าตามกำหนดการ'
+                      : 'คลังสินค้ากำลังเตรียมบรรจุหีบห่อและส่งมอบให้ขนส่งโดยตรง (สินค้าพร้อมส่ง)'}
+                  </p>
+                  <p className="text-[11px] text-slate-500 leading-snug">
+                    {isPre
+                      ? 'เจ้าหน้าที่จะติดต่อประสานงานยืนยันวันนัดหมายจัดส่งล่วงหน้า ท่านสามารถเช็กสถานะการผลิตได้ในประวัติคำสั่งซื้อ'
+                      : 'สินค้าพร้อมส่งไม่ต้องรอรอบหลอมผลิต ท่านสามารถติดตามเลขพัสดุและสถานะการจัดส่งได้ทันทีในหน้าติดตามจัดส่ง'}
+                  </p>
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Action Button: Centered Return to Home with 3-Second Auto-Redirect */}
           <div className="pt-2 flex flex-col items-center gap-2.5">
@@ -695,7 +710,9 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, t
                 className="text-[11.5px] text-emerald-700 hover:text-emerald-800 font-bold underline transition-colors cursor-pointer mt-0.5"
                 id="btn-view-order-history-from-approved"
               >
-                ดูสถานะและติดตามคิวผลิตในประวัติคำสั่งซื้อ
+                {isOrderPreOrder(activeOrder)
+                  ? 'ดูสถานะและติดตามคิวผลิตในประวัติคำสั่งซื้อ'
+                  : '🚚 ดูสถานะและติดตามการจัดส่งในหน้าติดตามจัดส่ง'}
               </button>
             )}
           </div>
