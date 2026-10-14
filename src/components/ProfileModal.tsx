@@ -104,7 +104,7 @@ interface ItemToDelete {
 const MOCK_ORDERS: OrderItem[] = [
   {
     id: "ORD-2026-9874",
-    queueId: "Q-2610-008",
+    queueId: "",
     date: "12 มี.ค. 2026",
     productName: "เรือพายพลาสติก ตราพรพงศ์ รุ่น 2.5 เมตร - ท้องเรือแบนสัญจรง่าย",
     color: "สีน้ำเงินพรีเมียม (Royal Blue)",
@@ -121,7 +121,7 @@ const MOCK_ORDERS: OrderItem[] = [
   },
   {
     id: "ORD-2026-4512",
-    queueId: "Q-2610-011",
+    queueId: "",
     date: "04 ม.ค. 2026",
     productName: "พายพลาสติกเกรดพรีเมียม ใบพายหนาเหนียวพิเศษ",
     color: "สีเหลืองพาสเทล (Pastel Yellow)",
@@ -333,17 +333,19 @@ export function ProfileModal({
         const orderIdStr = String(o.id).trim();
         const delivery = deliveriesMap[orderIdStr] || deliveriesMap[o.id];
 
-        // Read real-time delivery columns joined by order_id
-        const queueNum = delivery?.queue_number || o.queue_number || o.queue_id || formatQueueId(o, idx);
+        const isPre = isOrderPreOrder(o);
+        const orderType: 'preorder' | 'instock' = isPre ? 'preorder' : 'instock';
+
+        // Read real-time delivery columns joined by order_id: In-Stock items bypass queue
+        const queueNum = isPre
+          ? (delivery?.queue_number || o.queue_number || o.queue_id || formatQueueId(o, idx))
+          : (delivery?.queue_number || o.queue_number || o.queue_id || '');
         const carrier = delivery?.shipping_carrier || o.shipping_carrier || o.carrier_name || 'รถโรงงานพรพงศ์พลาสติก (สายส่งด่วน)';
         const driver = delivery?.driver_phone || o.driver_phone || '089-456-7890';
         const trackingNo = delivery?.tracking_number || o.tracking_number || o.shipmentNo || o.shipment_no || `TH-EX-${String(o.id).replace(/[^0-9]/g, '').slice(-6) || '291823'}`;
         const estDate = delivery?.estimated_delivery_date || o.estimated_delivery_date || o.est_delivery || '';
         const delivStatus = (delivery?.delivery_status || '').toLowerCase();
         const ordStatus = (o.status || o.order_status || '').toLowerCase();
-
-        const isPre = isOrderPreOrder(o);
-        const orderType: 'preorder' | 'instock' = isPre ? 'preorder' : 'instock';
 
         let stageNumber: 1 | 2 | 3 | 4 = 1;
         let stageLabel = 'รับคิวผลิต';
@@ -390,7 +392,7 @@ export function ProfileModal({
         return {
           id: o.id,
           queueId: queueNum,
-          queue_number: queueNum,
+          queue_number: isPre ? queueNum : (queueNum || undefined),
           date: o.date || (o.created_at ? new Date(o.created_at).toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric' }) : 'เมื่อเร็วๆ นี้'),
           productName: o.productName || 'เรือพลาสติกและอุปกรณ์',
           color: o.color || 'คละสี',

@@ -20,7 +20,7 @@ import {
   Flame,
   ListOrdered
 } from 'lucide-react';
-import { supabaseOrders, supabasePreOrders, formatQueueId, supabase, isSupabaseConfigured } from '../lib/supabase';
+import { supabaseOrders, supabasePreOrders, formatQueueId, supabase, isSupabaseConfigured, isOrderPreOrder } from '../lib/supabase';
 
 interface CustomerOrderHistoryModalProps {
   isOpen: boolean;
@@ -253,7 +253,8 @@ export function CustomerOrderHistoryModal({
                   const isPaid = ord.payment_status === 'paid' || ord.payment_status === 'approved' || ord.payment_status === 'processing';
                   const isWaiting = ord.payment_status === 'waiting_verify' || ord.payment_status === 'pending_verification' || ord.payment_status === 'waiting_approval';
                   const isDelivered = ord.order_status === 'completed' || ord.order_status === 'delivered' || ord.status === 'Delivered';
-                  const qId = ord.queue_id || ord.queueId || formatQueueId(ord, idx);
+                  const isPre = isOrderPreOrder(ord);
+                  const qId = isPre ? (ord.queue_id || ord.queueId || formatQueueId(ord, idx)) : '';
                   const qStage = ord.queue_stage || (ord.order_status === 'in_transit' || ord.status === 'Shipping' || ord.order_status === 'completed' || isDelivered ? 4 : ord.order_status === 'ready_for_shipping' ? 3 : ord.order_status === 'manufacturing' ? 2 : 1);
 
                   return (
@@ -263,9 +264,17 @@ export function CustomerOrderHistoryModal({
                         >
                           <div className="flex items-center justify-between gap-2 flex-wrap">
                             <div className="flex items-center gap-2 flex-wrap">
-                              <span className="px-2.5 py-0.5 rounded-lg bg-slate-900 text-amber-400 font-mono text-xs font-bold shadow-2xs">
-                                {qId}
-                              </span>
+                              {isPre ? (
+                                <span className="px-2.5 py-0.5 rounded-lg bg-slate-900 text-amber-400 font-mono text-xs font-bold shadow-2xs flex items-center gap-1">
+                                  <Flame size={11} className="text-amber-400" />
+                                  <span>{qId}</span>
+                                </span>
+                              ) : (
+                                <span className="px-2.5 py-0.5 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-bold shadow-2xs flex items-center gap-1">
+                                  <Package size={11} className="text-emerald-600" />
+                                  <span>สินค้าพร้อมส่ง</span>
+                                </span>
+                              )}
                               <span className="text-[11px] font-mono text-slate-500 font-bold">
                                 #{ord.id}
                               </span>

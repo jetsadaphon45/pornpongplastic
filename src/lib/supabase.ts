@@ -1497,7 +1497,11 @@ export const supabaseOrders = {
         const orderIdStr = String(row.id).trim();
         const delivery = deliveriesMap[orderIdStr] || deliveriesMap[row.id];
 
-        const queueNum = delivery?.queue_number || row.queue_number || row.queue_id || formatQueueId(row, idx);
+        const isPre = isOrderPreOrder(row);
+        const orderType = isPre ? 'preorder' : 'instock';
+        const queueNum = isPre
+          ? (delivery?.queue_number || row.queue_number || row.queue_id || formatQueueId(row, idx))
+          : (delivery?.queue_number || row.queue_number || row.queue_id || '');
         const carrier = delivery?.shipping_carrier || row.shipping_carrier || row.carrier_name || '';
         const driver = delivery?.driver_phone || row.driver_phone || '';
         const tracking = delivery?.tracking_number || row.tracking_number || row.shipmentNo || row.shipment_no || '';
@@ -1519,8 +1523,6 @@ export const supabaseOrders = {
         }
 
         const stageKey = qStage === 4 ? 'in_transit' : qStage === 3 ? 'ready_for_shipping' : qStage === 2 ? 'manufacturing' : 'queue_received';
-        const isPre = isOrderPreOrder(row);
-        const orderType = isPre ? 'preorder' : 'instock';
 
         return {
           ...row,
@@ -1528,9 +1530,9 @@ export const supabaseOrders = {
           orderType: orderType,
           is_preorder: isPre,
           isPreOrder: isPre,
-          // Joined delivery fields:
-          queue_number: queueNum,
-          queue_id: queueNum,
+          // Joined delivery fields: In-stock items bypass production queue (no queue_number)
+          queue_number: isPre ? queueNum : (queueNum || undefined),
+          queue_id: isPre ? queueNum : (queueNum || ''),
           shipping_carrier: carrier,
           carrier_name: carrier,
           driver_phone: driver,
@@ -1640,7 +1642,11 @@ export const supabaseOrders = {
         const orderIdStr = String(row.id).trim();
         const delivery = deliveriesMap[orderIdStr] || deliveriesMap[row.id];
 
-        const queueNum = delivery?.queue_number || row.queue_number || row.queue_id || formatQueueId(row, idx);
+        const isPre = isOrderPreOrder(row);
+        const orderType = isPre ? 'preorder' : 'instock';
+        const queueNum = isPre
+          ? (delivery?.queue_number || row.queue_number || row.queue_id || formatQueueId(row, idx))
+          : (delivery?.queue_number || row.queue_number || row.queue_id || '');
         const carrier = delivery?.shipping_carrier || row.shipping_carrier || row.carrier_name || '';
         const driver = delivery?.driver_phone || row.driver_phone || '';
         const tracking = delivery?.tracking_number || row.tracking_number || row.shipmentNo || row.shipment_no || '';
@@ -1662,8 +1668,6 @@ export const supabaseOrders = {
         }
 
         const stageKey = qStage === 4 ? 'in_transit' : qStage === 3 ? 'ready_for_shipping' : qStage === 2 ? 'manufacturing' : 'queue_received';
-        const isPre = isOrderPreOrder(row);
-        const orderType = isPre ? 'preorder' : 'instock';
 
         return {
           ...row,
@@ -1672,9 +1676,9 @@ export const supabaseOrders = {
           orderType: orderType,
           is_preorder: isPre,
           isPreOrder: isPre,
-          // Joined deliveries table fields:
-          queue_number: queueNum,
-          queue_id: queueNum,
+          // Joined deliveries table fields: in-stock items bypass production queue
+          queue_number: isPre ? queueNum : (queueNum || undefined),
+          queue_id: isPre ? queueNum : (queueNum || ''),
           shipping_carrier: carrier,
           carrier_name: carrier,
           driver_phone: driver,
