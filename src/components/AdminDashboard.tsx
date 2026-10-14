@@ -921,9 +921,8 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
       // Optimistically update React state immediately
       setAdminOrders(prev => prev.map(o => o.id === orderId ? {
         ...o,
-        status: isDeliv ? 'delivered' : nextStatus,
+        status: nextStatus,
         order_status: mappedOrderStatus,
-        delivery_status: isDeliv ? 'delivered' : mappedOrderStatus,
         shipmentNo: trackingNo,
         shipment_no: trackingNo,
         ...(meta.estimated_delivery_date ? { estimated_delivery_date: meta.estimated_delivery_date } : {}),
@@ -931,24 +930,6 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
         ...(meta.driver_phone ? { driver_phone: meta.driver_phone } : {}),
         ...(meta.status_message ? { status_message: meta.status_message } : {})
       } : o));
-
-      // Persist in local storage for instant multi-tab sync
-      try {
-        const local = JSON.parse(localStorage.getItem('admin_orders') || '[]');
-        const updatedLocal = local.map((o: any) => o.id === orderId ? {
-          ...o,
-          status: isDeliv ? 'delivered' : nextStatus,
-          order_status: mappedOrderStatus,
-          delivery_status: isDeliv ? 'delivered' : mappedOrderStatus,
-          shipmentNo: trackingNo,
-          shipment_no: trackingNo,
-          ...(meta.estimated_delivery_date ? { estimated_delivery_date: meta.estimated_delivery_date } : {}),
-          ...(meta.carrier_name ? { carrier_name: meta.carrier_name } : {}),
-          ...(meta.driver_phone ? { driver_phone: meta.driver_phone } : {}),
-          ...(meta.status_message ? { status_message: meta.status_message } : {})
-        } : o);
-        localStorage.setItem('admin_orders', JSON.stringify(updatedLocal));
-      } catch {}
 
       await supabaseOrders.updateStatus(orderId, nextStatus, {
         ...meta,
@@ -1015,8 +996,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
       window.dispatchEvent(new CustomEvent('pornpong-order-delivered', {
         detail: { orderId, notification: newNoti, status: nextStatus, meta }
       }));
-      window.dispatchEvent(new Event('orders-updated'));
-      window.dispatchEvent(new Event('storage'));
+      window.dispatchEvent(new CustomEvent('orders-updated'));
 
       triggerToast(`อัปเดตออเดอร์ #${orderId} เป็น [${statusLabel}] สำเร็จ`);
     } catch (err: any) {
@@ -1045,14 +1025,11 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
     if (!readyShippingOrder) return;
     const orderId = readyShippingOrder.id;
     const dateStr = readyShippingDate.trim() || 'ภายใน 1-2 วันทำการ';
-    const isPre = isOrderPreOrder(readyShippingOrder);
-    const msg = isPre
-      ? `คำสั่งซื้อหมายเลข #${orderId} เรือผลิตเสร็จแล้ว - คาดว่าจะจัดส่งวันที่: ${dateStr}`
-      : `คำสั่งซื้อสินค้าพร้อมส่ง #${orderId} ตรวจสอบสินค้าเรียบร้อย - คาดว่าจะจัดส่งวันที่: ${dateStr}`;
+    const msg = `คำสั่งซื้อหมายเลข #${orderId} เรือผลิตเสร็จแล้ว - คาดว่าจะจัดส่งวันที่: ${dateStr}`;
     executeOrderStatusChange(orderId, 'ready_for_shipping', {
       estimated_delivery_date: dateStr,
-      status_message: msg
-    }, isPre ? 'รอขนย้าย' : 'รอจัดส่ง', msg);
+      status_message: `เรือผลิตเสร็จแล้ว - คาดว่าจะจัดส่งวันที่: ${dateStr}`
+    }, 'รอขนย้าย', msg);
     setReadyShippingOrder(null);
   };
 
@@ -1096,7 +1073,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
       delivery_status: 'delivered'
     }, 'จัดส่งสำเร็จ', msg);
 
-    // 3. Switch tab to completed history to view the completed order immediately
+    // Switch tab to completed history to view the completed order immediately
     setOrdersTabFilter('completed');
     triggerToast(`คำสั่งซื้อ #${orderId} จัดส่งสำเร็จ! ย้ายไปแท็บ "ประวัติคำสั่งซื้อสำเร็จ (Completed History)" เรียบร้อยแล้ว`);
   };
@@ -3145,9 +3122,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                                   <Truck size={10} /> {ord.shipmentNo}
                                 </code>
                               ) : (
-                                <span className="text-slate-400 italic">
-                                  {isOrderPreOrder(ord) ? 'รอรันลำเลียงรหัสคิว' : 'รอเลขพัสดุจัดส่ง'}
-                                </span>
+                                <span className="text-slate-400 italic">รอรันลำเลียงรหัสคิว</span>
                               )}
                             </td>
                             <td className="py-3.5 px-3 text-center">
@@ -3156,19 +3131,18 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                                   const isPre = isOrderPreOrder(ord);
                                   const sLower = String(ord.status || '').toLowerCase();
                                   const osLower = String(ord.order_status || '').toLowerCase();
-                                  const dsLower = String(ord.delivery_status || '').toLowerCase();
 
                                   // 4. [จัดส่งสำเร็จ] (Delivered)
-                                  const isDeliveredActive = sLower === 'completed' || sLower === 'delivered' || osLower === 'completed' || osLower === 'delivered' || dsLower === 'delivered' || dsLower === 'completed';
+                                  const isDeliveredActive = sLower === 'completed' || sLower === 'delivered' || osLower === 'completed' || osLower === 'delivered';
 
                                   // 3. [อยู่ระหว่างจัดส่ง] (In Transit)
-                                  const isInTransitActive = !isDeliveredActive && (sLower === 'in_transit' || sLower === 'shipped' || sLower === 'shipping' || osLower === 'in_transit' || osLower === 'shipped' || dsLower === 'in_transit' || dsLower === 'shipping');
+                                  const isInTransitActive = sLower === 'in_transit' || sLower === 'shipped' || sLower === 'shipping' || osLower === 'in_transit' || osLower === 'shipped';
 
-                                  // 2. [รอขนย้าย / รอจัดส่ง] (Ready for Shipping / Ready to Ship)
-                                  // For in-stock items: start at ready for shipping by default if not yet in-transit/delivered
-                                  const isReadyActive = !isDeliveredActive && !isInTransitActive && (
-                                    !isPre || sLower === 'ready_for_shipping' || sLower === 'ready' || osLower === 'ready_for_shipping' || osLower === 'ready_to_ship' || dsLower === 'ready_to_ship' || dsLower === 'ready_for_shipping'
-                                  );
+                                  // 2. [รอขนย้าย] (Ready for Shipping)
+                                  // For in-stock items: start at ready for shipping if not yet in-transit/delivered
+                                  const isReadyActive = isPre
+                                    ? (sLower === 'ready_for_shipping' || sLower === 'ready' || osLower === 'ready_for_shipping')
+                                    : (sLower === 'ready_for_shipping' || sLower === 'ready' || osLower === 'ready_for_shipping' || osLower === 'ready_to_ship' || (!isInTransitActive && !isDeliveredActive));
 
                                   // 1. [กำลังผลิต] (Manufacturing - Only for Pre-Order)
                                   const isMfgActive = isPre && (
@@ -3183,17 +3157,17 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                                       <div className="flex items-center gap-1 mb-0.5">
                                         {isPre ? (
                                           <span className="text-[9px] font-bold text-amber-700 bg-amber-50 px-1.5 py-0.2 rounded border border-amber-200 inline-flex items-center gap-0.5">
-                                            <Flame size={9} /> สั่งผลิต (Pre-Order)
+                                            <Flame size={9} /> สั่งผลิต
                                           </span>
                                         ) : (
                                           <span className="text-[9px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200 inline-flex items-center gap-0.5">
-                                            <Package size={9} /> สินค้าพร้อมส่ง (In-Stock)
+                                            <Package size={9} /> สินค้าพร้อมส่ง
                                           </span>
                                         )}
                                       </div>
 
                                       <div className="flex items-center justify-center gap-1 flex-wrap">
-                                        {/* ขั้นตอน 1: กำลังผลิต (เฉพาะสินค้า Pre-Order / สั่งผลิต เท่านั้น - สินค้าในสต็อก Auto-Bypass ไม่แสดงปุ่มนี้) */}
+                                        {/* ขั้นตอน 1: กำลังผลิต (เฉพาะสินค้า Pre-Order / สั่งผลิต เท่านั้น - สินค้าในสต็อก Auto-Bypass) */}
                                         {isPre && (
                                           <button
                                             type="button"
@@ -3209,7 +3183,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                                           </button>
                                         )}
 
-                                        {/* ขั้นตอน 2: รอขนย้าย / รอจัดส่ง (สำหรับสินค้าพร้อมส่ง จะเป็นขั้นตอนเริ่มต้น ไม่ต้องผ่านขั้นตอนหลอมผลิต) */}
+                                        {/* ขั้นตอน 2: รอขนย้าย / รอจัดส่ง */}
                                         <button
                                           type="button"
                                           onClick={() => handleOpenReadyShippingModal(ord)}
@@ -3218,7 +3192,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                                               ? 'bg-amber-500 hover:bg-amber-600 text-white shadow-xs ring-1 ring-amber-600/20'
                                               : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
                                           }`}
-                                          title={isPre ? "ขั้นตอนที่ 2: รอขนย้าย (ระบุวัน/เวลา คาดว่าจะจัดส่ง)" : "ขั้นตอนเริ่มต้นสินค้าในสต็อก: รอจัดส่ง / รอขนย้าย (ข้ามเตาหลอม)"}
+                                          title={isPre ? "ขั้นตอนที่ 2: รอขนย้าย (ระบุวัน/เวลา คาดว่าจะจัดส่ง)" : "ขั้นตอนเริ่มต้นสินค้าในสต็อก: รอจัดส่ง / รอขนย้าย"}
                                         >
                                           {isPre ? 'รอขนย้าย' : 'รอจัดส่ง'}
                                         </button>
@@ -3232,21 +3206,21 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                                               ? 'bg-sky-500 hover:bg-sky-600 text-white shadow-xs ring-1 ring-sky-600/20'
                                               : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
                                           }`}
-                                          title="ขั้นตอน: อยู่ระหว่างจัดส่ง (กรอกชื่อขนส่ง, เบอร์คนขับ, Tracking)"
+                                          title="ขั้นตอนที่ 3: อยู่ระหว่างจัดส่ง (กรอกชื่อขนส่ง, เบอร์คนขับ, Tracking)"
                                         >
                                           อยู่ระหว่างจัดส่ง
                                         </button>
 
-                                        {/* ขั้นตอน 4: จัดส่งสำเร็จ (Direct Completion) */}
+                                        {/* ขั้นตอน 4: จัดส่งสำเร็จ */}
                                         <button
                                           type="button"
                                           onClick={() => handleSelectDelivered(ord)}
                                           className={`px-2.5 py-1 rounded-md text-[9px] font-black cursor-pointer transition-all ${
                                             isDeliveredActive
                                               ? 'bg-emerald-500 hover:bg-emerald-600 text-white shadow-xs ring-1 ring-emerald-600/20'
-                                              : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs'
+                                              : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
                                           }`}
-                                          title="ดำเนินการส่งสินค้าสำเร็จ (ย้ายไปแท็บประวัติคำสั่งซื้อสำเร็จทันที และซ่อนปุ่มติดตามสินค้าบน Header)"
+                                          title="ขั้นตอนที่ 4: จัดส่งสำเร็จ (คลิกเพื่อย้ายไปประวัติคำสั่งซื้อสำเร็จ)"
                                         >
                                           ✓ ส่งสำเร็จ
                                         </button>
@@ -3518,11 +3492,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
 
                                       // Dispatch broadcast event for realtime tabs
                                       window.dispatchEvent(new CustomEvent('pornpong-order-approved', {
-                                        detail: { 
-                                          orderId: ord.id, 
-                                          notification: newNoti,
-                                          orderStatus: isPre ? 'manufacturing' : 'ready_to_ship'
-                                        }
+                                        detail: { orderId: ord.id, notification: newNoti }
                                       }));
 
                                       triggerToast(`อนุมัติการชำระเงินสำหรับคำสั่งซื้อ #${ord.id} สำเร็จ!`);

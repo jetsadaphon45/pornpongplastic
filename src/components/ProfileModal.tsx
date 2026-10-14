@@ -336,8 +336,10 @@ export function ProfileModal({
         const isPre = isOrderPreOrder(o);
         const orderType: 'preorder' | 'instock' = isPre ? 'preorder' : 'instock';
 
-        // Read real-time delivery columns joined by order_id (In-Stock items auto-bypass queue number)
-        const queueNum = isPre ? (delivery?.queue_number || o.queue_number || o.queue_id || formatQueueId(o, idx)) : '';
+        // Read real-time delivery columns joined by order_id: In-Stock items bypass queue
+        const queueNum = isPre
+          ? (delivery?.queue_number || o.queue_number || o.queue_id || formatQueueId(o, idx))
+          : (delivery?.queue_number || o.queue_number || o.queue_id || '');
         const carrier = delivery?.shipping_carrier || o.shipping_carrier || o.carrier_name || 'รถโรงงานพรพงศ์พลาสติก (สายส่งด่วน)';
         const driver = delivery?.driver_phone || o.driver_phone || '089-456-7890';
         const trackingNo = delivery?.tracking_number || o.tracking_number || o.shipmentNo || o.shipment_no || `TH-EX-${String(o.id).replace(/[^0-9]/g, '').slice(-6) || '291823'}`;
@@ -390,7 +392,7 @@ export function ProfileModal({
         return {
           id: o.id,
           queueId: queueNum,
-          queue_number: queueNum,
+          queue_number: isPre ? queueNum : (queueNum || undefined),
           date: o.date || (o.created_at ? new Date(o.created_at).toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric' }) : 'เมื่อเร็วๆ นี้'),
           productName: o.productName || 'เรือพลาสติกและอุปกรณ์',
           color: o.color || 'คละสี',
@@ -954,79 +956,45 @@ export function ProfileModal({
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 mb-2">
                         <div className="flex items-center gap-2 flex-wrap">
                           <span className="text-[11px] font-extrabold text-slate-800 font-mono">#{order.id}</span>
-                          {order.isPreOrder ? (
-                            order.queueId ? (
-                              <span className="font-mono text-[10px] font-black px-2 py-0.5 rounded-md bg-slate-900 text-amber-400 border border-slate-800 shadow-2xs">
-                                {order.queueId}
-                              </span>
-                            ) : null
-                          ) : (
-                            <span className="px-2 py-0.5 rounded-lg bg-emerald-50 text-emerald-800 text-[10px] font-bold border border-emerald-200 inline-flex items-center gap-1">
-                              <Package size={10} className="text-emerald-600" />
-                              <span>สินค้าพร้อมส่ง (In-Stock)</span>
+                          {order.queueId && (
+                            <span className="font-mono text-[10px] font-black px-2 py-0.5 rounded-md bg-slate-900 text-amber-400 border border-slate-800 shadow-2xs">
+                              {order.queueId}
                             </span>
                           )}
                           <span className="text-[10px] font-semibold text-slate-400">เมื่อ {order.date}</span>
                         </div>
                         <div className="flex items-center gap-2">
-                          {order.isPreOrder ? (
-                            <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[10px] font-bold ${
-                              order.stageNumber === 4
-                                ? 'bg-emerald-100 text-emerald-800 border border-emerald-300 font-black shadow-2xs'
-                                : order.stageNumber === 3
-                                ? 'bg-sky-50 text-sky-700 border border-sky-200 font-bold'
-                                : order.stageNumber === 2
-                                ? 'bg-amber-50 text-amber-700 border border-amber-200 font-bold'
-                                : 'bg-violet-50 text-violet-700 border border-violet-200 font-bold'
-                            }`}>
-                              {order.stageNumber === 4 ? (
-                                <>
-                                  <Truck size={12} className="text-emerald-600" />
-                                  <span>ขั้นตอนที่ 4: อยู่ระหว่างจัดส่ง</span>
-                                </>
-                              ) : order.stageNumber === 3 ? (
-                                <>
-                                  <Clock size={12} className="text-sky-600" />
-                                  <span>ขั้นตอนที่ 3: รอขนย้าย</span>
-                                </>
-                              ) : order.stageNumber === 2 ? (
-                                <>
-                                  <Flame size={12} className="text-amber-600" />
-                                  <span>ขั้นตอนที่ 2: กำลังหลอม/ผลิต</span>
-                                </>
-                              ) : (
-                                <>
-                                  <Package size={12} className="text-violet-600" />
-                                  <span>ขั้นตอนที่ 1: รับคิวผลิต</span>
-                                </>
-                              )}
-                            </span>
-                          ) : (
-                            <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[10px] font-bold ${
-                              order.stageLabel === 'จัดส่งสำเร็จ'
-                                ? 'bg-emerald-100 text-emerald-800 border border-emerald-300 font-black shadow-2xs'
-                                : order.stageLabel === 'อยู่ระหว่างจัดส่ง' || order.stageNumber === 4
-                                ? 'bg-sky-50 text-sky-700 border border-sky-200 font-bold'
-                                : 'bg-amber-50 text-amber-800 border border-amber-200 font-bold'
-                            }`}>
-                              {order.stageLabel === 'จัดส่งสำเร็จ' ? (
-                                <>
-                                  <CheckCircle2 size={12} className="text-emerald-600" />
-                                  <span>จัดส่งสำเร็จ (Completed)</span>
-                                </>
-                              ) : order.stageLabel === 'อยู่ระหว่างจัดส่ง' || order.stageNumber === 4 ? (
-                                <>
-                                  <Truck size={12} className="text-sky-600" />
-                                  <span>อยู่ระหว่างจัดส่ง</span>
-                                </>
-                              ) : (
-                                <>
-                                  <Package size={12} className="text-amber-600" />
-                                  <span>รอจัดส่ง / เตรียมพัสดุ</span>
-                                </>
-                              )}
-                            </span>
-                          )}
+                          <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[10px] font-bold ${
+                            order.stageNumber === 4
+                              ? 'bg-emerald-100 text-emerald-800 border border-emerald-300 font-black shadow-2xs'
+                              : order.stageNumber === 3
+                              ? 'bg-sky-50 text-sky-700 border border-sky-200 font-bold'
+                              : order.stageNumber === 2
+                              ? 'bg-amber-50 text-amber-700 border border-amber-200 font-bold'
+                              : 'bg-violet-50 text-violet-700 border border-violet-200 font-bold'
+                          }`}>
+                            {order.stageNumber === 4 ? (
+                              <>
+                                <Truck size={12} className="text-emerald-600" />
+                                <span>ขั้นตอนที่ 4: อยู่ระหว่างจัดส่ง</span>
+                              </>
+                            ) : order.stageNumber === 3 ? (
+                              <>
+                                <Clock size={12} className="text-sky-600" />
+                                <span>ขั้นตอนที่ 3: รอขนย้าย</span>
+                              </>
+                            ) : order.stageNumber === 2 ? (
+                              <>
+                                <Flame size={12} className="text-amber-600" />
+                                <span>ขั้นตอนที่ 2: กำลังหลอม/ผลิต</span>
+                              </>
+                            ) : (
+                              <>
+                                <Package size={12} className="text-violet-600" />
+                                <span>ขั้นตอนที่ 1: รับคิวผลิต</span>
+                              </>
+                            )}
+                          </span>
                           {/* Trash Icon Button for Deletion */}
                           <button
                             type="button"
@@ -1042,219 +1010,132 @@ export function ProfileModal({
 
                       <p className="text-xs font-bold text-slate-800">{order.productName}</p>
 
-                      {/* STEPPER & TRACKING PROGRESS BAR */}
+                      {/* 4-STAGE STEPPER & TRACKING PROGRESS BAR */}
                       <div className="my-3 pt-2.5 pb-2.5 px-3 bg-white rounded-xl border border-slate-150 shadow-2xs">
-                        {order.isPreOrder ? (
-                          /* Pre-Order 4-Stage Stepper */
-                          <div>
-                            <div className="flex items-center justify-between text-[11px] font-bold text-slate-500 mb-3">
-                              <span className="flex items-center gap-1.5 text-slate-700 font-extrabold">
-                                <ListOrdered size={13} className="text-sky-600" />
-                                <span>ขั้นตอนการผลิตและจัดส่ง (4 ขั้นตอน)</span>
-                              </span>
-                              <span className={`text-[10px] font-mono font-extrabold px-2 py-0.5 rounded-full ${
-                                (order.stageNumber || 1) === 4 
-                                  ? 'bg-emerald-100 text-emerald-800' 
-                                  : (order.stageNumber || 1) === 3
-                                  ? 'bg-sky-100 text-sky-800'
-                                  : (order.stageNumber || 1) === 2
-                                  ? 'bg-amber-100 text-amber-800'
-                                  : 'bg-violet-100 text-violet-800'
-                              }`}>
-                                ขั้นตอนที่ {order.stageNumber || 1} / 4: {order.stageLabel}
-                              </span>
-                            </div>
+                        <div className="flex items-center justify-between text-[11px] font-bold text-slate-500 mb-3">
+                          <span className="flex items-center gap-1.5 text-slate-700 font-extrabold">
+                            <ListOrdered size={13} className="text-sky-600" />
+                            <span>ขั้นตอนการผลิตและจัดส่ง (4 ขั้นตอน)</span>
+                          </span>
+                          <span className={`text-[10px] font-mono font-extrabold px-2 py-0.5 rounded-full ${
+                            (order.stageNumber || 1) === 4 
+                              ? 'bg-emerald-100 text-emerald-800' 
+                              : (order.stageNumber || 1) === 3
+                              ? 'bg-sky-100 text-sky-800'
+                              : (order.stageNumber || 1) === 2
+                              ? 'bg-amber-100 text-amber-800'
+                              : 'bg-violet-100 text-violet-800'
+                          }`}>
+                            ขั้นตอนที่ {order.stageNumber || 1} / 4: {order.stageLabel}
+                          </span>
+                        </div>
 
-                            {/* Stepper Line and Circles */}
-                            <div className="relative flex items-center justify-between px-2 sm:px-6 mb-2">
-                              <div className="absolute left-6 right-6 top-3.5 h-1 bg-slate-200">
-                                <div 
-                                  className="h-full bg-gradient-to-r from-violet-500 via-amber-500 via-sky-500 to-emerald-500 transition-all duration-500 rounded-full"
-                                  style={{
-                                    width: (order.stageNumber || 1) === 1 ? '0%' : (order.stageNumber || 1) === 2 ? '33%' : (order.stageNumber || 1) === 3 ? '66%' : '100%'
-                                  }}
-                                />
-                              </div>
-
-                              {[
-                                { step: 1, label: 'รับคิวผลิต', desc: 'ลงทะเบียนคิว' },
-                                { step: 2, label: 'กำลังหลอม/ผลิต', desc: 'หลอมตามสเปก' },
-                                { step: 3, label: 'รอขนย้าย', desc: 'รอคิวรถขนส่ง' },
-                                { step: 4, label: 'อยู่ระหว่างจัดส่ง', desc: 'ขึ้นรถจัดส่งแล้ว' },
-                              ].map((s) => {
-                                const currentStage = order.stageNumber || 1;
-                                const isPast = currentStage > s.step;
-                                const isCurrent = currentStage === s.step;
-
-                                return (
-                                  <div key={s.step} className="relative z-10 flex flex-col items-center">
-                                    <div className={`w-7 h-7 rounded-full flex items-center justify-center font-bold text-xs transition-all ${
-                                      isCurrent
-                                        ? s.step === 4 
-                                          ? 'bg-emerald-600 text-white ring-4 ring-emerald-100 scale-110 shadow-sm' 
-                                          : s.step === 3 
-                                          ? 'bg-sky-600 text-white ring-4 ring-sky-100 scale-110 shadow-sm'
-                                          : s.step === 2
-                                          ? 'bg-amber-500 text-white ring-4 ring-amber-100 scale-110 shadow-sm'
-                                          : 'bg-violet-600 text-white ring-4 ring-violet-100 scale-110 shadow-sm'
-                                        : isPast
-                                        ? 'bg-emerald-600 text-white shadow-xs'
-                                        : 'bg-slate-200 text-slate-500'
-                                    }`}>
-                                      {isPast ? (
-                                        <Check size={13} strokeWidth={3} />
-                                      ) : isCurrent && s.step === 4 ? (
-                                        <Check size={13} strokeWidth={3} />
-                                      ) : (
-                                        <span>{s.step}</span>
-                                      )}
-                                    </div>
-                                    <span className={`text-[10px] mt-1 font-bold ${
-                                      isCurrent ? 'text-slate-900 font-extrabold' : isPast ? 'text-emerald-700' : 'text-slate-400'
-                                    }`}>
-                                      {s.label}
-                                    </span>
-                                    <span className="text-[8.5px] text-slate-400 max-w-[85px] text-center truncate hidden sm:block">
-                                      {s.desc}
-                                    </span>
-                                  </div>
-                                );
-                              })}
-                            </div>
+                        {/* Stepper Line and Circles */}
+                        <div className="relative flex items-center justify-between px-2 sm:px-6 mb-2">
+                          {/* Background Connector Line */}
+                          <div className="absolute left-6 right-6 top-3.5 h-1 bg-slate-200">
+                            {/* Filled Track */}
+                            <div 
+                              className="h-full bg-gradient-to-r from-violet-500 via-amber-500 via-sky-500 to-emerald-500 transition-all duration-500 rounded-full"
+                              style={{
+                                width: (order.stageNumber || 1) === 1 ? '0%' : (order.stageNumber || 1) === 2 ? '33%' : (order.stageNumber || 1) === 3 ? '66%' : '100%'
+                              }}
+                            />
                           </div>
-                        ) : (
-                          /* In-Stock 3-Stage Stepper (Auto-Bypasses furnace queue) */
-                          <div>
-                            <div className="flex items-center justify-between text-[11px] font-bold text-slate-500 mb-3">
-                              <span className="flex items-center gap-1.5 text-emerald-700 font-extrabold">
-                                <Package size={13} className="text-emerald-600" />
-                                <span>ขั้นตอนจัดส่งสินค้าในสต็อก (Direct In-Stock Flow)</span>
-                              </span>
-                              <span className={`text-[10px] font-mono font-extrabold px-2 py-0.5 rounded-full ${
-                                order.stageLabel === 'จัดส่งสำเร็จ'
-                                  ? 'bg-emerald-100 text-emerald-800'
-                                  : order.stageLabel === 'อยู่ระหว่างจัดส่ง' || order.stageNumber === 4
-                                  ? 'bg-sky-100 text-sky-800'
-                                  : 'bg-amber-100 text-amber-800'
-                              }`}>
-                                {order.stageLabel === 'จัดส่งสำเร็จ' ? 'ขั้นตอนที่ 3 / 3: จัดส่งสำเร็จ' : (order.stageLabel === 'อยู่ระหว่างจัดส่ง' || order.stageNumber === 4) ? 'ขั้นตอนที่ 2 / 3: อยู่ระหว่างจัดส่ง' : 'ขั้นตอนที่ 1 / 3: รอจัดส่ง'}
-                              </span>
-                            </div>
 
-                            {/* Stepper Line and Circles for In-Stock */}
-                            <div className="relative flex items-center justify-between px-6 sm:px-12 mb-2">
-                              <div className="absolute left-12 right-12 top-3.5 h-1 bg-slate-200">
-                                <div 
-                                  className="h-full bg-gradient-to-r from-amber-500 via-sky-500 to-emerald-500 transition-all duration-500 rounded-full"
-                                  style={{
-                                    width: order.stageLabel === 'จัดส่งสำเร็จ'
-                                      ? '100%'
-                                      : (order.stageLabel === 'อยู่ระหว่างจัดส่ง' || order.stageNumber === 4)
-                                      ? '50%'
-                                      : '0%'
-                                  }}
-                                />
+                          {/* 4 Steps */}
+                          {[
+                            { step: 1, label: 'รับคิวผลิต', desc: 'ลงทะเบียนคิว' },
+                            { step: 2, label: 'กำลังหลอม/ผลิต', desc: 'หลอมตามสเปก' },
+                            { step: 3, label: 'รอขนย้าย', desc: 'รอคิวรถขนส่ง' },
+                            { step: 4, label: 'อยู่ระหว่างจัดส่ง', desc: 'ขึ้นรถจัดส่งแล้ว' },
+                          ].map((s) => {
+                            const currentStage = order.stageNumber || 1;
+                            const isPast = currentStage > s.step;
+                            const isCurrent = currentStage === s.step;
+
+                            return (
+                              <div key={s.step} className="relative z-10 flex flex-col items-center">
+                                <div className={`w-7 h-7 rounded-full flex items-center justify-center font-bold text-xs transition-all ${
+                                  isCurrent
+                                    ? s.step === 4 
+                                      ? 'bg-emerald-600 text-white ring-4 ring-emerald-100 scale-110 shadow-sm' 
+                                      : s.step === 3 
+                                      ? 'bg-sky-600 text-white ring-4 ring-sky-100 scale-110 shadow-sm'
+                                      : s.step === 2
+                                      ? 'bg-amber-500 text-white ring-4 ring-amber-100 scale-110 shadow-sm'
+                                      : 'bg-violet-600 text-white ring-4 ring-violet-100 scale-110 shadow-sm'
+                                    : isPast
+                                    ? 'bg-emerald-600 text-white shadow-xs'
+                                    : 'bg-slate-200 text-slate-500'
+                                }`}>
+                                  {isPast ? (
+                                    <Check size={13} strokeWidth={3} />
+                                  ) : isCurrent && s.step === 4 ? (
+                                    <Check size={13} strokeWidth={3} />
+                                  ) : (
+                                    <span>{s.step}</span>
+                                  )}
+                                </div>
+                                <span className={`text-[10px] mt-1 font-bold ${
+                                  isCurrent ? 'text-slate-900 font-extrabold' : isPast ? 'text-emerald-700' : 'text-slate-400'
+                                }`}>
+                                  {s.label}
+                                </span>
+                                <span className="text-[8.5px] text-slate-400 max-w-[85px] text-center truncate hidden sm:block">
+                                  {s.desc}
+                                </span>
                               </div>
-
-                              {[
-                                { step: 1, label: '1. รอจัดส่ง', desc: 'คลังสินค้าแพ็คเสร็จ' },
-                                { step: 2, label: '2. อยู่ระหว่างจัดส่ง', desc: 'ขึ้นรถจัดส่งแล้ว' },
-                                { step: 3, label: '3. จัดส่งสำเร็จ', desc: 'ส่งถึงปลายทาง' },
-                              ].map((s) => {
-                                const isDelivered = order.stageLabel === 'จัดส่งสำเร็จ';
-                                const isShipping = order.stageLabel === 'อยู่ระหว่างจัดส่ง' || order.stageNumber === 4;
-                                const curStep = isDelivered ? 3 : isShipping ? 2 : 1;
-                                const isPast = curStep > s.step;
-                                const isCurrent = curStep === s.step;
-
-                                return (
-                                  <div key={s.step} className="relative z-10 flex flex-col items-center">
-                                    <div className={`w-7 h-7 rounded-full flex items-center justify-center font-bold text-xs transition-all ${
-                                      isCurrent
-                                        ? s.step === 3 
-                                          ? 'bg-emerald-600 text-white ring-4 ring-emerald-100 scale-110 shadow-sm' 
-                                          : s.step === 2 
-                                          ? 'bg-sky-600 text-white ring-4 ring-sky-100 scale-110 shadow-sm'
-                                          : 'bg-amber-500 text-white ring-4 ring-amber-100 scale-110 shadow-sm'
-                                        : isPast
-                                        ? 'bg-emerald-600 text-white shadow-xs'
-                                        : 'bg-slate-200 text-slate-500'
-                                    }`}>
-                                      {isPast || (isCurrent && s.step === 3) ? (
-                                        <Check size={13} strokeWidth={3} />
-                                      ) : (
-                                        <span>{s.step}</span>
-                                      )}
-                                    </div>
-                                    <span className={`text-[10px] mt-1 font-bold ${
-                                      isCurrent ? 'text-slate-900 font-extrabold' : isPast ? 'text-emerald-700' : 'text-slate-400'
-                                    }`}>
-                                      {s.label}
-                                    </span>
-                                    <span className="text-[8.5px] text-slate-400 max-w-[95px] text-center truncate hidden sm:block">
-                                      {s.desc}
-                                    </span>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        )}
+                            );
+                          })}
+                        </div>
 
                         {/* Current Active Step Highlight Info Box */}
                         <div className={`mt-2.5 p-2.5 rounded-xl text-xs border ${
-                          (order.stageLabel === 'จัดส่งสำเร็จ' || (!order.isPreOrder && order.stageNumber === 4 && order.delivery_status === 'delivered'))
+                          (order.stageNumber || 1) === 4
                             ? 'bg-emerald-50/80 border-emerald-200 text-emerald-900'
-                            : (order.stageLabel === 'อยู่ระหว่างจัดส่ง' || order.stageNumber === 4)
+                            : (order.stageNumber || 1) === 3
                             ? 'bg-sky-50/80 border-sky-200 text-sky-900'
-                            : (order.isPreOrder && order.stageNumber === 3)
-                            ? 'bg-sky-50/80 border-sky-200 text-sky-900'
-                            : (order.isPreOrder && order.stageNumber === 2)
+                            : (order.stageNumber || 1) === 2
                             ? 'bg-amber-50/80 border-amber-200 text-amber-900'
-                            : 'bg-amber-50/80 border-amber-200 text-amber-900'
+                            : 'bg-violet-50/80 border-violet-200 text-violet-900'
                         }`}>
                           <div className="flex items-start gap-2.5">
                             <div className="mt-0.5 shrink-0">
-                              {order.stageLabel === 'จัดส่งสำเร็จ' ? (
-                                <CheckCircle2 size={16} className="text-emerald-600" />
-                              ) : (order.stageLabel === 'อยู่ระหว่างจัดส่ง' || order.stageNumber === 4) ? (
-                                <Truck size={16} className="text-sky-600" />
-                              ) : (order.isPreOrder && order.stageNumber === 3) ? (
+                              {(order.stageNumber || 1) === 4 ? (
+                                <Truck size={16} className="text-emerald-600" />
+                              ) : (order.stageNumber || 1) === 3 ? (
                                 <Clock size={16} className="text-sky-600" />
-                              ) : (order.isPreOrder && order.stageNumber === 2) ? (
+                              ) : (order.stageNumber || 1) === 2 ? (
                                 <Flame size={16} className="text-amber-600" />
                               ) : (
-                                <Package size={16} className="text-amber-600" />
+                                <Package size={16} className="text-violet-600" />
                               )}
                             </div>
                             <div className="flex-1 space-y-1">
                               <div className="font-bold text-[11.5px] flex items-center justify-between flex-wrap gap-1">
                                 <span>{order.statusMessage || `ขั้นตอน: ${order.stageLabel || order.status}`}</span>
-                                {order.stageLabel === 'จัดส่งสำเร็จ' ? (
+                                {(order.stageNumber || 1) === 4 && (
                                   <span className="font-bold text-emerald-800 bg-white/90 px-2 py-0.5 rounded-md text-[10px] border border-emerald-200 shadow-2xs">
-                                    ส่งมอบสำเร็จเรียบร้อย ✓
-                                  </span>
-                                ) : (order.stageLabel === 'อยู่ระหว่างจัดส่ง' || order.stageNumber === 4) ? (
-                                  <span className="font-bold text-sky-800 bg-white/90 px-2 py-0.5 rounded-md text-[10px] border border-sky-200 shadow-2xs">
                                     ขึ้นรถจัดส่งเรียบร้อย ✓
                                   </span>
-                                ) : null}
+                                )}
                               </div>
 
-                              {/* Stage: ข้อมูลขนส่ง (Driver Info) */}
-                              {(order.stageLabel === 'จัดส่งสำเร็จ' || order.stageLabel === 'อยู่ระหว่างจัดส่ง' || order.stageNumber === 4) && (
-                                <div className="text-[10.5px] text-slate-800 flex flex-wrap items-center gap-x-3 gap-y-1 pt-1 font-medium bg-white/70 p-2 rounded-lg border border-slate-200/60 mt-1">
+                              {/* Stage 4: ข้อมูลขนส่ง (Driver Info) */}
+                              {(order.stageNumber || 1) === 4 && (
+                                <div className="text-[10.5px] text-emerald-900 flex flex-wrap items-center gap-x-3 gap-y-1 pt-1 font-medium bg-white/70 p-2 rounded-lg border border-emerald-200/60 mt-1">
                                   <span className="inline-flex items-center gap-1">
                                     🚚 <b>ขนส่ง:</b> {order.carrierName || 'รถโรงงานพรพงศ์พลาสติก'}
                                   </span>
                                   {order.driverPhone && (
                                     <span className="inline-flex items-center gap-1">
-                                      📞 <b>เบอร์คนขับ:</b> <a href={`tel:${order.driverPhone}`} className="underline font-bold text-sky-700">{order.driverPhone}</a>
+                                      📞 <b>เบอร์คนขับ:</b> <a href={`tel:${order.driverPhone}`} className="underline font-bold text-emerald-700">{order.driverPhone}</a>
                                     </span>
                                   )}
                                   {order.shipmentNo && (
                                     <span className="inline-flex items-center gap-1">
-                                      📦 <b>Tracking:</b> <code className="text-slate-900 font-mono font-bold bg-slate-100 px-1 rounded">{order.shipmentNo}</code>
+                                      📦 <b>Tracking:</b> <code className="text-emerald-950 font-mono font-bold bg-emerald-100/60 px-1 rounded">{order.shipmentNo}</code>
                                     </span>
                                   )}
                                 </div>

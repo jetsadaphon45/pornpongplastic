@@ -146,7 +146,7 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, t
               setActiveOrder(formattedOrder);
               setCurrentPaymentStatus(formattedOrder.payment_status);
               setCurrentOrderStatus(formattedOrder.order_status);
-              if (['paid', 'completed', 'approved'].includes(formattedOrder.payment_status) || ['paid', 'completed'].includes(formattedOrder.order_status)) {
+              if (['paid', 'completed', 'approved'].includes(formattedOrder.payment_status) || ['paid', 'completed', 'ready_for_shipping', 'ready_to_ship', 'in_transit'].includes(formattedOrder.order_status)) {
                 if (formattedOrder.payment_slip_url) {
                   setUploadedSlipUrl(formattedOrder.payment_slip_url);
                 }
@@ -185,17 +185,18 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, t
           if (data && !error) {
             const isApproved = 
               ['paid', 'completed', 'approved'].includes(data.payment_status) ||
-              ['paid', 'completed', 'processing'].includes(data.order_status);
+              ['paid', 'completed', 'processing', 'ready_for_shipping', 'ready_to_ship', 'in_transit'].includes(data.order_status);
 
             if (isApproved) {
+              const defaultOrdStatus = isOrderPreOrder(data) ? 'manufacturing' : 'ready_to_ship';
               setActiveOrder((prev: any) => ({
                 ...prev,
                 ...data,
                 payment_status: 'paid',
-                order_status: data.order_status || 'processing'
+                order_status: data.order_status || defaultOrdStatus
               }));
               setCurrentPaymentStatus('paid');
-              setCurrentOrderStatus(data.order_status || 'processing');
+              setCurrentOrderStatus(data.order_status || defaultOrdStatus);
               if (data.payment_slip_url) {
                 setUploadedSlipUrl(data.payment_slip_url);
               }
@@ -213,19 +214,18 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, t
           if (found) {
             const isApproved = 
               ['paid', 'completed', 'approved'].includes(found.payment_status) ||
-              ['paid', 'completed', 'processing', 'ready_to_ship', 'ready_for_shipping'].includes(found.order_status);
+              ['paid', 'completed', 'processing', 'ready_for_shipping', 'ready_to_ship', 'in_transit'].includes(found.order_status);
 
             if (isApproved) {
-              const isPre = isOrderPreOrder(found);
-              const targetStatus = found.order_status || (isPre ? 'manufacturing' : 'ready_to_ship');
+              const defaultOrdStatus = isOrderPreOrder(found) ? 'manufacturing' : 'ready_to_ship';
               setActiveOrder((prev: any) => ({
                 ...prev,
                 ...found,
                 payment_status: 'paid',
-                order_status: targetStatus
+                order_status: found.order_status || defaultOrdStatus
               }));
               setCurrentPaymentStatus('paid');
-              setCurrentOrderStatus(targetStatus);
+              setCurrentOrderStatus(found.order_status || defaultOrdStatus);
               if (found.payment_slip_url) {
                 setUploadedSlipUrl(found.payment_slip_url);
               }
@@ -243,14 +243,12 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, t
     const handleBroadcastApproval = (e: any) => {
       const targetOrderId = e.detail?.orderId;
       if (targetOrderId && targetOrderId === activeOrder.id) {
-        const isPre = isOrderPreOrder(activeOrder);
-        const targetStatus = e.detail?.orderStatus || (isPre ? 'manufacturing' : 'ready_to_ship');
         setCurrentPaymentStatus('paid');
-        setCurrentOrderStatus(targetStatus);
+        setCurrentOrderStatus('processing');
         setActiveOrder((prev: any) => ({
           ...prev,
           payment_status: 'paid',
-          order_status: targetStatus
+          order_status: 'processing'
         }));
         setStep('approved');
         triggerToast('ชำระเงินเสร็จสิ้นเรียบร้อยแล้ว!');
@@ -276,18 +274,16 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, t
               const updated = payload.new;
               if (
                 ['paid', 'completed', 'approved'].includes(updated?.payment_status) ||
-                ['paid', 'completed', 'processing', 'ready_to_ship', 'ready_for_shipping'].includes(updated?.order_status)
+                ['paid', 'completed', 'processing'].includes(updated?.order_status)
               ) {
-                const isPre = isOrderPreOrder(updated || activeOrder);
-                const targetStatus = updated?.order_status || (isPre ? 'manufacturing' : 'ready_to_ship');
                 setActiveOrder((prev: any) => ({
                   ...prev,
                   ...updated,
                   payment_status: 'paid',
-                  order_status: targetStatus
+                  order_status: updated?.order_status || 'processing'
                 }));
                 setCurrentPaymentStatus('paid');
-                setCurrentOrderStatus(targetStatus);
+                setCurrentOrderStatus(updated?.order_status || 'processing');
                 if (updated?.payment_slip_url) {
                   setUploadedSlipUrl(updated.payment_slip_url);
                 }
