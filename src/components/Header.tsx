@@ -107,6 +107,27 @@ export default function Header({
       }
     }
 
+    // Merge with localStorage admin_orders and admin_deliveries for instantaneous client-side reactivity
+    try {
+      const localOrders: any[] = JSON.parse(localStorage.getItem('admin_orders') || '[]');
+      if (Array.isArray(localOrders) && localOrders.length > 0) {
+        const map = new Map<string, any>();
+        rawOrders.forEach(o => map.set(String(o.id).trim(), o));
+        localOrders.forEach(lo => {
+          const lId = String(lo.id).trim();
+          const matchUser = 
+            (cleanUserId && (lo.customer_id === cleanUserId || lo.user_id === cleanUserId)) ||
+            (cleanEmail && lo.customer_email && lo.customer_email.toLowerCase() === cleanEmail) ||
+            (cleanPhone && lo.customer_phone && lo.customer_phone.replace(/\D/g, '').includes(cleanPhone));
+          if (matchUser) {
+            const existing = map.get(lId);
+            map.set(lId, existing ? { ...existing, ...lo } : lo);
+          }
+        });
+        rawOrders = Array.from(map.values());
+      }
+    } catch {}
+
     // Filter strictly for active orders (must be in pending/producing/shipping status and NOT finished)
     const validActiveOrders = rawOrders.filter((ord: any) => {
       const orderIdStr = String(ord.id).trim();
@@ -157,7 +178,7 @@ export default function Header({
     // Update activeOrders state directly
     setActiveOrders(validActiveOrders);
 
-    // If activeOrders.length === 0 or all orders completed/delivered, strictly hide the button
+    // If validActiveOrders.length === 0 or all orders completed/delivered, strictly hide the button
     if (validActiveOrders.length === 0) {
       setTrackingStatus('hidden');
       return;
@@ -609,7 +630,7 @@ export default function Header({
                       <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
                     </span>
                     <Truck size={15} className="text-emerald-700" />
-                    <span>🚚 ติดตามสถานะจัดส่ง</span>
+                    <span>ติดตามสถานะจัดส่ง</span>
                   </div>
                   <span className="text-[10px] bg-emerald-200/70 text-emerald-900 px-2 py-0.5 rounded-full font-mono font-bold">
                     IN-STOCK / SHIPPING
@@ -631,7 +652,7 @@ export default function Header({
                       <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
                     </span>
                     <ClipboardList size={15} className="text-amber-700" />
-                    <span>📋 ติดตามคิวผลิต</span>
+                    <span>ติดตามคิวผลิต Real-time</span>
                   </div>
                   <span className="text-[10px] bg-amber-200/70 text-amber-900 px-2 py-0.5 rounded-full font-mono font-bold">
                     PRE-ORDER

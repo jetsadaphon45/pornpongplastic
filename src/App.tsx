@@ -583,6 +583,17 @@ export default function App() {
       const finalOrder = createdOrder || fallbackOrder;
       setCurrentOrder(finalOrder);
 
+      // Sync into admin_orders in localStorage for immediate reflection in Admin Dashboard & Order History
+      try {
+        const localOrders = JSON.parse(localStorage.getItem('admin_orders') || '[]');
+        const exists = localOrders.some((o: any) => o.id === finalOrder.id);
+        if (!exists) {
+          localOrders.unshift(finalOrder);
+          localStorage.setItem('admin_orders', JSON.stringify(localOrders));
+        }
+      } catch {}
+      window.dispatchEvent(new Event('orders-updated'));
+
       // Save/Upsert delivery address and profile details to Supabase profiles table
       // Safety check: ทำการ upsert ลง profiles เฉพาะกรณีผู้ใช้ล็อกอินเรียบร้อย (มี currentUser.id ที่ถูกต้อง)
       const profileUserId = (currentUser?.id && currentUser.id !== 'guest' && currentUser.id !== 'undefined' && !currentUser.id.startsWith('guest')) 
