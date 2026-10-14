@@ -1497,14 +1497,7 @@ export const supabaseOrders = {
         const orderIdStr = String(row.id).trim();
         const delivery = deliveriesMap[orderIdStr] || deliveriesMap[row.id];
 
-        const isPre = isOrderPreOrder(row);
-        const orderType = isPre ? 'preorder' : 'instock';
-
-        // Auto-bypass production queue for in-stock items: NO queue number assigned!
-        const queueNum = isPre
-          ? (delivery?.queue_number || row.queue_number || row.queue_id || formatQueueId(row, idx))
-          : '';
-
+        const queueNum = delivery?.queue_number || row.queue_number || row.queue_id || formatQueueId(row, idx);
         const carrier = delivery?.shipping_carrier || row.shipping_carrier || row.carrier_name || '';
         const driver = delivery?.driver_phone || row.driver_phone || '';
         const tracking = delivery?.tracking_number || row.tracking_number || row.shipmentNo || row.shipment_no || '';
@@ -1512,12 +1505,12 @@ export const supabaseOrders = {
         const delivStatus = (delivery?.delivery_status || '').toLowerCase();
         const ordStatus = (row.order_status || row.status || '').toLowerCase();
 
-        let qStage: 1 | 2 | 3 | 4 = isPre ? 1 : 3;
+        let qStage: 1 | 2 | 3 | 4 = 1;
         if (delivStatus === 'delivered' || delivStatus === 'completed' || ordStatus === 'delivered' || ordStatus === 'completed') {
           qStage = 4;
         } else if (delivStatus === 'in_transit' || ordStatus === 'in_transit' || ordStatus === 'shipped' || ordStatus === 'shipping') {
           qStage = 4;
-        } else if (delivStatus === 'ready_for_shipping' || ordStatus === 'ready_for_shipping' || ordStatus === 'ready' || ordStatus === 'ready_to_ship' || !isPre) {
+        } else if (delivStatus === 'ready_for_shipping' || ordStatus === 'ready_for_shipping' || ordStatus === 'ready') {
           qStage = 3;
         } else if (delivStatus === 'manufacturing' || ordStatus === 'manufacturing' || ordStatus === 'processing' || ordStatus === 'paid') {
           qStage = 2;
@@ -1526,6 +1519,8 @@ export const supabaseOrders = {
         }
 
         const stageKey = qStage === 4 ? 'in_transit' : qStage === 3 ? 'ready_for_shipping' : qStage === 2 ? 'manufacturing' : 'queue_received';
+        const isPre = isOrderPreOrder(row);
+        const orderType = isPre ? 'preorder' : 'instock';
 
         return {
           ...row,
@@ -1533,7 +1528,7 @@ export const supabaseOrders = {
           orderType: orderType,
           is_preorder: isPre,
           isPreOrder: isPre,
-          // Delivery fields (strictly empty queue_number for in-stock):
+          // Joined delivery fields:
           queue_number: queueNum,
           queue_id: queueNum,
           shipping_carrier: carrier,
@@ -1553,7 +1548,7 @@ export const supabaseOrders = {
           color: row.color || 'คละสี',
           amount: Number(row.total_amount || row.amount || 0),
           status: delivStatus === 'delivered' ? 'Delivered' : (row.status || (ordStatus === 'completed' || ordStatus === 'delivered' ? 'Delivered' : ordStatus === 'shipping' || ordStatus === 'in_transit' ? 'Shipping' : row.payment_status || 'Pending')),
-          order_status: delivStatus === 'delivered' ? 'completed' : (row.order_status || (row.status === 'Delivered' ? 'completed' : row.status === 'Shipping' ? 'shipping' : (!isPre && (row.payment_status === 'paid' || ordStatus === 'ready_to_ship') ? 'ready_to_ship' : 'pending'))),
+          order_status: delivStatus === 'delivered' ? 'completed' : (row.order_status || (row.status === 'Delivered' ? 'completed' : row.status === 'Shipping' ? 'shipping' : 'pending')),
           status_message: row.status_message || '',
           
           // Queue System Fields:
@@ -1645,14 +1640,7 @@ export const supabaseOrders = {
         const orderIdStr = String(row.id).trim();
         const delivery = deliveriesMap[orderIdStr] || deliveriesMap[row.id];
 
-        const isPre = isOrderPreOrder(row);
-        const orderType = isPre ? 'preorder' : 'instock';
-
-        // Auto-bypass production queue for in-stock items: NO queue number assigned!
-        const queueNum = isPre
-          ? (delivery?.queue_number || row.queue_number || row.queue_id || formatQueueId(row, idx))
-          : '';
-
+        const queueNum = delivery?.queue_number || row.queue_number || row.queue_id || formatQueueId(row, idx);
         const carrier = delivery?.shipping_carrier || row.shipping_carrier || row.carrier_name || '';
         const driver = delivery?.driver_phone || row.driver_phone || '';
         const tracking = delivery?.tracking_number || row.tracking_number || row.shipmentNo || row.shipment_no || '';
@@ -1660,12 +1648,12 @@ export const supabaseOrders = {
         const delivStatus = (delivery?.delivery_status || '').toLowerCase();
         const ordStatus = (row.order_status || row.status || '').toLowerCase();
 
-        let qStage: 1 | 2 | 3 | 4 = isPre ? 1 : 3;
+        let qStage: 1 | 2 | 3 | 4 = 1;
         if (delivStatus === 'delivered' || delivStatus === 'completed' || ordStatus === 'delivered' || ordStatus === 'completed') {
           qStage = 4;
         } else if (delivStatus === 'in_transit' || ordStatus === 'in_transit' || ordStatus === 'shipped' || ordStatus === 'shipping') {
           qStage = 4;
-        } else if (delivStatus === 'ready_for_shipping' || ordStatus === 'ready_for_shipping' || ordStatus === 'ready' || ordStatus === 'ready_to_ship' || !isPre) {
+        } else if (delivStatus === 'ready_for_shipping' || ordStatus === 'ready_for_shipping' || ordStatus === 'ready') {
           qStage = 3;
         } else if (delivStatus === 'manufacturing' || ordStatus === 'manufacturing' || ordStatus === 'processing' || ordStatus === 'paid') {
           qStage = 2;
@@ -1674,6 +1662,8 @@ export const supabaseOrders = {
         }
 
         const stageKey = qStage === 4 ? 'in_transit' : qStage === 3 ? 'ready_for_shipping' : qStage === 2 ? 'manufacturing' : 'queue_received';
+        const isPre = isOrderPreOrder(row);
+        const orderType = isPre ? 'preorder' : 'instock';
 
         return {
           ...row,
@@ -1682,7 +1672,7 @@ export const supabaseOrders = {
           orderType: orderType,
           is_preorder: isPre,
           isPreOrder: isPre,
-          // Delivery fields (strictly empty queue_number for in-stock):
+          // Joined deliveries table fields:
           queue_number: queueNum,
           queue_id: queueNum,
           shipping_carrier: carrier,
@@ -1713,7 +1703,7 @@ export const supabaseOrders = {
           customer_phone: row.customer_phone || '',
           total_amount: Number(row.total_amount || row.amount || 0),
           payment_status: row.payment_status || row.status || 'pending',
-          order_status: delivStatus === 'delivered' ? 'completed' : (row.order_status || (!isPre && (row.payment_status === 'paid' || ordStatus === 'ready_to_ship') ? 'ready_to_ship' : 'waiting_payment')),
+          order_status: delivStatus === 'delivered' ? 'completed' : (row.order_status || 'waiting_payment'),
           created_at: row.created_at || row.date || ''
         };
       });
@@ -2204,10 +2194,9 @@ export const supabaseOrders = {
 
         // Also update deliveries table with delivery_status
         try {
-          await supabaseDeliveries.upsert({
+          await supabase.from('deliveries').upsert({
             order_id: String(id),
-            delivery_status: isPre ? 'queue_received' : 'ready_to_ship',
-            ...(isPre ? {} : { queue_number: '' })
+            delivery_status: isPre ? 'queue_received' : 'ready_to_ship'
           });
         } catch {}
       }
@@ -2222,26 +2211,11 @@ export const supabaseOrders = {
             status: nextStatus, 
             order_status: nextOrderStatus,
             status_message: nextStatusMessage,
-            delivery_status: isPre ? 'queue_received' : 'ready_to_ship',
-            queue_stage: isPre ? 1 : 3,
-            queue_number: isPre ? (o.queue_number || o.queue_id) : '',
-            queue_id: isPre ? (o.queue_id || o.queue_number) : ''
+            delivery_status: isPre ? 'queue_received' : 'ready_to_ship'
           } : o
         );
         localStorage.setItem('admin_orders', JSON.stringify(updated));
       } catch {}
-
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('pornpong-order-approved', {
-          detail: { orderId: id, isPreOrder: isPre, orderStatus: nextOrderStatus }
-        }));
-        window.dispatchEvent(new CustomEvent('pornpong-delivery-updated', {
-          detail: { order_id: id, delivery_status: isPre ? 'queue_received' : 'ready_to_ship' }
-        }));
-        window.dispatchEvent(new Event('orders-updated'));
-        window.dispatchEvent(new Event('storage'));
-      }
-
       return true;
     } catch (err: any) {
       console.error('Failed to approve order:', err.message);
