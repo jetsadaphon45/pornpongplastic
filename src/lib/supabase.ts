@@ -1931,10 +1931,12 @@ export const supabaseOrders = {
     try {
       if (isSupabaseConfigured && supabase) {
         // 1. Update orders table in Supabase
+        const targetStatus = isDeliv ? 'delivered' : isShip ? 'in_transit' : status;
         try {
           await supabase.from('orders').update({
-            status: isDeliv ? 'delivered' : status,
+            status: targetStatus,
             order_status: mappedOrderStatus,
+            delivery_status: isDeliv ? 'delivered' : mappedOrderStatus,
             shipment_no: trackingNo,
             shipmentNo: trackingNo,
             tracking_number: trackingNo,
@@ -1945,9 +1947,9 @@ export const supabaseOrders = {
           }).eq('id', id);
         } catch {
           await supabase.from('orders').update({
-            payment_status: isDeliv ? 'paid' : status,
-            status: isDeliv ? 'delivered' : status,
-            order_status: mappedOrderStatus
+            status: targetStatus,
+            order_status: mappedOrderStatus,
+            delivery_status: isDeliv ? 'delivered' : mappedOrderStatus
           }).eq('id', id);
         }
       }

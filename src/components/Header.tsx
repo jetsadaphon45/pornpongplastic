@@ -51,6 +51,7 @@ export default function Header({
   // Strict active orders state & tracking mode: 'producing' | 'shipping' | 'hidden'
   const [activeOrders, setActiveOrders] = React.useState<any[]>([]);
   const [trackingStatus, setTrackingStatus] = React.useState<'producing' | 'shipping' | 'hidden'>('hidden');
+  const [isInTransitActive, setIsInTransitActive] = React.useState<boolean>(false);
 
   // Strict Active Order Check: Queries current user's active orders from Supabase 'orders' table
   const checkUserOrders = React.useCallback(async () => {
@@ -58,6 +59,7 @@ export default function Header({
     if (!currentUser) {
       setActiveOrders([]);
       setTrackingStatus('hidden');
+      setIsInTransitActive(false);
       return;
     }
 
@@ -81,6 +83,7 @@ export default function Header({
     if (conditions.length === 0) {
       setActiveOrders([]);
       setTrackingStatus('hidden');
+      setIsInTransitActive(false);
       return;
     }
 
@@ -160,12 +163,30 @@ export default function Header({
     // If activeOrders.length === 0 or all orders completed/delivered, strictly hide the button
     if (validActiveOrders.length === 0) {
       setTrackingStatus('hidden');
+      setIsInTransitActive(false);
       return;
     }
 
-    // Determine whether to display "🚚 ติดตามสถานะจัดส่ง" (In-Stock / Shipping) or "📋 ติดตามคิวผลิต" (Pre-Order in production)
-    // 1. In-Stock orders do not need furnace casting/melting and immediately show "ติดตามสถานะจัดส่ง"
-    // 2. Pre-Order orders show "ติดตามคิวผลิต" while in queue/manufacturing, and switch to "ติดตามสถานะจัดส่ง" when shipped
+    // Check if any order is currently in-transit / shipping
+    const isAnyInTransit = validActiveOrders.some((ord: any) => {
+      const orderIdStr = String(ord.id).trim();
+      const delivery = deliveriesMap[orderIdStr] || deliveriesMap[ord.id];
+      const delivStatus = String(delivery?.delivery_status || ord.delivery_status || '').toLowerCase().trim();
+      const ordStatus = String(ord.status || ord.order_status || '').toLowerCase().trim();
+      const qStage = Number(ord.queue_stage || delivery?.queue_stage || 0);
+
+      return (
+        delivStatus === 'in_transit' || 
+        delivStatus === 'shipping' || 
+        ordStatus === 'in_transit' || 
+        ordStatus === 'shipping' || 
+        ordStatus === 'shipped' || 
+        qStage === 4
+      );
+    });
+    setIsInTransitActive(isAnyInTransit);
+
+    // Determine whether to display "🚚 กำลังจัดส่ง" (In-Stock / Shipping) or "📋 ติดตามคิวผลิต" (Pre-Order in production)
     const hasPreOrderProducing = validActiveOrders.some((ord: any) => {
       const isPre = isOrderPreOrder(ord);
       if (!isPre) return false; // In-stock orders never wait in production queue
@@ -187,7 +208,7 @@ export default function Header({
       return !isShipping;
     });
 
-    setTrackingStatus(hasPreOrderProducing ? 'producing' : 'shipping');
+    setTrackingStatus(hasPreOrderProducing && !isAnyInTransit ? 'producing' : 'shipping');
   }, [currentUser]);
 
   // Real-time synchronization for Header Tracking Status & Active Orders
@@ -217,8 +238,11 @@ export default function Header({
 
     const handleSync = () => checkUserOrders();
     window.addEventListener('orders-updated', handleSync);
+    window.addEventListener('orders_updated', handleSync);
     window.addEventListener('pornpong-delivery-updated', handleSync);
     window.addEventListener('pornpong-order-delivered', handleSync);
+    window.addEventListener('pornpong-order-status-updated', handleSync);
+    window.addEventListener('pornpong-shipping-in-transit', handleSync);
     window.addEventListener('pornpong-queue-updated', handleSync);
     window.addEventListener('storage', handleSync);
 
@@ -229,8 +253,11 @@ export default function Header({
         } catch {}
       }
       window.removeEventListener('orders-updated', handleSync);
+      window.removeEventListener('orders_updated', handleSync);
       window.removeEventListener('pornpong-delivery-updated', handleSync);
       window.removeEventListener('pornpong-order-delivered', handleSync);
+      window.removeEventListener('pornpong-order-status-updated', handleSync);
+      window.removeEventListener('pornpong-shipping-in-transit', handleSync);
       window.removeEventListener('pornpong-queue-updated', handleSync);
       window.removeEventListener('storage', handleSync);
     };
@@ -346,16 +373,16 @@ export default function Header({
                 <button
                   type="button"
                   onClick={() => onOpenProfile('deliveries')}
-                  className="px-3.5 py-1.5 text-xs font-bold rounded-full transition-all duration-200 cursor-pointer flex items-center gap-1.5 text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 shadow-2xs hover:scale-102 active:scale-97 animate-in fade-in"
+                  className="px-3.5 py-1.5 text-xs font-bold rounded-full transition-all duration-200 cursor-pointer flex items-center gap-1.5 text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 shadow-2xs hover:scale-102 active:scale-97 animate-in fade-in ring-1 ring-emerald-400/30"
                   id="nav-track-queue"
-                  title="ติดตามสถานะจัดส่งสินค้า (In-Stock / Ready to Ship)"
+                  title={isInTransitActive ? "พัสดุอยู่ระหว่างจัดส่ง - กำลังเดินทางไปยังที่อยู่ของคุณ" : "ติดตามสถานะจัดส่งสินค้า (In-Stock / Ready to Ship)"}
                 >
                   <span className="relative flex h-2 w-2">
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                     <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
                   </span>
                   <Truck size={14} className="text-emerald-700 animate-pulse" />
-                  <span>🚚 ติดตามสถานะจัดส่ง</span>
+                  <span>{isInTransitActive ? '🚚 กำลังจัดส่ง' : '🚚 ติดตามสถานะจัดส่ง'}</span>
                 </button>
               ) : (
                 <button
@@ -609,10 +636,10 @@ export default function Header({
                       <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
                     </span>
                     <Truck size={15} className="text-emerald-700" />
-                    <span>🚚 ติดตามสถานะจัดส่ง</span>
+                    <span>{isInTransitActive ? '🚚 กำลังจัดส่ง' : '🚚 ติดตามสถานะจัดส่ง'}</span>
                   </div>
                   <span className="text-[10px] bg-emerald-200/70 text-emerald-900 px-2 py-0.5 rounded-full font-mono font-bold">
-                    IN-STOCK / SHIPPING
+                    {isInTransitActive ? 'กำลังจัดส่ง' : 'IN-STOCK / SHIPPING'}
                   </span>
                 </button>
               ) : (

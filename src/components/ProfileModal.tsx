@@ -502,8 +502,11 @@ export function ProfileModal({
     };
 
     window.addEventListener('orders-updated', handleSync);
+    window.addEventListener('orders_updated', handleSync);
     window.addEventListener('pornpong-order-delivered', handleSync);
     window.addEventListener('pornpong-order-approved', handleSync);
+    window.addEventListener('pornpong-order-status-updated', handleSync);
+    window.addEventListener('pornpong-shipping-in-transit', handleSync);
     window.addEventListener('pornpong-queue-updated', handleQueueSync);
     window.addEventListener('pornpong-delivery-updated', handleSync);
     window.addEventListener('storage', handleSync);
@@ -538,8 +541,11 @@ export function ProfileModal({
 
     return () => {
       window.removeEventListener('orders-updated', handleSync);
+      window.removeEventListener('orders_updated', handleSync);
       window.removeEventListener('pornpong-order-delivered', handleSync);
       window.removeEventListener('pornpong-order-approved', handleSync);
+      window.removeEventListener('pornpong-order-status-updated', handleSync);
+      window.removeEventListener('pornpong-shipping-in-transit', handleSync);
       window.removeEventListener('pornpong-queue-updated', handleQueueSync);
       window.removeEventListener('pornpong-delivery-updated', handleSync);
       window.removeEventListener('storage', handleSync);
@@ -1450,13 +1456,16 @@ export function ProfileModal({
                               <span className="font-mono text-3xl sm:text-4xl font-black text-emerald-300 tracking-tight drop-shadow-sm">
                                 #{primaryTrackedOrder.id}
                               </span>
-                              <span className={`px-2.5 py-1 rounded-full text-[10.5px] font-extrabold border ${
+                              <span className={`px-2.5 py-1 rounded-full text-[10.5px] font-extrabold border inline-flex items-center gap-1.5 ${
                                 primaryTrackedOrder.stageLabel === 'จัดส่งสำเร็จ'
                                   ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
                                   : primaryTrackedOrder.stageLabel === 'อยู่ระหว่างจัดส่ง' || primaryTrackedOrder.stageNumber === 4
-                                  ? 'bg-sky-500/20 text-sky-300 border-sky-500/40'
+                                  ? 'bg-emerald-500/30 text-emerald-300 border-emerald-400/60 shadow-xs ring-1 ring-emerald-400/30 font-black'
                                   : 'bg-amber-500/20 text-amber-300 border-amber-500/40'
                               }`}>
+                                {(primaryTrackedOrder.stageLabel === 'อยู่ระหว่างจัดส่ง' || primaryTrackedOrder.stageNumber === 4) && (
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
+                                )}
                                 {primaryTrackedOrder.stageLabel === 'รับคิวผลิต' ? 'เตรียมพัสดุ / รอจัดส่ง' : primaryTrackedOrder.stageLabel}
                               </span>
                             </div>

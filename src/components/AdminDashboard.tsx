@@ -901,11 +901,14 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
     nextStatus: string, 
     meta: {
       estimated_delivery_date?: string;
+      shipping_carrier?: string;
       carrier_name?: string;
       driver_phone?: string;
       shipment_no?: string;
+      tracking_number?: string;
       status_message?: string;
       delivery_status?: string;
+      queue_number?: string;
     } = {},
     statusLabel: string,
     notificationMsg: string
@@ -1033,27 +1036,82 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
     setReadyShippingOrder(null);
   };
 
+  const handleSelectInTransit = async (order: any, customMeta?: any) => {
+    const orderId = order.id;
+    const carrier = customMeta?.carrier_name || order.carrier_name || order.shipping_carrier || inTransitCarrier.trim() || 'รถโรงงานพรพงศ์พลาสติก (สายส่งตรง)';
+    const driver = customMeta?.driver_phone || order.driver_phone || inTransitDriverPhone.trim() || '089-456-7890';
+    const tracking = customMeta?.shipment_no || order.shipmentNo || order.shipment_no || order.tracking_number || inTransitTrackingNo.trim() || `TH-EX-${String(orderId).replace(/[^0-9]/g, '').slice(-6) || '291823'}`;
+    const msg = `คำสั่งซื้อหมายเลข #${orderId} สินค้าอยู่ระหว่างจัดส่ง - ขนส่ง: ${carrier} | เบอร์คนขับ/Tracking: ${driver} / ${tracking}`;
+
+    // 1. Optimistically update local React state so UI turns Active Green immediately
+    setAdminOrders(prev => prev.map(o => o.id === orderId ? {
+      ...o,
+      status: 'in_transit',
+      order_status: 'in_transit',
+      delivery_status: 'in_transit',
+      carrier_name: carrier,
+      shipping_carrier: carrier,
+      driver_phone: driver,
+      shipment_no: tracking,
+      shipmentNo: tracking,
+      tracking_number: tracking,
+      status_message: msg
+    } : o));
+
+    // 2. Direct UPSERT into Supabase deliveries table (delivery_status = 'in_transit')
+    try {
+      await supabaseDeliveries.upsert({
+        order_id: String(orderId),
+        delivery_status: 'in_transit',
+        shipping_carrier: carrier,
+        driver_phone: driver,
+        tracking_number: tracking
+      });
+    } catch (e) {
+      console.warn('supabaseDeliveries.upsert in_transit warning:', e);
+    }
+
+    // 3. Update orders table in Supabase (status = 'in_transit', order_status = 'in_transit')
+    await executeOrderStatusChange(orderId, 'in_transit', {
+      carrier_name: carrier,
+      shipping_carrier: carrier,
+      driver_phone: driver,
+      shipment_no: tracking,
+      tracking_number: tracking,
+      delivery_status: 'in_transit',
+      status_message: msg
+    }, 'อยู่ระหว่างจัดส่ง', msg);
+
+    // 4. Dispatch Realtime signals to client header and tracking card
+    window.dispatchEvent(new CustomEvent('pornpong-shipping-in-transit', {
+      detail: { orderId, status: 'in_transit', carrier, driver, tracking, message: msg }
+    }));
+    window.dispatchEvent(new CustomEvent('pornpong-delivery-updated', {
+      detail: { orderId, status: 'in_transit', carrier, driver, tracking }
+    }));
+    window.dispatchEvent(new CustomEvent('orders-updated'));
+
+    triggerToast(`อัปเดตออเดอร์ #${orderId} เป็น [อยู่ระหว่างจัดส่ง] เรียบร้อยแล้ว (สถานะสีเขียว)`);
+  };
+
   const handleOpenInTransitModal = (order: any) => {
     setInTransitOrder(order);
-    setInTransitCarrier(order.carrier_name || 'รถโรงงานพรพงศ์พลาสติก (สายส่งตรง)');
+    setInTransitCarrier(order.carrier_name || order.shipping_carrier || 'รถโรงงานพรพงศ์พลาสติก (สายส่งตรง)');
     setInTransitDriverPhone(order.driver_phone || '089-456-7890');
-    const tracking = order.shipmentNo || order.shipment_no || `TH-EX-${String(order.id).replace(/[^0-9]/g, '').slice(-6) || '291823'}`;
+    const tracking = order.shipmentNo || order.shipment_no || order.tracking_number || `TH-EX-${String(order.id).replace(/[^0-9]/g, '').slice(-6) || '291823'}`;
     setInTransitTrackingNo(tracking);
   };
 
-  const handleConfirmInTransit = () => {
+  const handleConfirmInTransit = async () => {
     if (!inTransitOrder) return;
-    const orderId = inTransitOrder.id;
-    const carrier = inTransitCarrier.trim() || 'รถโรงงานพรพงศ์พลาสติก';
+    const carrier = inTransitCarrier.trim() || 'รถโรงงานพรพงศ์พลาสติก (สายส่งตรง)';
     const driver = inTransitDriverPhone.trim() || '089-456-7890';
-    const tracking = inTransitTrackingNo.trim() || `TH-EX-${String(orderId).replace(/[^0-9]/g, '').slice(-6) || '291823'}`;
-    const msg = `คำสั่งซื้อหมายเลข #${orderId} สินค้าอยู่ระหว่างจัดส่ง - ขนส่ง: ${carrier} | เบอร์คนขับ/Tracking: ${driver} / ${tracking}`;
-    executeOrderStatusChange(orderId, 'in_transit', {
+    const tracking = inTransitTrackingNo.trim() || `TH-EX-${String(inTransitOrder.id).replace(/[^0-9]/g, '').slice(-6) || '291823'}`;
+    await handleSelectInTransit(inTransitOrder, {
       carrier_name: carrier,
       driver_phone: driver,
-      shipment_no: tracking,
-      status_message: `สินค้าอยู่ระหว่างจัดส่ง - ขนส่ง: ${carrier} | เบอร์คนขับ/Tracking: ${driver} / ${tracking}`
-    }, 'อยู่ระหว่างจัดส่ง', msg);
+      shipment_no: tracking
+    });
     setInTransitOrder(null);
   };
 
@@ -3129,20 +3187,26 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                               {ordersTabFilter === 'active' ? (
                                 (() => {
                                   const isPre = isOrderPreOrder(ord);
-                                  const sLower = String(ord.status || '').toLowerCase();
-                                  const osLower = String(ord.order_status || '').toLowerCase();
+                                  const sLower = String(ord.status || '').toLowerCase().trim();
+                                  const osLower = String(ord.order_status || '').toLowerCase().trim();
+                                  const delivLower = String(ord.delivery_status || '').toLowerCase().trim();
 
                                   // 4. [จัดส่งสำเร็จ] (Delivered)
-                                  const isDeliveredActive = sLower === 'completed' || sLower === 'delivered' || osLower === 'completed' || osLower === 'delivered';
+                                  const isDeliveredActive = sLower === 'completed' || sLower === 'delivered' || osLower === 'completed' || osLower === 'delivered' || delivLower === 'delivered' || delivLower === 'completed';
 
-                                  // 3. [อยู่ระหว่างจัดส่ง] (In Transit)
-                                  const isInTransitActive = sLower === 'in_transit' || sLower === 'shipped' || sLower === 'shipping' || osLower === 'in_transit' || osLower === 'shipped';
+                                  // 3. [อยู่ระหว่างจัดส่ง] (In Transit) - Active when status/order_status/delivery_status is in_transit or shipping
+                                  const isInTransitActive = !isDeliveredActive && (
+                                    sLower === 'in_transit' || sLower === 'shipping' || sLower === 'shipped' ||
+                                    osLower === 'in_transit' || osLower === 'shipping' || osLower === 'shipped' ||
+                                    delivLower === 'in_transit' || delivLower === 'shipping' ||
+                                    ord.status === 'อยู่ระหว่างจัดส่ง' || ord.stageLabel === 'อยู่ระหว่างจัดส่ง'
+                                  );
 
                                   // 2. [รอขนย้าย] (Ready for Shipping)
                                   // For in-stock items: start at ready for shipping if not yet in-transit/delivered
                                   const isReadyActive = isPre
-                                    ? (sLower === 'ready_for_shipping' || sLower === 'ready' || osLower === 'ready_for_shipping')
-                                    : (sLower === 'ready_for_shipping' || sLower === 'ready' || osLower === 'ready_for_shipping' || osLower === 'ready_to_ship' || (!isInTransitActive && !isDeliveredActive));
+                                    ? ((sLower === 'ready_for_shipping' || sLower === 'ready' || osLower === 'ready_for_shipping' || delivLower === 'ready_for_shipping') && !isInTransitActive && !isDeliveredActive)
+                                    : (!isInTransitActive && !isDeliveredActive);
 
                                   // 1. [กำลังผลิต] (Manufacturing - Only for Pre-Order)
                                   const isMfgActive = isPre && (
@@ -3197,19 +3261,37 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                                           {isPre ? 'รอขนย้าย' : 'รอจัดส่ง'}
                                         </button>
 
-                                        {/* ขั้นตอน 3: อยู่ระหว่างจัดส่ง */}
-                                        <button
-                                          type="button"
-                                          onClick={() => handleOpenInTransitModal(ord)}
-                                          className={`px-2 py-1 rounded-md text-[9px] font-black cursor-pointer transition-all ${
-                                            isInTransitActive
-                                              ? 'bg-sky-500 hover:bg-sky-600 text-white shadow-xs ring-1 ring-sky-600/20'
-                                              : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
-                                          }`}
-                                          title="ขั้นตอนที่ 3: อยู่ระหว่างจัดส่ง (กรอกชื่อขนส่ง, เบอร์คนขับ, Tracking)"
-                                        >
-                                          อยู่ระหว่างจัดส่ง
-                                        </button>
+                                        {/* ขั้นตอน 3: อยู่ระหว่างจัดส่ง (Active สีเขียวทันทีเมื่อ status === 'in_transit' หรือ 'shipping') */}
+                                        <div className="inline-flex items-center">
+                                          <button
+                                            type="button"
+                                            onClick={() => handleSelectInTransit(ord)}
+                                            className={`px-2.5 py-1 rounded-md text-[9px] font-black cursor-pointer transition-all flex items-center gap-1 ${
+                                              isInTransitActive
+                                                ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs ring-2 ring-emerald-500/40 font-black'
+                                                : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
+                                            }`}
+                                            title="ขั้นตอนที่ 3: อยู่ระหว่างจัดส่ง (คลิกเพื่อบันทึกสถานะเป็น อยู่ระหว่างจัดส่ง และซิงค์ขึ้นระบบแบบ Real-time)"
+                                            id={`btn-in-transit-${ord.id}`}
+                                          >
+                                            {isInTransitActive && <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse"></span>}
+                                            <Truck size={10} className={isInTransitActive ? 'text-white' : 'text-slate-500'} />
+                                            <span>อยู่ระหว่างจัดส่ง</span>
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              handleOpenInTransitModal(ord);
+                                            }}
+                                            className={`p-1 ml-0.5 rounded text-[8.5px] transition-colors cursor-pointer ${
+                                              isInTransitActive ? 'text-emerald-700 hover:bg-emerald-100' : 'text-slate-400 hover:bg-slate-200'
+                                            }`}
+                                            title="แก้ไขข้อมูลขนส่ง / เบอร์คนขับ / Tracking"
+                                          >
+                                            <Edit size={9} />
+                                          </button>
+                                        </div>
 
                                         {/* ขั้นตอน 4: จัดส่งสำเร็จ */}
                                         <button
@@ -3233,10 +3315,10 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                                           <span className="truncate">คาดส่ง: {ord.estimated_delivery_date}</span>
                                         </span>
                                       )}
-                                      {isInTransitActive && (ord.carrier_name || ord.driver_phone) && (
-                                        <span className="text-[9.5px] font-medium text-sky-800 bg-sky-50 border border-sky-200/80 px-2 py-0.5 rounded-md inline-flex items-center gap-1 max-w-[210px] truncate" title={`${ord.carrier_name || 'ขนส่ง'} โทร: ${ord.driver_phone || '-'}`}>
-                                          <Truck size={10} className="shrink-0 text-sky-600" />
-                                          <span className="truncate">{ord.carrier_name || 'ขนส่ง'}: {ord.driver_phone || ord.shipmentNo}</span>
+                                      {isInTransitActive && (
+                                        <span className="text-[9.5px] font-medium text-emerald-800 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md inline-flex items-center gap-1 max-w-[210px] truncate" title={`${ord.shipping_carrier || ord.carrier_name || 'รถโรงงาน'} โทร: ${ord.driver_phone || '-'}`}>
+                                          <Truck size={10} className="shrink-0 text-emerald-600" />
+                                          <span className="truncate">{ord.shipping_carrier || ord.carrier_name || 'ขนส่ง'}: {ord.driver_phone || ord.tracking_number || ord.shipmentNo || ord.shipment_no || 'กำลังเดินทาง'}</span>
                                         </span>
                                       )}
                                     </div>
