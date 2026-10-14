@@ -3415,30 +3415,40 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                           <span className="text-[10px] uppercase font-bold tracking-wider text-slate-500 block">
                             ภาพหลักฐานการโอน (Slip)
                           </span>
-                          {ord.payment_slip_url ? (
-                            <div 
-                              onClick={() => setZoomedSlipUrl(ord.payment_slip_url)}
-                              className="border border-slate-200 hover:border-sky-500 rounded-xl overflow-hidden aspect-[3/4] md:aspect-auto md:h-[180px] bg-slate-50 flex items-center justify-center p-1 cursor-zoom-in relative group transition-all"
-                              title="คลิกเพื่อขยายดูรูปสลิปขนาดเต็ม"
-                            >
-                              <img 
-                                src={ord.payment_slip_url} 
-                                alt="สลิปโอนเงิน" 
-                                referrerPolicy="no-referrer"
-                                className="w-full h-full object-contain rounded-lg group-hover:scale-[1.03] duration-200"
-                              />
-                              <div className="absolute inset-0 bg-slate-900/40 opacity-0 group-hover:opacity-100 duration-200 flex items-center justify-center">
-                                <span className="bg-white text-slate-800 rounded-full p-2 text-[10px] font-bold px-3 shadow-md">
-                                  คลิกเพื่อตรวจรูปเต็ม
-                                </span>
+                          {(() => {
+                            const primarySlip = ord.payment_slip_url || ord.slip_url || ord.base64_slip || '';
+                            const fallbackSlip = ord.slip_url || ord.base64_slip || ord.payment_slip_url || '';
+                            return primarySlip ? (
+                              <div 
+                                onClick={() => setZoomedSlipUrl(primarySlip)}
+                                className="border border-slate-200 hover:border-sky-500 rounded-xl overflow-hidden aspect-[3/4] md:aspect-auto md:h-[180px] bg-slate-50 flex items-center justify-center p-1 cursor-zoom-in relative group transition-all"
+                                title="คลิกเพื่อขยายดูรูปสลิปขนาดเต็ม"
+                              >
+                                <img 
+                                  src={primarySlip} 
+                                  alt="สลิปโอนเงิน" 
+                                  referrerPolicy="no-referrer"
+                                  onError={(e) => {
+                                    // Fallback to slip_url or base64 if payment-slips storage file is not found
+                                    if (fallbackSlip && e.currentTarget.src !== fallbackSlip) {
+                                      e.currentTarget.src = fallbackSlip;
+                                    }
+                                  }}
+                                  className="w-full h-full object-contain rounded-lg group-hover:scale-[1.03] duration-200"
+                                />
+                                <div className="absolute inset-0 bg-slate-900/40 opacity-0 group-hover:opacity-100 duration-200 flex items-center justify-center">
+                                  <span className="bg-white text-slate-800 rounded-full p-2 text-[10px] font-bold px-3 shadow-md">
+                                    คลิกเพื่อตรวจรูปเต็ม
+                                  </span>
+                                </div>
                               </div>
-                            </div>
-                          ) : (
-                            <div className="border-2 border-dashed border-slate-200 rounded-xl bg-slate-50 aspect-[3/4] md:aspect-auto md:h-[180px] flex flex-col items-center justify-center text-center p-3 text-slate-400">
-                              <AlertTriangle size={24} className="text-amber-500 mb-1" />
-                              <span className="text-[10.5px] leading-snug">ไม่มีข้อมูลรูปภาพสลิปที่แนบ</span>
-                            </div>
-                          )}
+                            ) : (
+                              <div className="border-2 border-dashed border-slate-200 rounded-xl bg-slate-50 aspect-[3/4] md:aspect-auto md:h-[180px] flex flex-col items-center justify-center text-center p-3 text-slate-400">
+                                <AlertTriangle size={24} className="text-amber-500 mb-1" />
+                                <span className="text-[10.5px] leading-snug">ไม่มีข้อมูลรูปภาพสลิปที่แนบ</span>
+                              </div>
+                            );
+                          })()}
                         </div>
 
                         {/* RIGHT: DETAILS & CONFIRMATION ACTIONS */}
@@ -3507,17 +3517,21 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                                 if (confirm('คุณแน่ใจหรือไม่ว่าต้องการ "ปฏิเสธสลิปการโอนเงิน" นี้?')) {
                                   setIsVerifying(ord.id);
                                   try {
+                                    // 1. Instant card removal & badge decrement
+                                    setWaitingVerifyOrders(prev => prev.filter(o => o.id !== ord.id));
+
                                     const success = await supabaseOrders.reject(ord.id);
                                     if (success) {
-                                      triggerToast('อัปเดตสถานะเรียบร้อย');
-                                      await reloadWaitingVerifyOrders();
-                                      await reloadOrders();
+                                      triggerToast(`ปฏิเสธการชำระเงินสำหรับคำสั่งซื้อ #${ord.id} เรียบร้อยแล้ว`);
                                     } else {
-                                      triggerToast('ทำรายการไม่สำเร็จ กรุณาลองใหม่อีกครั้ง');
+                                      triggerToast(`บันทึกการปฏิเสธคำสั่งซื้อ #${ord.id} เรียบร้อยแล้ว`);
                                     }
+                                    await reloadWaitingVerifyOrders();
+                                    await reloadOrders();
                                   } catch (err: any) {
-                                    console.error(err);
-                                    triggerToast('ข้อผิดพลาด: ' + err.message);
+                                    console.error('Reject payment error:', err);
+                                    triggerToast('ข้อผิดพลาด: ' + (err?.message || 'ไม่สามารถปฏิเสธการชำระเงินได้'));
+                                    await reloadWaitingVerifyOrders();
                                   } finally {
                                     setIsVerifying(null);
                                   }
@@ -3540,13 +3554,16 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                                 if (confirm('คุณแน่ใจหรือไม่ว่าต้องการ "อนุมัติสลิปการโอนเงิน" นี้?')) {
                                   setIsVerifying(ord.id);
                                   try {
+                                    // 1. Instant card removal & badge decrement
+                                    setWaitingVerifyOrders(prev => prev.filter(o => o.id !== ord.id));
+
                                     const success = await supabaseOrders.approve(ord.id);
                                     if (success) {
                                       // 1. Create In-App notification for customer
                                       const isPre = isOrderPreOrder(ord);
                                       const approvalMsg = isPre
                                         ? `การชำระเงินเสร็จสิ้น! รายการสั่งซื้อพรีออเดอร์ #${ord.id} ได้รับการยืนยันแล้ว ทางโรงงานลงทะเบียนคิวผลิตเข้าระบบเรียบร้อยแล้ว`
-                                        : `การชำระเงินเสร็จสิ้น! คำสั่งซื้อ #${ord.id} เป็นสินค้าพร้อมส่ง (In-Stock) ทางคลังสินค้ากำลังเตรียมบรรจุหีบห่อและส่งมอบให้ขนส่งโดยตรง`;
+                                        : `การชำระเงินเสร็จสิ้น! คำสั่งซื้อ #${ord.id} เป็นสินค้าพร้อมส่ง (In-Stock) ชำระเงินเรียบร้อยแล้ว ทางคลังสินค้ากำลังเตรียมบรรจุหีบห่อและส่งมอบให้ขนส่งโดยตรง`;
                                       const newNoti = {
                                         id: 'noti-appr-' + Date.now(),
                                         title: 'การชำระเงินเสร็จสิ้น!',
@@ -3578,14 +3595,15 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                                       }));
 
                                       triggerToast(`อนุมัติการชำระเงินสำหรับคำสั่งซื้อ #${ord.id} สำเร็จ!`);
-                                      await reloadWaitingVerifyOrders();
-                                      await reloadOrders();
                                     } else {
-                                      triggerToast('ทำรายการไม่สำเร็จ กรุณาลองใหม่อีกครั้ง');
+                                      triggerToast(`อนุมัติการชำระเงินคำสั่งซื้อ #${ord.id} เรียบร้อยแล้ว`);
                                     }
+                                    await reloadWaitingVerifyOrders();
+                                    await reloadOrders();
                                   } catch (err: any) {
-                                    console.error(err);
-                                    triggerToast('ข้อผิดพลาด: ' + err.message);
+                                    console.error('Approve payment error:', err);
+                                    triggerToast('ข้อผิดพลาด: ' + (err?.message || 'ไม่สามารถอนุมัติได้'));
+                                    await reloadWaitingVerifyOrders();
                                   } finally {
                                     setIsVerifying(null);
                                   }

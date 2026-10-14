@@ -379,7 +379,8 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, t
             await supabase.from('orders').update({
               payment_status: 'pending_verification',
               order_status: 'waiting_approval',
-              payment_slip_url: slipUrl
+              payment_slip_url: slipUrl,
+              slip_url: slipUrl
             }).eq('id', activeOrder.id);
           }
         } catch (errStatus) {
@@ -392,7 +393,7 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, t
         const localOrders = JSON.parse(localStorage.getItem('admin_orders') || '[]');
         const updatedLocal = localOrders.map((o: any) => 
           o.id === activeOrder.id 
-            ? { ...o, payment_slip_url: slipUrl || slipPreview, payment_status: 'pending_verification', order_status: 'waiting_approval' }
+            ? { ...o, payment_slip_url: slipUrl || slipPreview, slip_url: slipUrl || slipPreview, payment_status: 'pending_verification', order_status: 'waiting_approval' }
             : o
         );
         localStorage.setItem('admin_orders', JSON.stringify(updatedLocal));

@@ -632,6 +632,7 @@ export default function PreorderSection({
         try {
           await supabase.from('orders').update({
             payment_slip_url: finalSlipUrl,
+            slip_url: finalSlipUrl,
             payment_status: 'pending_verification',
             status: 'pending_verification'
           }).eq('id', confirmedOrder.id);
@@ -645,7 +646,7 @@ export default function PreorderSection({
         const localOrders = JSON.parse(localStorage.getItem('admin_orders') || '[]');
         const updatedOrders = localOrders.map((o: any) => 
           o.id === confirmedOrder.id 
-            ? { ...o, payment_slip_url: finalSlipUrl, payment_status: 'pending_verification' } 
+            ? { ...o, payment_slip_url: finalSlipUrl, slip_url: finalSlipUrl, payment_status: 'pending_verification' } 
             : o
         );
         localStorage.setItem('admin_orders', JSON.stringify(updatedOrders));

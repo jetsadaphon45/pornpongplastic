@@ -2107,7 +2107,39 @@ export const supabaseOrders = {
   },
 
   async listWaitingVerify(): Promise<any[]> {
-    if (!isSupabaseConfigured || !supabase) return [];
+    if (!isSupabaseConfigured || !supabase) {
+      // Local storage fallback
+      try {
+        const local = JSON.parse(localStorage.getItem('admin_orders') || '[]');
+        return local
+          .filter((o: any) => ['pending_verification', 'waiting_verify', 'waiting_approval'].includes(o.payment_status || o.status))
+          .map((row: any) => ({
+            ...row,
+            id: row.id,
+            customerName: row.customer_name || row.customerName || '',
+            date: row.created_at ? new Date(row.created_at).toISOString().split('T')[0] : '',
+            productName: row.productName || row.product_name || 'เรือพลาสติกและอุปกรณ์',
+            color: row.color || 'คละสี',
+            amount: Number(row.total_amount || row.amount || 0),
+            status: row.payment_status || row.status || 'Pending',
+            shipmentNo: row.shipmentNo || row.shipment_no || '',
+            payment_slip_url: row.payment_slip_url || row.slip_url || row.base64_slip || '',
+            slip_url: row.slip_url || row.payment_slip_url || row.base64_slip || '',
+            base64_slip: row.base64_slip || (row.payment_slip_url?.startsWith('data:') ? row.payment_slip_url : ''),
+            customer_id: row.customer_id || null,
+            customer_name: row.customer_name || row.customerName || '',
+            customer_email: row.customer_email || 'guest@example.com',
+            customer_phone: row.customer_phone || '',
+            total_amount: Number(row.total_amount || row.amount || 0),
+            payment_status: row.payment_status || row.status || 'pending',
+            order_status: row.order_status || 'waiting_payment',
+            created_at: row.created_at || row.date || ''
+          }));
+      } catch {
+        return [];
+      }
+    }
+
     try {
       const { data, error } = await supabase
         .from('orders')
@@ -2115,32 +2147,70 @@ export const supabaseOrders = {
         .in('payment_status', ['pending_verification', 'waiting_verify', 'waiting_approval'])
         .order('created_at', { ascending: false });
 
-      if (error) {
-        console.warn('Could not select waiting verify from orders table in Supabase:', error.message);
-        return [];
+      let list: any[] = [];
+      if (!error && data) {
+        list = data.map((row: any) => {
+          let slipUrl = row.payment_slip_url || row.slip_url || row.slipUrl || row.slip || row.image_url || '';
+          // If slipUrl is just a stored file path in 'payment-slips' bucket
+          if (slipUrl && !slipUrl.startsWith('http') && !slipUrl.startsWith('data:')) {
+            try {
+              const { data: pubData } = supabase.storage.from('payment-slips').getPublicUrl(slipUrl);
+              if (pubData?.publicUrl) {
+                slipUrl = pubData.publicUrl;
+              }
+            } catch {}
+          }
+
+          return {
+            ...row,
+            id: row.id,
+            customerName: row.customer_name || row.customerName || '',
+            date: row.created_at ? new Date(row.created_at).toISOString().split('T')[0] : '',
+            productName: row.productName || row.product_name || 'เรือพลาสติกและอุปกรณ์',
+            color: row.color || 'คละสี',
+            amount: Number(row.total_amount || row.amount || 0),
+            status: row.payment_status || row.status || 'Pending',
+            shipmentNo: row.shipmentNo || row.shipment_no || '',
+            payment_slip_url: slipUrl || row.slip_url || row.base64_slip || '',
+            slip_url: row.slip_url || slipUrl || row.base64_slip || '',
+            base64_slip: row.base64_slip || (slipUrl.startsWith('data:') ? slipUrl : ''),
+            customer_id: row.customer_id || null,
+            customer_name: row.customer_name || row.customerName || '',
+            customer_email: row.customer_email || 'guest@example.com',
+            customer_phone: row.customer_phone || '',
+            total_amount: Number(row.total_amount || row.amount || 0),
+            payment_status: row.payment_status || row.status || 'pending',
+            order_status: row.order_status || 'waiting_payment',
+            created_at: row.created_at || row.date || ''
+          };
+        });
       }
 
-      return (data || []).map((row: any) => ({
-        ...row,
-        id: row.id,
-        customerName: row.customer_name || row.customerName || '',
-        date: row.created_at ? new Date(row.created_at).toISOString().split('T')[0] : '',
-        productName: row.productName || row.product_name || 'เรือพลาสติกและอุปกรณ์',
-        color: row.color || 'คละสี',
-        amount: Number(row.total_amount || row.amount || 0),
-        status: row.payment_status || row.status || 'Pending',
-        shipmentNo: row.shipmentNo || row.shipment_no || '',
-        payment_slip_url: row.payment_slip_url || '',
-        
-        customer_id: row.customer_id || null,
-        customer_name: row.customer_name || row.customerName || '',
-        customer_email: row.customer_email || 'guest@example.com',
-        customer_phone: row.customer_phone || '',
-        total_amount: Number(row.total_amount || row.amount || 0),
-        payment_status: row.payment_status || row.status || 'pending',
-        order_status: row.order_status || 'waiting_payment',
-        created_at: row.created_at || row.date || ''
-      }));
+      // Also merge with local storage admin_orders to ensure any recently attached slips are never lost
+      try {
+        const local = JSON.parse(localStorage.getItem('admin_orders') || '[]');
+        const pendingLocal = local.filter((o: any) =>
+          ['pending_verification', 'waiting_verify', 'waiting_approval'].includes(o.payment_status || o.status)
+        );
+        for (const loc of pendingLocal) {
+          const existingIdx = list.findIndex(r => r.id === loc.id);
+          const locSlip = loc.payment_slip_url || loc.slip_url || loc.base64_slip || '';
+          if (existingIdx >= 0) {
+            if (!list[existingIdx].payment_slip_url && locSlip) {
+              list[existingIdx].payment_slip_url = locSlip;
+              list[existingIdx].slip_url = locSlip;
+            }
+          } else {
+            list.push({
+              ...loc,
+              payment_slip_url: locSlip,
+              slip_url: loc.slip_url || locSlip
+            });
+          }
+        }
+      } catch {}
+
+      return list;
     } catch (e: any) {
       console.warn('Orders fetch waiting verify caught error:', e.message);
       return [];
@@ -2163,7 +2233,9 @@ export const supabaseOrders = {
             orderData = data;
             isPre = isOrderPreOrder(data);
           }
-        } catch {}
+        } catch (fetchErr) {
+          console.warn('Supabase fetch order in approve caught:', fetchErr);
+        }
       }
 
       if (!orderData) {
@@ -2172,39 +2244,55 @@ export const supabaseOrders = {
           const found = local.find((o: any) => o.id === id);
           if (found) {
             isPre = isOrderPreOrder(found);
+            orderData = found;
           }
         } catch {}
       }
 
       // If In-Stock item, bypass production queue and go directly to 'ready_to_ship'
-      const nextStatus = isPre ? 'manufacturing' : 'ready_for_shipping';
+      // Status is 'paid' (or 'ready_to_ship' for in-stock), and payment_status is 'verified'
+      const nextStatus = isPre ? 'paid' : 'ready_to_ship';
       const nextOrderStatus = isPre ? 'manufacturing' : 'ready_to_ship';
       const nextStatusMessage = isPre 
         ? 'โรงงานลงทะเบียนรับคิวผลิตเข้าระบบแล้ว กำลังเตรียมหลอมขึ้นรูปเรือ'
         : 'สินค้าพร้อมส่ง (In-Stock) ชำระเงินเรียบร้อยแล้ว - กำลังเตรียมบรรจุหีบห่อและส่งมอบให้ขนส่ง';
 
       if (isSupabaseConfigured && supabase) {
+        // 1. UPDATE orders table: status = 'paid' (or 'ready_to_ship' for in-stock), payment_status = 'verified'
         const updatePayload: any = {
-          payment_status: 'paid',
+          payment_status: 'verified',
           status: nextStatus,
           order_status: nextOrderStatus,
-          status_message: nextStatusMessage
+          status_message: nextStatusMessage,
+          updated_at: new Date().toISOString()
         };
-        const { error } = await supabase
+
+        const { error: orderUpdateErr } = await supabase
           .from('orders')
           .update(updatePayload)
           .eq('id', id);
-        if (error) {
-          console.warn('Supabase approve error, falling back:', error.message);
+
+        if (orderUpdateErr) {
+          console.warn('Supabase approve order error, continuing fallback:', orderUpdateErr.message);
         }
 
-        // Also update deliveries table with delivery_status
+        // 2. UPSERT deliveries table with { onConflict: 'order_id' } to prevent constraint errors
         try {
-          await supabase.from('deliveries').upsert({
-            order_id: String(id),
-            delivery_status: isPre ? 'queue_received' : 'ready_to_ship'
-          });
-        } catch {}
+          const deliveryStatus = isPre ? 'queue_received' : 'ready_to_ship';
+          const { error: deliveryErr } = await supabase
+            .from('deliveries')
+            .upsert({
+              order_id: String(id),
+              delivery_status: deliveryStatus,
+              updated_at: new Date().toISOString()
+            }, { onConflict: 'order_id' });
+
+          if (deliveryErr) {
+            console.warn('Supabase deliveries upsert error in approve:', deliveryErr.message);
+          }
+        } catch (delivErr) {
+          console.warn('Deliveries upsert exception in approve:', delivErr);
+        }
       }
 
       // Sync local storage for immediate persistence
@@ -2213,15 +2301,17 @@ export const supabaseOrders = {
         const updated = local.map((o: any) => 
           o.id === id ? { 
             ...o, 
-            payment_status: 'paid', 
+            payment_status: 'verified', 
             status: nextStatus, 
             order_status: nextOrderStatus,
             status_message: nextStatusMessage,
-            delivery_status: isPre ? 'queue_received' : 'ready_to_ship'
+            delivery_status: isPre ? 'queue_received' : 'ready_to_ship',
+            updated_at: new Date().toISOString()
           } : o
         );
         localStorage.setItem('admin_orders', JSON.stringify(updated));
       } catch {}
+
       return true;
     } catch (err: any) {
       console.error('Failed to approve order:', err.message);
@@ -2230,16 +2320,40 @@ export const supabaseOrders = {
   },
 
   async reject(id: string): Promise<boolean> {
-    if (!isSupabaseConfigured || !supabase) return false;
     try {
-      const { error } = await supabase
-        .from('orders')
-        .update({
-          payment_status: 'rejected',
-          order_status: 'payment_failed'
-        })
-        .eq('id', id);
-      if (error) throw error;
+      if (isSupabaseConfigured && supabase) {
+        const { error } = await supabase
+          .from('orders')
+          .update({
+            status: 'cancelled',
+            payment_status: 'payment_rejected',
+            order_status: 'cancelled',
+            status_message: 'หลักฐานการชำระเงินไม่ถูกต้องหรือถูกปฏิเสธ กรุณาติดต่อแอดมินหรืออัปโหลดสลิปใหม่',
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', id);
+
+        if (error) {
+          console.warn('Supabase reject warning:', error.message);
+        }
+      }
+
+      // Sync local storage
+      try {
+        const local = JSON.parse(localStorage.getItem('admin_orders') || '[]');
+        const updated = local.map((o: any) => 
+          o.id === id ? { 
+            ...o, 
+            status: 'cancelled',
+            payment_status: 'payment_rejected', 
+            order_status: 'cancelled',
+            status_message: 'หลักฐานการชำระเงินไม่ถูกต้องหรือถูกปฏิเสธ กรุณาติดต่อแอดมินหรืออัปโหลดสลิปใหม่',
+            updated_at: new Date().toISOString()
+          } : o
+        );
+        localStorage.setItem('admin_orders', JSON.stringify(updated));
+      } catch {}
+
       return true;
     } catch (err: any) {
       console.error('Failed to reject order:', err.message);
@@ -2248,69 +2362,87 @@ export const supabaseOrders = {
   },
 
   async uploadSlip(orderId: string, file: File): Promise<string | null> {
-    if (!isSupabaseConfigured || !supabase) return null;
     try {
       // Create a unique clean path name
       const fileExt = file.name.split('.').pop() || 'png';
       const cleanFileName = `slip_${orderId}_${Date.now()}.${fileExt}`;
-      
-      const { data: uploadData, error: uploadError } = await supabase.storage
-        .from('payment-slips')
-        .upload(cleanFileName, file, {
-          cacheControl: '3600',
-          upsert: true
-        });
+      let finalSlipUrl = '';
 
-      if (uploadError) {
-        console.error('Error uploading file to storage bucket of Supabase:', uploadError.message);
-        throw uploadError;
+      if (isSupabaseConfigured && supabase) {
+        try {
+          const { data: uploadData, error: uploadError } = await supabase.storage
+            .from('payment-slips')
+            .upload(cleanFileName, file, {
+              cacheControl: '3600',
+              upsert: true
+            });
+
+          if (!uploadError && uploadData) {
+            // Retrieve public URL from 'payment-slips'
+            const { data: { publicUrl } } = supabase.storage
+              .from('payment-slips')
+              .getPublicUrl(cleanFileName);
+            finalSlipUrl = publicUrl;
+          } else {
+            console.warn('Storage upload error in payment-slips, will use base64 fallback:', uploadError?.message);
+          }
+        } catch (stErr) {
+          console.warn('Storage bucket upload exception:', stErr);
+        }
       }
 
-      // Retrieve public URL
-      const { data: { publicUrl } } = supabase.storage
-        .from('payment-slips')
-        .getPublicUrl(cleanFileName);
+      // If storage upload didn't succeed, create Base64 string fallback
+      if (!finalSlipUrl) {
+        finalSlipUrl = await new Promise<string>((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve((reader.result as string) || '');
+          reader.onerror = () => resolve('');
+          reader.readAsDataURL(file);
+        });
+      }
 
       const updatePayload = {
-        payment_slip_url: publicUrl,
-        payment_status: 'pending_verification'
+        payment_slip_url: finalSlipUrl,
+        slip_url: finalSlipUrl,
+        payment_status: 'pending_verification',
+        updated_at: new Date().toISOString()
       };
 
-      console.log('ORDER ID', orderId);
-      console.log('PUBLIC URL', publicUrl);
-      console.log('UPDATE PAYLOAD', updatePayload);
-
       // Update orders table
-      try {
-        await supabase
-          .from('orders')
-          .update(updatePayload)
-          .eq('id', orderId);
-      } catch (e) {
-        console.warn('Supabase orders update error in uploadSlip:', e);
+      if (isSupabaseConfigured && supabase) {
+        try {
+          await supabase
+            .from('orders')
+            .update(updatePayload)
+            .eq('id', orderId);
+        } catch (e) {
+          console.warn('Supabase orders update error in uploadSlip:', e);
+        }
       }
 
       // Try updating preorders / pre_orders table if applicable
-      try {
-        await supabase
-          .from('preorders')
-          .update({ payment_slip_url: publicUrl, status: 'pending_verification' })
-          .eq('id', orderId);
-      } catch {}
+      if (isSupabaseConfigured && supabase) {
+        try {
+          await supabase
+            .from('preorders')
+            .update({ payment_slip_url: finalSlipUrl, slip_url: finalSlipUrl, status: 'pending_verification' })
+            .eq('id', orderId);
+        } catch {}
 
-      try {
-        await supabase
-          .from('pre_orders')
-          .update({ payment_slip_url: publicUrl, status: 'pending_verification' })
-          .eq('id', orderId);
-      } catch {}
+        try {
+          await supabase
+            .from('pre_orders')
+            .update({ payment_slip_url: finalSlipUrl, slip_url: finalSlipUrl, status: 'pending_verification' })
+            .eq('id', orderId);
+        } catch {}
+      }
 
       // Update local storage for immediate reactivity
       try {
         const localOrders = JSON.parse(localStorage.getItem('admin_orders') || '[]');
         const updatedOrders = localOrders.map((o: any) => 
           o.id === orderId 
-            ? { ...o, payment_slip_url: publicUrl, payment_status: 'pending_verification' } 
+            ? { ...o, payment_slip_url: finalSlipUrl, slip_url: finalSlipUrl, payment_status: 'pending_verification' } 
             : o
         );
         localStorage.setItem('admin_orders', JSON.stringify(updatedOrders));
@@ -2318,7 +2450,7 @@ export const supabaseOrders = {
         const localPre = JSON.parse(localStorage.getItem('admin_preorders') || '[]');
         const updatedPre = localPre.map((p: any) =>
           p.id === orderId
-            ? { ...p, payment_slip_url: publicUrl, status: 'pending_verification' }
+            ? { ...p, payment_slip_url: finalSlipUrl, slip_url: finalSlipUrl, status: 'pending_verification' }
             : p
         );
         localStorage.setItem('admin_preorders', JSON.stringify(updatedPre));
@@ -2326,10 +2458,10 @@ export const supabaseOrders = {
         window.dispatchEvent(new CustomEvent('orders-updated'));
       } catch {}
 
-      return publicUrl;
+      return finalSlipUrl;
     } catch (err: any) {
-      console.error('Failed in uploadSlip:', err.message || err);
-      throw err;
+      console.error('Failed to upload slip:', err);
+      return null;
     }
   }
 };
