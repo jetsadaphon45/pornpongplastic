@@ -15,7 +15,7 @@ interface HeaderProps {
   onOpenLogin: () => void;
   onOpenRegister: () => void;
   onLogout: () => void;
-  onOpenProfile: () => void;
+  onOpenProfile: (tab?: 'history' | 'addresses' | 'deliveries') => void;
   notifications: AppNotification[];
   onMarkAsRead: (id: string) => void;
   onMarkAllAsRead: () => void;
@@ -339,7 +339,7 @@ export default function Header({
               trackingStatus === 'shipping' ? (
                 <button
                   type="button"
-                  onClick={onOpenProfile}
+                  onClick={() => onOpenProfile('deliveries')}
                   className="px-3.5 py-1.5 text-xs font-bold rounded-full transition-all duration-200 cursor-pointer flex items-center gap-1.5 text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 shadow-2xs hover:scale-102 active:scale-97 animate-in fade-in"
                   id="nav-track-queue"
                   title="ติดตามการจัดส่งสินค้าและเรือพลาสติก Real-time"
@@ -354,7 +354,7 @@ export default function Header({
               ) : (
                 <button
                   type="button"
-                  onClick={onOpenProfile}
+                  onClick={() => onOpenProfile('deliveries')}
                   className="px-3.5 py-1.5 text-xs font-bold rounded-full transition-all duration-200 cursor-pointer flex items-center gap-1.5 text-amber-800 bg-amber-50/90 hover:bg-amber-100 border border-amber-200/90 shadow-2xs hover:scale-102 active:scale-97 animate-in fade-in"
                   id="nav-track-queue"
                   title="ติดตามคิวผลิตและจัดส่งเรือพลาสติก Real-time"
@@ -591,7 +591,7 @@ export default function Header({
                 <button
                   type="button"
                   onClick={() => {
-                    onOpenProfile();
+                    onOpenProfile('deliveries');
                     setIsMobileMenuOpen(false);
                   }}
                   className="w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl font-bold text-xs bg-emerald-50 text-emerald-900 border border-emerald-200 shadow-2xs mt-1 transition-all"
@@ -613,7 +613,7 @@ export default function Header({
                 <button
                   type="button"
                   onClick={() => {
-                    onOpenProfile();
+                    onOpenProfile('deliveries');
                     setIsMobileMenuOpen(false);
                   }}
                   className="w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl font-bold text-xs bg-amber-50 text-amber-900 border border-amber-200 shadow-2xs mt-1 transition-all"

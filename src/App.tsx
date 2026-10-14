@@ -181,6 +181,7 @@ export default function App() {
   const [isForgotPasswordOpen, setIsForgotPasswordOpen] = React.useState<boolean>(false);
   const [forgotPasswordEmail, setForgotPasswordEmail] = React.useState<string>('');
   const [isProfileOpen, setIsProfileOpen] = React.useState<boolean>(false);
+  const [profileInitialTab, setProfileInitialTab] = React.useState<'history' | 'addresses' | 'deliveries'>('history');
 
   // Notifications State (with dynamic default data to avoid database dependency)
   const [notifications, setNotifications] = React.useState<AppNotification[]>(() => {
@@ -787,7 +788,10 @@ export default function App() {
           localStorage.removeItem('pornpong_current_user');
           triggerToast('ออกจากระบบเสร็จสมบูรณ์แล้ว!');
         }}
-        onOpenProfile={() => setIsProfileOpen(true)}
+        onOpenProfile={(tab?: 'history' | 'addresses' | 'deliveries') => {
+          setProfileInitialTab(tab || 'history');
+          setIsProfileOpen(true);
+        }}
         notifications={notifications}
         onMarkAsRead={handleMarkAsRead}
         onMarkAllAsRead={handleMarkAllAsRead}
@@ -1068,6 +1072,7 @@ export default function App() {
                 type="button"
                 onClick={() => {
                   setOrderStatusAlert(null);
+                  setProfileInitialTab('deliveries');
                   setIsProfileOpen(true);
                 }}
                 className={`w-full py-3 rounded-xl text-white font-bold text-xs cursor-pointer shadow-md transition-all flex items-center justify-center gap-1.5 active:scale-[0.99] ${
@@ -1467,6 +1472,7 @@ export default function App() {
           triggerToast('ออกจากระบบเสร็จสมบูรณ์แล้ว!');
         }}
         triggerToast={triggerToast}
+        initialTab={profileInitialTab}
       />
 
     </div>
