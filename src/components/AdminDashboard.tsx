@@ -1904,6 +1904,25 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
     return matchesSearch && matchesCategory && matchesStatus;
   });
 
+  // Requirement 3: Completed Orders & Orders Query must ONLY display orders with status
+  // 'paid', 'ready_to_ship', 'producing', 'shipped', or 'completed' that have passed admin approval
+  const isOrderApproved = (o: any) => {
+    if (!o) return false;
+    const s = String(o.status || '').toLowerCase().trim();
+    const os = String(o.order_status || '').toLowerCase().trim();
+    const ps = String(o.payment_status || '').toLowerCase().trim();
+
+    // Explicitly reject unapproved or pending states
+    if (['waiting_payment', 'pending_verification', 'waiting_verify', 'waiting_approval'].includes(s)) return false;
+    if (['pending_verification', 'waiting_verify', 'waiting_approval', 'pending_deposit'].includes(ps)) return false;
+    if (['cancelled', 'payment_rejected', 'rejected'].includes(s) || ['cancelled', 'payment_rejected', 'rejected'].includes(ps)) return false;
+    if (s === 'pending' && ps !== 'verified' && ps !== 'paid') return false;
+
+    // Allowed approved statuses per requirement: 'paid', 'ready_to_ship', 'producing', 'shipped', 'completed'
+    const approved = ['paid', 'ready_to_ship', 'producing', 'manufacturing', 'shipped', 'shipping', 'in_transit', 'ready_for_shipping', 'completed', 'delivered'];
+    return approved.includes(s) || approved.includes(os) || ['verified', 'paid', 'approved'].includes(ps);
+  };
+
   const isOrderCompleted = (o: any) => {
     const s = (o.status || '').toLowerCase();
     const os = (o.order_status || '').toLowerCase();
@@ -1911,13 +1930,17 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
     return s === 'delivered' || s === 'completed' || os === 'delivered' || os === 'completed' || ds === 'delivered' || ds === 'completed';
   };
 
-  const activeOrdersList = React.useMemo(() => {
-    return adminOrders.filter(o => !isOrderCompleted(o));
+  const approvedAdminOrders = React.useMemo(() => {
+    return adminOrders.filter(o => isOrderApproved(o));
   }, [adminOrders]);
 
+  const activeOrdersList = React.useMemo(() => {
+    return approvedAdminOrders.filter(o => !isOrderCompleted(o));
+  }, [approvedAdminOrders]);
+
   const completedOrdersList = React.useMemo(() => {
-    return adminOrders.filter(o => isOrderCompleted(o));
-  }, [adminOrders]);
+    return approvedAdminOrders.filter(o => isOrderCompleted(o));
+  }, [approvedAdminOrders]);
 
   const filteredActiveOrders = React.useMemo(() => {
     const term = ordersSearch.toLowerCase().trim();
@@ -2249,12 +2272,12 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
-                          {adminOrders.length === 0 ? (
+                          {approvedAdminOrders.length === 0 ? (
                             <tr>
                               <td colSpan={4} className="py-6 text-center text-slate-400 font-medium">ยังไม่มีข้อมูล</td>
                             </tr>
                           ) : (
-                            adminOrders.slice(0, 3).map((order) => (
+                            approvedAdminOrders.slice(0, 3).map((order) => (
                               <tr key={order.id} className="hover:bg-slate-50/80">
                                 <td className="py-2 px-3 font-semibold text-slate-800">{order.id}</td>
                                 <td className="py-2 px-2 text-slate-600 font-medium">{order.customerName}</td>

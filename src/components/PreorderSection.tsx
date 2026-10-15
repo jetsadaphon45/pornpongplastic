@@ -634,7 +634,7 @@ export default function PreorderSection({
             payment_slip_url: finalSlipUrl,
             slip_url: finalSlipUrl,
             status: 'pending_verification',
-            payment_status: 'pending_verification',
+            payment_status: 'pending',
             order_status: 'pending_verification'
           }).eq('id', confirmedOrder.id);
         } catch (errDb: any) {
@@ -652,7 +652,7 @@ export default function PreorderSection({
                 payment_slip_url: finalSlipUrl, 
                 slip_url: finalSlipUrl, 
                 status: 'pending_verification', 
-                payment_status: 'pending_verification', 
+                payment_status: 'pending', 
                 order_status: 'pending_verification' 
               } 
             : o
@@ -667,7 +667,7 @@ export default function PreorderSection({
                 payment_slip_url: finalSlipUrl, 
                 slip_url: finalSlipUrl, 
                 status: 'pending_verification', 
-                payment_status: 'pending_verification', 
+                payment_status: 'pending', 
                 order_status: 'pending_verification' 
               }
             : p
@@ -679,8 +679,6 @@ export default function PreorderSection({
       } catch {}
 
       setSlipUploaded(true);
-      alert(`บันทึกคำสั่งจองรหัส ${confirmedOrder.id} และอัปโหลดสลิปเรียบร้อยแล้ว! ฝ่ายผลิตจะตรวจสอบยอดมัดจำและติดต่อกลับที่เบอร์ ${confirmedOrder.customer_phone}`);
-
       setShowOrderModal(false);
       if (setActiveTab) {
         setActiveTab('home');
@@ -688,7 +686,6 @@ export default function PreorderSection({
       }
     } catch (err: any) {
       console.error('Failed to complete pre-order with slip:', err);
-      alert('บันทึกคำสั่งจองเรียบร้อยแล้ว เจ้าหน้าที่จะตรวจสอบสลิปและติดต่อกลับ');
       setShowOrderModal(false);
     } finally {
       setIsUploadingSlip(false);

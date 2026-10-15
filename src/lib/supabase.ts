@@ -1491,7 +1491,32 @@ export const supabaseOrders = {
         return [];
       }
 
-      const data = ordersRes.data || [];
+      const data = (ordersRes.data || []).filter((row: any) => {
+        const s = String(row.status || '').toLowerCase().trim();
+        const os = String(row.order_status || '').toLowerCase().trim();
+        const ps = String(row.payment_status || '').toLowerCase().trim();
+
+        // Strictly exclude pending/unapproved states
+        if (['waiting_payment', 'pending_verification', 'waiting_verify', 'waiting_approval'].includes(s)) return false;
+        if (['pending_verification', 'waiting_verify', 'waiting_approval', 'pending_deposit'].includes(ps)) return false;
+        if (['cancelled', 'payment_rejected', 'rejected'].includes(s) || ['cancelled', 'payment_rejected', 'rejected'].includes(ps)) return false;
+        if (s === 'pending' && ps !== 'verified' && ps !== 'paid') return false;
+
+        // Must match approved statuses per requirement
+        const approvedStatuses = [
+          'paid',
+          'ready_to_ship',
+          'producing',
+          'manufacturing',
+          'shipped',
+          'shipping',
+          'in_transit',
+          'ready_for_shipping',
+          'completed',
+          'delivered'
+        ];
+        return approvedStatuses.includes(s) || approvedStatuses.includes(os) || ['verified', 'paid', 'approved'].includes(ps);
+      });
 
       return data.map((row: any, idx: number) => {
         const orderIdStr = String(row.id).trim();
@@ -2341,16 +2366,17 @@ export const supabaseOrders = {
         } catch {}
       }
 
-      // If In-Stock item, bypass production queue and go directly to 'ready_to_ship'
-      // Status is 'paid' (or 'ready_to_ship' for in-stock), and payment_status is 'verified'
-      const nextStatus = isPre ? 'paid' : 'ready_to_ship';
-      const nextOrderStatus = isPre ? 'manufacturing' : 'ready_to_ship';
+      // Per Requirement 2:
+      // If In-Stock item: status is 'ready_to_ship'
+      // If Pre-Order item: status is 'producing'
+      const nextStatus = isPre ? 'producing' : 'ready_to_ship';
+      const nextOrderStatus = isPre ? 'producing' : 'ready_to_ship';
       const nextStatusMessage = isPre 
-        ? 'โรงงานลงทะเบียนรับคิวผลิตเข้าระบบแล้ว กำลังเตรียมหลอมขึ้นรูปเรือ'
-        : 'สินค้าพร้อมส่ง (In-Stock) ชำระเงินเรียบร้อยแล้ว - กำลังเตรียมบรรจุหีบห่อและส่งมอบให้ขนส่ง';
+        ? 'การชำระเงินเสร็จสิ้น! คำสั่งซื้อเป็นสินค้าสั่งผลิต (Pre-Order) ลำดับคิวการผลิตเริ่มต้นแล้ว โรงงานเริ่มกระบวนการผลิตทันที'
+        : 'การชำระเงินเสร็จสิ้น! คำสั่งซื้อเป็นสินค้าพร้อมส่ง (In-Stock) ชำระเงินเรียบร้อยแล้ว - ทางคลังสินค้ากำลังเตรียมบรรจุหีบห่อและส่งมอบให้ขนส่งโดยตรง';
 
       if (isSupabaseConfigured && supabase) {
-        // 1. UPDATE orders table: status = 'paid' (or 'ready_to_ship' for in-stock), payment_status = 'verified'
+        // 1. UPDATE orders table: status = 'producing' (pre-order) or 'ready_to_ship' (in-stock), payment_status = 'verified'
         const updatePayload: any = {
           payment_status: 'verified',
           status: nextStatus,
@@ -2383,7 +2409,7 @@ export const supabaseOrders = {
 
         // 2. UPSERT deliveries table with { onConflict: 'order_id' } to prevent constraint errors
         try {
-          const deliveryStatus = isPre ? 'queue_received' : 'ready_to_ship';
+          const deliveryStatus = isPre ? 'producing' : 'ready_to_ship';
           const { error: deliveryErr } = await supabase
             .from('deliveries')
             .upsert({
@@ -2410,7 +2436,7 @@ export const supabaseOrders = {
             status: nextStatus, 
             order_status: nextOrderStatus,
             status_message: nextStatusMessage,
-            delivery_status: isPre ? 'queue_received' : 'ready_to_ship',
+            delivery_status: isPre ? 'producing' : 'ready_to_ship',
             updated_at: new Date().toISOString()
           } : o
         );
@@ -2546,7 +2572,7 @@ export const supabaseOrders = {
         payment_slip_url: finalSlipUrl,
         slip_url: finalSlipUrl,
         status: 'pending_verification',
-        payment_status: 'pending_verification',
+        payment_status: 'pending',
         order_status: 'pending_verification',
         updated_at: new Date().toISOString()
       };
@@ -2572,7 +2598,7 @@ export const supabaseOrders = {
               payment_slip_url: finalSlipUrl, 
               slip_url: finalSlipUrl, 
               status: 'pending_verification',
-              payment_status: 'pending_verification',
+              payment_status: 'pending',
               order_status: 'pending_verification'
             })
             .eq('id', orderId);
@@ -2585,7 +2611,7 @@ export const supabaseOrders = {
               payment_slip_url: finalSlipUrl, 
               slip_url: finalSlipUrl, 
               status: 'pending_verification',
-              payment_status: 'pending_verification',
+              payment_status: 'pending',
               order_status: 'pending_verification'
             })
             .eq('id', orderId);
@@ -2602,7 +2628,7 @@ export const supabaseOrders = {
                 payment_slip_url: finalSlipUrl, 
                 slip_url: finalSlipUrl, 
                 status: 'pending_verification',
-                payment_status: 'pending_verification',
+                payment_status: 'pending',
                 order_status: 'pending_verification'
               } 
             : o
@@ -2617,7 +2643,7 @@ export const supabaseOrders = {
                 payment_slip_url: finalSlipUrl, 
                 slip_url: finalSlipUrl, 
                 status: 'pending_verification',
-                payment_status: 'pending_verification',
+                payment_status: 'pending',
                 order_status: 'pending_verification'
               }
             : p

@@ -540,9 +540,9 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, o
         setUploadedSlipUrl(slipUrl);
       }
 
-      // Update to status = 'pending_verification' and payment_status = 'pending_verification' per requirement
+      // Update to status = 'pending_verification' and payment_status = 'pending' per requirement
       hasTriggeredApprovalRef.current = false;
-      setCurrentPaymentStatus('pending_verification');
+      setCurrentPaymentStatus('pending');
       setCurrentOrderStatus('pending_verification');
 
       if (isSupabaseConfigured) {
@@ -550,7 +550,7 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, o
           if (supabase) {
             await supabase.from('orders').update({
               status: 'pending_verification',
-              payment_status: 'pending_verification',
+              payment_status: 'pending',
               order_status: 'pending_verification',
               payment_slip_url: slipUrl,
               slip_url: slipUrl,
@@ -572,7 +572,7 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, o
                 payment_slip_url: slipUrl || slipPreview, 
                 slip_url: slipUrl || slipPreview, 
                 status: 'pending_verification',
-                payment_status: 'pending_verification', 
+                payment_status: 'pending', 
                 order_status: 'pending_verification' 
               }
             : o
@@ -587,7 +587,7 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, o
                 payment_slip_url: slipUrl || slipPreview, 
                 slip_url: slipUrl || slipPreview, 
                 status: 'pending_verification',
-                payment_status: 'pending_verification', 
+                payment_status: 'pending', 
                 order_status: 'pending_verification' 
               }
             : p
@@ -600,7 +600,7 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, o
       setActiveOrder((prev: any) => ({
         ...prev,
         status: 'pending_verification',
-        payment_status: 'pending_verification',
+        payment_status: 'pending',
         order_status: 'pending_verification',
         payment_slip_url: slipUrl,
         slip_url: slipUrl
@@ -670,8 +670,8 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, o
             </h3>
             <p className="text-xs sm:text-sm text-slate-600 leading-relaxed font-sans px-1">
               {isPreOrder
-                ? `การชำระเงินเสร็จสิ้น! คำสั่งซื้อ #${orderId} เป็นสินค้าสั่งผลิต ลำดับคิวการผลิตเริ่มต้นแล้ว โรงงานเริ่มกระบวนการผลิตทันที`
-                : `การชำระเงินเสร็จสิ้น! คำสั่งซื้อ #${orderId} เป็นสินค้าพร้อมส่ง คลังสินค้ากำลังเตรียมจัดส่งตรงถึงคุณ`}
+                ? `การชำระเงินเสร็จสิ้น! คำสั่งซื้อ #${orderId} เป็นสินค้าสั่งผลิต (Pre-Order) ลำดับคิวการผลิตเริ่มต้นแล้ว โรงงานเริ่มกระบวนการผลิตทันที`
+                : `การชำระเงินเสร็จสิ้น! คำสั่งซื้อ #${orderId} เป็นสินค้าพร้อมส่ง (In-Stock) ชำระเงินเรียบร้อยแล้ว ทางคลังสินค้ากำลังเตรียมบรรจุหีบห่อและส่งมอบให้ขนส่งโดยตรง`}
             </p>
           </div>
 
