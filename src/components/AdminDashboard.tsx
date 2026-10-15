@@ -1095,9 +1095,9 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
 
   const handleSelectInTransit = async (order: any, customMeta?: any) => {
     const orderId = order.id;
-    const carrier = customMeta?.carrier_name || order.carrier_name || order.shipping_carrier || inTransitCarrier.trim() || 'รถโรงงานพรพงศ์พลาสติก (สายส่งตรง)';
+    const carrier = customMeta?.shipping_carrier || customMeta?.carrier_name || order.shipping_carrier || order.carrier_name || inTransitCarrier.trim() || 'รถโรงงานพรพงศ์ (สายส่งตรง)';
     const driver = customMeta?.driver_phone || order.driver_phone || inTransitDriverPhone.trim() || '089-456-7890';
-    const tracking = customMeta?.shipment_no || order.shipmentNo || order.shipment_no || order.tracking_number || inTransitTrackingNo.trim() || `TH-EX-${String(orderId).replace(/[^0-9]/g, '').slice(-6) || '291823'}`;
+    const tracking = customMeta?.tracking_number || customMeta?.shipment_no || order.tracking_number || order.shipmentNo || order.shipment_no || inTransitTrackingNo.trim() || `TH-EX-${String(orderId).replace(/[^0-9]/g, '').slice(-6) || '291823'}`;
     const msg = `คำสั่งซื้อหมายเลข #${orderId} สินค้าอยู่ระหว่างจัดส่ง - ขนส่ง: ${carrier} | เบอร์คนขับ/Tracking: ${driver} / ${tracking}`;
 
     // 1. Optimistically update local React state so UI turns Active Green immediately
@@ -1106,6 +1106,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
       status: 'in_transit',
       order_status: 'in_transit',
       delivery_status: 'in_transit',
+      stageLabel: 'อยู่ระหว่างจัดส่ง',
       carrier_name: carrier,
       shipping_carrier: carrier,
       driver_phone: driver,
@@ -1115,8 +1116,18 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
       status_message: msg
     } : o));
 
-    // 2. Direct UPSERT into Supabase deliveries table (delivery_status = 'in_transit')
+    // 2. Direct UPSERT into Supabase deliveries table with { onConflict: 'order_id' }
     try {
+      if (isSupabaseConfigured && supabase) {
+        await supabase.from('deliveries').upsert({
+          order_id: String(orderId),
+          delivery_status: 'in_transit',
+          shipping_carrier: carrier,
+          driver_phone: driver,
+          tracking_number: tracking,
+          updated_at: new Date().toISOString()
+        }, { onConflict: 'order_id' });
+      }
       await supabaseDeliveries.upsert({
         order_id: String(orderId),
         delivery_status: 'in_transit',
@@ -1148,28 +1159,35 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
     }));
     window.dispatchEvent(new CustomEvent('orders-updated'));
 
-    triggerToast(`อัปเดตออเดอร์ #${orderId} เป็น [อยู่ระหว่างจัดส่ง] เรียบร้อยแล้ว (สถานะสีเขียว)`);
+    triggerToast('บันทึกข้อมูลและเปลี่ยนสถานะเป็นอยู่ระหว่างจัดส่งเรียบร้อยแล้ว');
   };
 
   const handleOpenInTransitModal = (order: any) => {
     setInTransitOrder(order);
-    setInTransitCarrier(order.carrier_name || order.shipping_carrier || 'รถโรงงานพรพงศ์พลาสติก (สายส่งตรง)');
+    const carrier = order.shipping_carrier || order.carrier_name || 'รถโรงงานพรพงศ์ (สายส่งตรง)';
+    setInTransitCarrier(carrier);
     setInTransitDriverPhone(order.driver_phone || '089-456-7890');
-    const tracking = order.shipmentNo || order.shipment_no || order.tracking_number || `TH-EX-${String(order.id).replace(/[^0-9]/g, '').slice(-6) || '291823'}`;
+    const tracking = order.tracking_number || order.shipmentNo || order.shipment_no || `TH-EX-${String(order.id).replace(/[^0-9]/g, '').slice(-6) || '291823'}`;
     setInTransitTrackingNo(tracking);
   };
 
   const handleConfirmInTransit = async () => {
     if (!inTransitOrder) return;
-    const carrier = inTransitCarrier.trim() || 'รถโรงงานพรพงศ์พลาสติก (สายส่งตรง)';
+    const targetOrder = inTransitOrder;
+    const carrier = inTransitCarrier.trim() || 'รถโรงงานพรพงศ์ (สายส่งตรง)';
     const driver = inTransitDriverPhone.trim() || '089-456-7890';
-    const tracking = inTransitTrackingNo.trim() || `TH-EX-${String(inTransitOrder.id).replace(/[^0-9]/g, '').slice(-6) || '291823'}`;
-    await handleSelectInTransit(inTransitOrder, {
-      carrier_name: carrier,
-      driver_phone: driver,
-      shipment_no: tracking
-    });
+    const tracking = inTransitTrackingNo.trim() || `TH-EX-${String(targetOrder.id).replace(/[^0-9]/g, '').slice(-6) || '291823'}`;
+    
+    // Close modal immediately
     setInTransitOrder(null);
+
+    await handleSelectInTransit(targetOrder, {
+      carrier_name: carrier,
+      shipping_carrier: carrier,
+      driver_phone: driver,
+      shipment_no: tracking,
+      tracking_number: tracking
+    });
   };
 
   const handleSelectDelivered = async (order: any) => {
@@ -3318,17 +3336,17 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                                           {isPre ? 'รอขนย้าย' : 'รอจัดส่ง'}
                                         </button>
 
-                                        {/* ขั้นตอน 3: อยู่ระหว่างจัดส่ง (Active สีเขียวทันทีเมื่อ status === 'in_transit' หรือ 'shipping') */}
+                                        {/* ขั้นตอน 3: อยู่ระหว่างจัดส่ง (เปิด Modal กรอกข้อมูลขนส่ง และ Active สีเขียวเมื่อ status === 'in_transit') */}
                                         <div className="inline-flex items-center">
                                           <button
                                             type="button"
-                                            onClick={() => handleSelectInTransit(ord)}
+                                            onClick={() => handleOpenInTransitModal(ord)}
                                             className={`px-2.5 py-1 rounded-md text-[9px] font-black cursor-pointer transition-all flex items-center gap-1 ${
                                               isInTransitActive
                                                 ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs ring-2 ring-emerald-500/40 font-black'
                                                 : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
                                             }`}
-                                            title="ขั้นตอนที่ 3: อยู่ระหว่างจัดส่ง (คลิกเพื่อบันทึกสถานะเป็น อยู่ระหว่างจัดส่ง และซิงค์ขึ้นระบบแบบ Real-time)"
+                                            title="ขั้นตอนที่ 3: อยู่ระหว่างจัดส่ง (คลิกเพื่อเปิดหน้าต่างกรอกข้อมูลการจัดส่งสินค้าและเริ่มจัดส่ง)"
                                             id={`btn-in-transit-${ord.id}`}
                                           >
                                             {isInTransitActive && <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse"></span>}
@@ -6113,98 +6131,162 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
           onClick={() => setInTransitOrder(null)}
         >
           <div 
-            className="bg-white rounded-3xl max-w-md w-full p-6 sm:p-7 shadow-2xl border border-slate-200 text-left space-y-4.5 animate-scaleIn relative"
+            className="bg-white rounded-3xl max-w-lg w-full p-6 sm:p-7 shadow-2xl border border-slate-200 text-left space-y-4 animate-scaleIn relative"
             onClick={(e) => e.stopPropagation()}
           >
-            {/* Header */}
-            <div className="flex items-center justify-between pb-3 border-b border-slate-150">
-              <div className="flex items-center gap-2.5">
-                <div className="w-10 h-10 rounded-2xl bg-sky-50 text-sky-600 flex items-center justify-center font-bold border border-sky-200 shadow-xs">
-                  <Truck size={20} />
+            {/* Header with prominent Order ID */}
+            <div className="flex items-start justify-between pb-3.5 border-b border-slate-150">
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center font-bold border border-emerald-200 shadow-xs">
+                  <Truck size={22} />
                 </div>
                 <div>
-                  <h3 className="font-display text-base font-black text-slate-800">
-                    กรอกข้อมูลการจัดส่งสินค้า
-                  </h3>
-                  <span className="font-mono text-xs font-bold text-sky-600">
-                    #{inTransitOrder.id} - ขั้นตอน: อยู่ระหว่างจัดส่ง
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-display text-base font-black text-slate-800">
+                      กรอกข้อมูลการจัดส่งสินค้า
+                    </h3>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-100 text-emerald-800 border border-emerald-200">
+                      อยู่ระหว่างจัดส่ง
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 mt-1">
+                    <span className="text-xs text-slate-500 font-medium">รหัสคำสั่งซื้อ (Order ID):</span>
+                    <span className="font-mono text-xs font-black text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-md border border-emerald-200">
+                      #{inTransitOrder.id}
+                    </span>
+                    {inTransitOrder.productName && (
+                      <span className="text-xs text-slate-500 truncate max-w-[150px] font-medium hidden sm:inline" title={inTransitOrder.productName}>
+                        • {inTransitOrder.productName}
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
               <button
                 type="button"
                 onClick={() => setInTransitOrder(null)}
                 className="p-1.5 rounded-full hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors cursor-pointer"
+                title="ปิดหน้าต่าง"
               >
                 <X size={18} />
               </button>
             </div>
 
             {/* Inputs Form */}
-            <div className="space-y-3">
-              {/* Carrier Name */}
+            <div className="space-y-3.5">
+              {/* Carrier Name with Quick Chips */}
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  ชื่อขนส่ง / รถโรงงาน <span className="text-rose-500">*</span>
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs font-bold text-slate-700">
+                    ชื่อขนส่ง / รถโรงงาน (shipping_carrier) <span className="text-rose-500">*</span>
+                  </label>
+                  <span className="text-[10.5px] text-slate-400">เลือกด่วนหรือพิมพ์เอง</span>
+                </div>
                 <input 
                   type="text"
                   value={inTransitCarrier}
                   onChange={(e) => setInTransitCarrier(e.target.value)}
-                  placeholder="เช่น รถโรงงานพรพงศ์พลาสติก, Flash Express"
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs text-slate-800 outline-none focus:bg-white focus:border-sky-500 focus:ring-1 focus:ring-sky-500/20"
+                  placeholder="เช่น รถโรงงานพรพงศ์ (สายส่งตรง), Flash Express"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs text-slate-800 outline-none focus:bg-white focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/20 font-medium"
                 />
-                <div className="flex flex-wrap gap-1.5 pt-1.5">
+                
+                {/* Quick Selection Tags */}
+                <div className="flex flex-wrap gap-1.5 pt-2">
                   {[
                     'รถโรงงานพรพงศ์ (สายส่งตรง)',
                     'Inter Express',
                     'Flash Express',
                     'Kerry Logistics'
-                  ].map((carrier) => (
-                    <button
-                      key={carrier}
-                      type="button"
-                      onClick={() => setInTransitCarrier(carrier)}
-                      className="text-[10px] font-semibold bg-sky-50 hover:bg-sky-100 text-sky-800 border border-sky-200/80 px-2 py-0.5 rounded-lg cursor-pointer transition-colors"
-                    >
-                      {carrier}
-                    </button>
-                  ))}
+                  ].map((carrier) => {
+                    const isSelected = inTransitCarrier.trim() === carrier;
+                    return (
+                      <button
+                        key={carrier}
+                        type="button"
+                        onClick={() => {
+                          setInTransitCarrier(carrier);
+                          if (carrier === 'รถโรงงานพรพงศ์ (สายส่งตรง)' && (!inTransitDriverPhone || inTransitDriverPhone.includes('Center') || inTransitDriverPhone.includes('1217'))) {
+                            setInTransitDriverPhone('089-456-7890');
+                          } else if (carrier === 'Flash Express' && (!inTransitDriverPhone || inTransitDriverPhone === '089-456-7890')) {
+                            setInTransitDriverPhone('02-168-2111 (Flash CS)');
+                          } else if (carrier === 'Kerry Logistics' && (!inTransitDriverPhone || inTransitDriverPhone === '089-456-7890')) {
+                            setInTransitDriverPhone('1217 (Kerry CS)');
+                          } else if (carrier === 'Inter Express' && (!inTransitDriverPhone || inTransitDriverPhone === '089-456-7890')) {
+                            setInTransitDriverPhone('02-688-2910 (Inter CS)');
+                          }
+                        }}
+                        className={`text-[10px] px-2.5 py-1 rounded-lg cursor-pointer transition-all flex items-center gap-1 border ${
+                          isSelected
+                            ? 'bg-emerald-600 text-white border-emerald-600 font-bold shadow-xs'
+                            : 'bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200'
+                        }`}
+                      >
+                        {isSelected && <span>✓</span>}
+                        <span>{carrier}</span>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
 
-              {/* Driver Phone */}
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  เบอร์โทรคนขับ / ผู้ประสานงานส่งของ <span className="text-rose-500">*</span>
-                </label>
-                <input 
-                  type="text"
-                  value={inTransitDriverPhone}
-                  onChange={(e) => setInTransitDriverPhone(e.target.value)}
-                  placeholder="เช่น 089-123-4567"
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs text-slate-800 outline-none focus:bg-white focus:border-sky-500 focus:ring-1 focus:ring-sky-500/20"
-                />
-              </div>
+              {/* Driver Phone & Tracking Number Grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {/* Driver Phone */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    เบอร์โทรคนขับ / ผู้ประสานงานส่งของ (driver_phone) <span className="text-rose-500">*</span>
+                  </label>
+                  <input 
+                    type="text"
+                    value={inTransitDriverPhone}
+                    onChange={(e) => setInTransitDriverPhone(e.target.value)}
+                    placeholder="เช่น 089-456-7890"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs text-slate-800 outline-none focus:bg-white focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/20"
+                  />
+                </div>
 
-              {/* Tracking No */}
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  เลข Tracking / รหัสพัสดุขนส่ง <span className="text-rose-500">*</span>
-                </label>
-                <input 
-                  type="text"
-                  value={inTransitTrackingNo}
-                  onChange={(e) => setInTransitTrackingNo(e.target.value)}
-                  placeholder="เช่น TH-EX-291823"
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs text-slate-800 font-mono outline-none focus:bg-white focus:border-sky-500 focus:ring-1 focus:ring-sky-500/20"
-                />
+                {/* Tracking No */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    เลข Tracking / รหัสพัสดุขนส่ง (tracking_number) <span className="text-rose-500">*</span>
+                  </label>
+                  <input 
+                    type="text"
+                    value={inTransitTrackingNo}
+                    onChange={(e) => setInTransitTrackingNo(e.target.value)}
+                    placeholder="เช่น TH-EX-291823"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs text-slate-800 font-mono outline-none focus:bg-white focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/20"
+                  />
+                </div>
               </div>
             </div>
 
-            <p className="text-[11px] text-slate-500 leading-relaxed bg-sky-50/70 p-3 rounded-xl border border-sky-150">
-              💡 เมื่อยืนยัน ระบบจะส่งการแจ้งเตือนไปยังลูกค้าว่า: <i>"สินค้าอยู่ระหว่างจัดส่ง - ขนส่ง: {inTransitCarrier || '...'} | เบอร์คนขับ/Tracking: {inTransitDriverPhone || '...'} / {inTransitTrackingNo || '...'}"</i>
-            </p>
+            {/* Notification Preview Box */}
+            <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3.5 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-bold text-slate-700 flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                  ตัวอย่างข้อความแจ้งเตือนลูกค้า (Customer Preview)
+                </span>
+                <span className="text-[9.5px] font-black text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full border border-emerald-200">
+                  Real-time Sync
+                </span>
+              </div>
+              <div className="bg-white p-3 rounded-xl border border-slate-200/80 shadow-xs space-y-1.5 text-xs text-slate-700">
+                <div className="font-bold text-slate-800 flex items-center gap-1.5">
+                  <Truck size={13} className="text-emerald-600" />
+                  <span>🚚 คำสั่งซื้อ #{inTransitOrder.id} - อยู่ระหว่างจัดส่งแล้ว</span>
+                </div>
+                <div className="text-[11px] text-slate-600 space-y-0.5 pl-3 border-l-2 border-emerald-400">
+                  <p>• <b>ขนส่ง:</b> <span className="text-slate-800 font-semibold">{inTransitCarrier.trim() || 'ยังไม่ได้ระบุ'}</span></p>
+                  <p>• <b>เบอร์คนขับ/ผู้ประสานงาน:</b> <span className="text-slate-800 font-semibold">{inTransitDriverPhone.trim() || 'ยังไม่ได้ระบุ'}</span></p>
+                  <p>• <b>เลข Tracking:</b> <span className="font-mono text-emerald-700 font-bold">{inTransitTrackingNo.trim() || 'ยังไม่ได้ระบุ'}</span></p>
+                </div>
+                <p className="text-[10px] text-slate-400 italic">
+                  💡 เมื่อยืนยัน ข้อมูลจะถูกบันทึกลงตาราง deliveries และส่งแจ้งเตือนไปยังหน้าติดตามสถานะของลูกค้าทันที
+                </p>
+              </div>
+            </div>
 
             {/* Action buttons */}
             <div className="flex items-center gap-3 pt-1">
@@ -6218,9 +6300,10 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
               <button
                 type="button"
                 onClick={handleConfirmInTransit}
-                className="flex-1 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-700 text-white font-bold text-xs shadow-md shadow-sky-600/20 cursor-pointer transition-all active:scale-[0.99]"
+                className="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-md shadow-emerald-600/25 cursor-pointer transition-all active:scale-[0.99] flex items-center justify-center gap-1.5"
               >
-                ยืนยันเริ่มจัดส่ง [อยู่ระหว่างจัดส่ง]
+                <Truck size={14} />
+                <span>ยืนยันเริ่มจัดส่ง [อยู่ระหว่างจัดส่ง]</span>
               </button>
             </div>
           </div>
