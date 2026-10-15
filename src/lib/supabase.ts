@@ -1919,10 +1919,11 @@ export const supabaseOrders = {
     }
   ): Promise<boolean> {
     const sLower = status.toLowerCase();
+    const isPending = sLower === 'pending_verification' || sLower === 'waiting_payment' || sLower === 'pending' || sLower === 'waiting_verify' || sLower === 'waiting_approval' || sLower === 'pending_deposit';
     const isDeliv = sLower === 'delivered' || sLower === 'completed';
     const isShip = sLower === 'shipped' || sLower === 'shipping' || sLower === 'in_transit';
     const isReady = sLower === 'ready_for_shipping' || sLower === 'ready';
-    const mappedOrderStatus = isDeliv ? 'completed' : isShip ? 'in_transit' : isReady ? 'ready_for_shipping' : 'manufacturing';
+    const mappedOrderStatus = isPending ? sLower : isDeliv ? 'completed' : isShip ? 'in_transit' : isReady ? 'ready_for_shipping' : 'manufacturing';
     const trackingNo = meta?.tracking_number || meta?.shipment_no || `TH-EX-${String(id).replace(/[^0-9]/g, '').slice(-6) || '291823'}`;
     const carrier = meta?.shipping_carrier || meta?.carrier_name || '';
     const driver = meta?.driver_phone || '';
@@ -1937,10 +1938,12 @@ export const supabaseOrders = {
           await supabase.from('orders').update({
             status: targetStatus,
             order_status: mappedOrderStatus,
-            delivery_status: isDeliv ? 'delivered' : mappedOrderStatus,
-            shipment_no: trackingNo,
-            shipmentNo: trackingNo,
-            tracking_number: trackingNo,
+            ...(isPending ? {} : { delivery_status: isDeliv ? 'delivered' : mappedOrderStatus }),
+            ...(isPending ? {} : {
+              shipment_no: trackingNo,
+              shipmentNo: trackingNo,
+              tracking_number: trackingNo
+            }),
             ...(carrier ? { shipping_carrier: carrier, carrier_name: carrier } : {}),
             ...(driver ? { driver_phone: driver } : {}),
             ...(estDate ? { estimated_delivery_date: estDate } : {}),
@@ -1950,7 +1953,7 @@ export const supabaseOrders = {
           await supabase.from('orders').update({
             status: targetStatus,
             order_status: mappedOrderStatus,
-            delivery_status: isDeliv ? 'delivered' : mappedOrderStatus
+            ...(isPending ? {} : { delivery_status: isDeliv ? 'delivered' : mappedOrderStatus })
           }).eq('id', id);
         }
       }
@@ -1958,19 +1961,21 @@ export const supabaseOrders = {
       console.warn('Supabase updateStatus caught warning:', e);
     }
 
-    // 2. UPSERT into separate deliveries table
-    try {
-      await supabaseDeliveries.upsert({
-        order_id: String(id),
-        delivery_status: isDeliv ? 'delivered' : mappedOrderStatus,
-        ...(queueNo ? { queue_number: queueNo } : {}),
-        ...(carrier ? { shipping_carrier: carrier } : {}),
-        ...(driver ? { driver_phone: driver } : {}),
-        ...(trackingNo ? { tracking_number: trackingNo } : {}),
-        ...(estDate ? { estimated_delivery_date: estDate } : {})
-      });
-    } catch (e) {
-      console.warn('supabaseDeliveries.upsert caught warning in updateStatus:', e);
+    // 2. UPSERT into separate deliveries table (only if order is approved / not pending)
+    if (!isPending) {
+      try {
+        await supabaseDeliveries.upsert({
+          order_id: String(id),
+          delivery_status: isDeliv ? 'delivered' : mappedOrderStatus,
+          ...(queueNo ? { queue_number: queueNo } : {}),
+          ...(carrier ? { shipping_carrier: carrier } : {}),
+          ...(driver ? { driver_phone: driver } : {}),
+          ...(trackingNo ? { tracking_number: trackingNo } : {}),
+          ...(estDate ? { estimated_delivery_date: estDate } : {})
+        });
+      } catch (e) {
+        console.warn('supabaseDeliveries.upsert caught warning in updateStatus:', e);
+      }
     }
 
     // Persist immediately in local storage admin_orders

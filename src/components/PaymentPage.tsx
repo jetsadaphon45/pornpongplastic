@@ -132,6 +132,7 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, o
   const [isWaitingModalDelay, setIsWaitingModalDelay] = React.useState<boolean>(false);
   const hasRedirectedRef = React.useRef(false);
   const modalTimerRef = React.useRef<any>(null);
+  const hasTriggeredApprovalRef = React.useRef(false);
 
   // Clean up timer on unmount
   React.useEffect(() => {
@@ -209,33 +210,44 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, o
     };
   }, [step, isApprovalModalOpen, isWaitingModalDelay, handleGoToTracking]);
 
-  // Unified function to transition order to approved with sound, notification, and modal
+  // Unified function to transition order to approved with 1.5s delay, sound, notification, and modal
   const triggerApprovalSuccess = React.useCallback((updatedData?: any) => {
-    playSuccessChime();
-    triggerToast('🎉 ชำระเงินสำเร็จแล้ว! เจ้าหน้าที่ตรวจสอบและอนุมัติเรียบร้อยแล้ว');
+    if (hasTriggeredApprovalRef.current) return;
+    hasTriggeredApprovalRef.current = true;
 
     const nextStatus = updatedData?.status || updatedData?.order_status || 'ready_to_ship';
-    setActiveOrder((prev: any) => ({
-      ...prev,
-      ...(updatedData || {}),
-      payment_status: 'paid',
-      status: nextStatus,
-      order_status: nextStatus
-    }));
-    setCurrentPaymentStatus('paid');
-    setCurrentOrderStatus(nextStatus);
-    if (updatedData?.payment_slip_url || updatedData?.slip_url) {
-      setUploadedSlipUrl(updatedData.payment_slip_url || updatedData.slip_url);
-    }
-    setStep('approved');
 
-    // Requirement 1: Delay Before Showing Success Modal (1.5 Seconds / 1500ms)
+    // Requirement 2: Delay Before Showing Success Modal (1.5 Seconds / 1500ms)
     setIsWaitingModalDelay(true);
     if (modalTimerRef.current) {
       clearTimeout(modalTimerRef.current);
     }
+
     modalTimerRef.current = setTimeout(() => {
       setIsWaitingModalDelay(false);
+
+      // 1. Play success audio chime
+      playSuccessChime();
+
+      // 2. Toast notification
+      triggerToast('🎉 การชำระเงินเสร็จสิ้น! แอดมินอนุมัติเรียบร้อยแล้ว');
+
+      // 3. Update active order state
+      setActiveOrder((prev: any) => ({
+        ...prev,
+        ...(updatedData || {}),
+        payment_status: 'paid',
+        status: nextStatus,
+        order_status: nextStatus
+      }));
+      setCurrentPaymentStatus('paid');
+      setCurrentOrderStatus(nextStatus);
+      if (updatedData?.payment_slip_url || updatedData?.slip_url) {
+        setUploadedSlipUrl(updatedData.payment_slip_url || updatedData.slip_url);
+      }
+
+      // 4. Switch to approved screen and pop open modal
+      setStep('approved');
       setIsApprovalModalOpen(true);
     }, 1500);
   }, [triggerToast]);
@@ -350,7 +362,8 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, o
             .select('*')
             .eq('order_id', targetOrderId)
             .maybeSingle();
-          if (delivData && delivData.delivery_status && !['pending', 'waiting'].includes(delivData.delivery_status)) {
+          const approvedDeliveryStatuses = ['ready_to_ship', 'ready_for_shipping', 'manufacturing', 'producing', 'in_transit', 'shipped', 'delivered', 'completed'];
+          if (delivData && delivData.delivery_status && approvedDeliveryStatuses.includes(String(delivData.delivery_status).toLowerCase())) {
             triggerApprovalSuccess({ ...data, status: delivData.delivery_status, payment_status: 'verified' });
             return;
           }
@@ -435,7 +448,9 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, o
             },
             (payload: any) => {
               const updated = payload.new || payload.record;
-              if (updated) {
+              const dStatus = String(updated?.delivery_status || '').toLowerCase();
+              const approvedDeliveryStatuses = ['ready_to_ship', 'ready_for_shipping', 'manufacturing', 'producing', 'in_transit', 'shipped', 'delivered', 'completed'];
+              if (updated && approvedDeliveryStatuses.includes(dStatus)) {
                 triggerApprovalSuccess({
                   status: updated.delivery_status || 'ready_to_ship',
                   payment_status: 'verified'
@@ -526,6 +541,7 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, o
       }
 
       // Update to status = 'pending_verification' and payment_status = 'pending' per requirement
+      hasTriggeredApprovalRef.current = false;
       setCurrentPaymentStatus('pending');
       setCurrentOrderStatus('pending_verification');
 
@@ -541,7 +557,6 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, o
               updated_at: new Date().toISOString()
             }).eq('id', activeOrder.id);
           }
-          await supabaseOrders.updateStatus(activeOrder.id, 'pending_verification');
         } catch (errStatus) {
           console.warn('Error updating status in Supabase:', errStatus);
         }
@@ -723,10 +738,17 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, o
           
           {/* Main Titles */}
           <div className="space-y-2">
-            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-50 border border-amber-200 text-amber-700 text-[11px] font-bold">
-              <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping"></span>
-              <span>กำลังตรวจสอบการชำระเงิน (Payment Verification)</span>
-            </div>
+            {isWaitingModalDelay ? (
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-[11px] font-bold animate-pulse">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping"></span>
+                <span>✓ แอดมินอนุมัติแล้ว กำลังโหลดข้อมูล...</span>
+              </div>
+            ) : (
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-50 border border-amber-200 text-amber-700 text-[11px] font-bold">
+                <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping"></span>
+                <span>กำลังตรวจสอบการชำระเงิน (Payment Verification)</span>
+              </div>
+            )}
             
             <h1 className="font-display text-2xl sm:text-3xl font-extrabold text-slate-850">
               ระบบได้รับหลักฐานการชำระเงินเรียบร้อยแล้ว
