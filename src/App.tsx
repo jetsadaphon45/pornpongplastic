@@ -551,8 +551,9 @@ export default function App() {
         customer_email: customerEmail,
         customer_phone: orderDetails.phone,
         total_amount: totalSum,
+        status: 'waiting_payment',
         payment_status: 'pending',
-        order_status: isPreOrder ? 'waiting_payment' : 'ready_for_shipping',
+        order_status: 'waiting_payment',
         productName: productNameSummary,
         color: colorsSummary,
         order_type: isPreOrder ? 'preorder' : 'instock',
@@ -571,8 +572,9 @@ export default function App() {
         customer_email: customerEmail,
         customer_phone: orderDetails.phone,
         total_amount: totalSum,
+        status: 'waiting_payment',
         payment_status: 'pending',
-        order_status: isPreOrder ? 'waiting_payment' : 'ready_for_shipping',
+        order_status: 'waiting_payment',
         productName: productNameSummary,
         color: colorsSummary,
         order_type: isPreOrder ? 'preorder' : 'instock',
@@ -714,6 +716,7 @@ export default function App() {
           const ord = currentOrder;
           setCurrentOrder(null);
           navigateTo('/');
+          setProfileInitialTab('deliveries');
           if (currentUser) {
             setIsProfileOpen(true);
           } else if (ord) {
@@ -861,7 +864,7 @@ export default function App() {
             <div className="space-y-2">
               <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 text-emerald-700 font-bold text-[11px] border border-emerald-200">
                 <Check size={12} strokeWidth={3} />
-                <span>แอดมินอนุมัติการชำระเงินเรียบร้อย</span>
+                <span>✓ แอดมินอนุมัติการชำระเงินเรียบร้อย</span>
               </span>
               <h3 className="font-display text-xl sm:text-2xl font-black text-slate-850">
                 การชำระเงินเสร็จสิ้น!
@@ -885,6 +888,7 @@ export default function App() {
                 type="button"
                 onClick={() => setApprovedPaymentAlert(null)}
                 className="w-full py-3 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-700 font-bold text-xs cursor-pointer transition-all"
+                id="btn-dismiss-approval-alert"
               >
                 รับทราบ
               </button>
@@ -892,9 +896,11 @@ export default function App() {
                 type="button"
                 onClick={() => {
                   setApprovedPaymentAlert(null);
+                  setProfileInitialTab('deliveries');
                   setIsProfileOpen(true);
                 }}
-                className="w-full py-3 rounded-xl bg-brand-blue hover:bg-brand-blue-dark text-white font-bold text-xs cursor-pointer shadow-md transition-all flex items-center justify-center gap-1.5 active:scale-[0.99]"
+                className="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs cursor-pointer shadow-md transition-all flex items-center justify-center gap-1.5 active:scale-[0.99]"
+                id="btn-view-profile-deliveries"
               >
                 <ShoppingBag size={14} />
                 <span>ดูประวัติคำสั่งซื้อ</span>

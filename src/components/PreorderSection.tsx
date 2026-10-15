@@ -633,8 +633,9 @@ export default function PreorderSection({
           await supabase.from('orders').update({
             payment_slip_url: finalSlipUrl,
             slip_url: finalSlipUrl,
-            payment_status: 'pending_verification',
-            status: 'pending_verification'
+            status: 'pending_verification',
+            payment_status: 'pending',
+            order_status: 'pending_verification'
           }).eq('id', confirmedOrder.id);
         } catch (errDb: any) {
           console.warn('Could not update payment_slip_url in orders table:', errDb?.message);
@@ -646,7 +647,14 @@ export default function PreorderSection({
         const localOrders = JSON.parse(localStorage.getItem('admin_orders') || '[]');
         const updatedOrders = localOrders.map((o: any) => 
           o.id === confirmedOrder.id 
-            ? { ...o, payment_slip_url: finalSlipUrl, slip_url: finalSlipUrl, payment_status: 'pending_verification' } 
+            ? { 
+                ...o, 
+                payment_slip_url: finalSlipUrl, 
+                slip_url: finalSlipUrl, 
+                status: 'pending_verification', 
+                payment_status: 'pending', 
+                order_status: 'pending_verification' 
+              } 
             : o
         );
         localStorage.setItem('admin_orders', JSON.stringify(updatedOrders));
@@ -654,7 +662,14 @@ export default function PreorderSection({
         const localPre = JSON.parse(localStorage.getItem('admin_preorders') || '[]');
         const updatedPre = localPre.map((p: any) =>
           p.id === confirmedOrder.id
-            ? { ...p, payment_slip_url: finalSlipUrl, status: 'pending_verification' }
+            ? { 
+                ...p, 
+                payment_slip_url: finalSlipUrl, 
+                slip_url: finalSlipUrl, 
+                status: 'pending_verification', 
+                payment_status: 'pending', 
+                order_status: 'pending_verification' 
+              }
             : p
         );
         localStorage.setItem('admin_preorders', JSON.stringify(updatedPre));

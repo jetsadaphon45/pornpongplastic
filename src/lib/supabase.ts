@@ -1737,6 +1737,7 @@ export const supabaseOrders = {
         customer_email: item.customer_email,
         customer_phone: item.customer_phone,
         total_amount: Number(item.total_amount),
+        status: 'waiting_payment',
         payment_status: 'pending',
         order_status: 'waiting_payment'
       };
@@ -2533,7 +2534,9 @@ export const supabaseOrders = {
       const updatePayload = {
         payment_slip_url: finalSlipUrl,
         slip_url: finalSlipUrl,
-        payment_status: 'pending_verification',
+        status: 'pending_verification',
+        payment_status: 'pending',
+        order_status: 'pending_verification',
         updated_at: new Date().toISOString()
       };
 
@@ -2554,14 +2557,26 @@ export const supabaseOrders = {
         try {
           await supabase
             .from('preorders')
-            .update({ payment_slip_url: finalSlipUrl, slip_url: finalSlipUrl, status: 'pending_verification' })
+            .update({ 
+              payment_slip_url: finalSlipUrl, 
+              slip_url: finalSlipUrl, 
+              status: 'pending_verification',
+              payment_status: 'pending',
+              order_status: 'pending_verification'
+            })
             .eq('id', orderId);
         } catch {}
 
         try {
           await supabase
             .from('pre_orders')
-            .update({ payment_slip_url: finalSlipUrl, slip_url: finalSlipUrl, status: 'pending_verification' })
+            .update({ 
+              payment_slip_url: finalSlipUrl, 
+              slip_url: finalSlipUrl, 
+              status: 'pending_verification',
+              payment_status: 'pending',
+              order_status: 'pending_verification'
+            })
             .eq('id', orderId);
         } catch {}
       }
@@ -2571,7 +2586,14 @@ export const supabaseOrders = {
         const localOrders = JSON.parse(localStorage.getItem('admin_orders') || '[]');
         const updatedOrders = localOrders.map((o: any) => 
           o.id === orderId 
-            ? { ...o, payment_slip_url: finalSlipUrl, slip_url: finalSlipUrl, payment_status: 'pending_verification' } 
+            ? { 
+                ...o, 
+                payment_slip_url: finalSlipUrl, 
+                slip_url: finalSlipUrl, 
+                status: 'pending_verification',
+                payment_status: 'pending',
+                order_status: 'pending_verification'
+              } 
             : o
         );
         localStorage.setItem('admin_orders', JSON.stringify(updatedOrders));
@@ -2579,7 +2601,14 @@ export const supabaseOrders = {
         const localPre = JSON.parse(localStorage.getItem('admin_preorders') || '[]');
         const updatedPre = localPre.map((p: any) =>
           p.id === orderId
-            ? { ...p, payment_slip_url: finalSlipUrl, slip_url: finalSlipUrl, status: 'pending_verification' }
+            ? { 
+                ...p, 
+                payment_slip_url: finalSlipUrl, 
+                slip_url: finalSlipUrl, 
+                status: 'pending_verification',
+                payment_status: 'pending',
+                order_status: 'pending_verification'
+              }
             : p
         );
         localStorage.setItem('admin_preorders', JSON.stringify(updatedPre));

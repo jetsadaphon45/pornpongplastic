@@ -3664,8 +3664,8 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                                       // 1. Create In-App notification for customer
                                       const isPre = isOrderPreOrder(ord);
                                       const approvalMsg = isPre
-                                        ? `การชำระเงินเสร็จสิ้น! รายการสั่งซื้อพรีออเดอร์ #${targetOrderId} ได้รับการยืนยันแล้ว ทางโรงงานลงทะเบียนคิวผลิตเข้าระบบเรียบร้อยแล้ว`
-                                        : `การชำระเงินเสร็จสิ้น! คำสั่งซื้อ #${targetOrderId} เป็นสินค้าพร้อมส่ง (In-Stock) ชำระเงินเรียบร้อยแล้ว ทางคลังสินค้ากำลังเตรียมบรรจุหีบห่อและส่งมอบให้ขนส่งโดยตรง`;
+                                        ? `การชำระเงินเสร็จสิ้น! คำสั่งซื้อ #${targetOrderId} เป็นสินค้าสั่งผลิต ลำดับคิวการผลิตเริ่มต้นแล้ว โรงงานเริ่มกระบวนการผลิตทันที`
+                                        : `การชำระเงินเสร็จสิ้น! คำสั่งซื้อ #${targetOrderId} เป็นสินค้าพร้อมส่ง คลังสินค้ากำลังเตรียมจัดส่งตรงถึงคุณ`;
                                       const newNoti = {
                                         id: 'noti-appr-' + Date.now(),
                                         title: 'การชำระเงินเสร็จสิ้น!',

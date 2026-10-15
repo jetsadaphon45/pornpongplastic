@@ -34,8 +34,21 @@ export const isOrderStatusApproved = (ord: any): boolean => {
   const ps = String(ord.payment_status || '').toLowerCase().trim();
   const ds = String(ord.delivery_status || '').toLowerCase().trim();
 
-  const approvedPaymentStatuses = ['verified', 'paid', 'approved', 'completed', 'success'];
-  const approvedOrderStatuses = [
+  // 1. If status is pending_verification, it is STRICTLY NOT APPROVED. Never show green success screen.
+  if (s === 'pending_verification' || s === 'waiting_verify' || s === 'waiting_approval' || s === 'waiting_payment') {
+    return false;
+  }
+  // 2. If payment_status is pending_verification or waiting approval
+  if (ps === 'pending_verification' || ps === 'waiting_verify' || ps === 'waiting_approval' || ps === 'pending_deposit') {
+    return false;
+  }
+  // If payment is pending and status is not yet approved by admin:
+  if (ps === 'pending' && !['paid', 'ready_to_ship', 'producing', 'manufacturing', 'in_transit', 'shipping', 'completed', 'delivered'].includes(s)) {
+    return false;
+  }
+
+  // 3. Approved screen MUST ONLY be shown when status is changed to 'paid', 'ready_to_ship', 'producing' or 'in_transit' (or 'completed')
+  const approvedStatuses = [
     'paid',
     'ready_to_ship',
     'producing',
@@ -44,14 +57,18 @@ export const isOrderStatusApproved = (ord: any): boolean => {
     'shipping',
     'ready_for_shipping',
     'completed',
-    'delivered',
-    'processing'
+    'delivered'
   ];
 
-  if (approvedPaymentStatuses.includes(ps)) return true;
-  if (approvedOrderStatuses.includes(s) && !['pending_verification', 'waiting_verify', 'waiting_approval', 'pending'].includes(s)) return true;
-  if (approvedOrderStatuses.includes(os) && !['pending_verification', 'waiting_verify', 'waiting_approval', 'pending'].includes(os)) return true;
-  if (ds && !['pending', 'waiting'].includes(ds)) return true;
+  if (approvedStatuses.includes(s)) {
+    return true;
+  }
+
+  if (['verified', 'paid', 'approved'].includes(ps)) {
+    if (approvedStatuses.includes(os) || approvedStatuses.includes(ds)) {
+      return true;
+    }
+  }
 
   return false;
 };
@@ -103,15 +120,27 @@ interface PaymentPageProps {
 export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, onTrackOrder, triggerToast }: PaymentPageProps) {
   // Navigation Step: 'pay' -> 'verifying' -> 'approved'
   const [step, setStep] = React.useState<'pay' | 'verifying' | 'approved'>('pay');
+  const [isApprovalModalOpen, setIsApprovalModalOpen] = React.useState<boolean>(false);
   const [copiedAccount, setCopiedAccount] = React.useState(false);
   const [slipFile, setSlipFile] = React.useState<File | null>(null);
   const [slipPreview, setSlipPreview] = React.useState<string | null>(null);
   const [slipError, setSlipError] = React.useState<string | null>(null);
   const [isProcessing, setIsProcessing] = React.useState(false);
 
-  // 3-Second Auto-Redirect countdown state when payment is approved
+  // 3-Second Auto-Redirect countdown state when payment is approved (only active when modal is closed)
   const [autoRedirectCountdown, setAutoRedirectCountdown] = React.useState<number>(3);
+  const [isWaitingModalDelay, setIsWaitingModalDelay] = React.useState<boolean>(false);
   const hasRedirectedRef = React.useRef(false);
+  const modalTimerRef = React.useRef<any>(null);
+
+  // Clean up timer on unmount
+  React.useEffect(() => {
+    return () => {
+      if (modalTimerRef.current) {
+        clearTimeout(modalTimerRef.current);
+      }
+    };
+  }, []);
 
   // Fallback initial order info
   const [activeOrder, setActiveOrder] = React.useState<any>(order || {
@@ -131,6 +160,7 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, o
   const [uploadedSlipUrl, setUploadedSlipUrl] = React.useState<string>('');
 
   const handleReturnHome = React.useCallback(() => {
+    if (modalTimerRef.current) clearTimeout(modalTimerRef.current);
     if (hasRedirectedRef.current) return;
     hasRedirectedRef.current = true;
     if (onBackToHome) {
@@ -144,6 +174,7 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, o
   }, [onBackToHome]);
 
   const handleGoToTracking = React.useCallback(() => {
+    if (modalTimerRef.current) clearTimeout(modalTimerRef.current);
     if (hasRedirectedRef.current) return;
     hasRedirectedRef.current = true;
     if (onTrackOrder) {
@@ -155,9 +186,9 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, o
     }
   }, [onTrackOrder, onViewOrderHistory, handleReturnHome, activeOrder]);
 
-  // 3-Second Auto-Redirect effect to Track Order when entering 'approved' step
+  // Auto-Redirect effect to Track Order when entering 'approved' step (only runs if modal is closed and delay passed)
   React.useEffect(() => {
-    if (step !== 'approved') return;
+    if (step !== 'approved' || isApprovalModalOpen || isWaitingModalDelay) return;
 
     setAutoRedirectCountdown(3);
     hasRedirectedRef.current = false;
@@ -176,9 +207,9 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, o
     return () => {
       clearInterval(timer);
     };
-  }, [step, handleGoToTracking]);
+  }, [step, isApprovalModalOpen, isWaitingModalDelay, handleGoToTracking]);
 
-  // Unified function to transition order to approved with sound and notification
+  // Unified function to transition order to approved with sound, notification, and modal
   const triggerApprovalSuccess = React.useCallback((updatedData?: any) => {
     playSuccessChime();
     triggerToast('🎉 ชำระเงินสำเร็จแล้ว! เจ้าหน้าที่ตรวจสอบและอนุมัติเรียบร้อยแล้ว');
@@ -197,25 +228,41 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, o
       setUploadedSlipUrl(updatedData.payment_slip_url || updatedData.slip_url);
     }
     setStep('approved');
+
+    // Requirement 1: Delay Before Showing Success Modal (1.5 Seconds / 1500ms)
+    setIsWaitingModalDelay(true);
+    if (modalTimerRef.current) {
+      clearTimeout(modalTimerRef.current);
+    }
+    modalTimerRef.current = setTimeout(() => {
+      setIsWaitingModalDelay(false);
+      setIsApprovalModalOpen(true);
+    }, 1500);
   }, [triggerToast]);
 
   // Synchronize and lookup order from url params or prop
   React.useEffect(() => {
     if (order) {
       setActiveOrder(order);
+      const s = String(order.status || '').toLowerCase().trim();
+      const ps = String(order.payment_status || '').toLowerCase().trim();
+      const hasSlip = Boolean(order.payment_slip_url || order.slip_url);
+
       setCurrentPaymentStatus(order.payment_status || 'pending');
       setCurrentOrderStatus(order.order_status || order.status || 'waiting_payment');
       
-      if (isOrderStatusApproved(order)) {
-        if (order.payment_slip_url || order.slip_url) {
-          setUploadedSlipUrl(order.payment_slip_url || order.slip_url);
-        }
-        setStep('approved');
-      } else if (['pending_verification', 'waiting_approval', 'waiting_verify'].includes(order.payment_status)) {
-        if (order.payment_slip_url || order.slip_url) {
-          setUploadedSlipUrl(order.payment_slip_url || order.slip_url);
-        }
+      if (hasSlip) {
+        setUploadedSlipUrl(order.payment_slip_url || order.slip_url);
+      }
+
+      // Requirement 2:
+      // If status === 'pending_verification' -> ALWAYS show 'verifying' (yellow/amber screen), NEVER 'approved'
+      if (s === 'pending_verification' || ps === 'pending_verification' || ['waiting_verify', 'waiting_approval'].includes(ps) || (hasSlip && !isOrderStatusApproved(order))) {
         setStep('verifying');
+      } else if (isOrderStatusApproved(order)) {
+        setStep('approved');
+      } else {
+        setStep('pay');
       }
     }
 
@@ -249,17 +296,22 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, o
               setActiveOrder(formattedOrder);
               setCurrentPaymentStatus(formattedOrder.payment_status);
               setCurrentOrderStatus(formattedOrder.status);
+
+              const s = String(formattedOrder.status || '').toLowerCase().trim();
+              const ps = String(formattedOrder.payment_status || '').toLowerCase().trim();
+              const hasSlip = Boolean(formattedOrder.payment_slip_url);
               
-              if (isOrderStatusApproved(formattedOrder)) {
-                if (formattedOrder.payment_slip_url) {
-                  setUploadedSlipUrl(formattedOrder.payment_slip_url);
-                }
-                setStep('approved');
-              } else if (['pending_verification', 'waiting_approval', 'waiting_verify'].includes(formattedOrder.payment_status)) {
-                if (formattedOrder.payment_slip_url) {
-                  setUploadedSlipUrl(formattedOrder.payment_slip_url);
-                }
+              if (hasSlip) {
+                setUploadedSlipUrl(formattedOrder.payment_slip_url);
+              }
+
+              // Check pending_verification first
+              if (s === 'pending_verification' || ps === 'pending_verification' || ['waiting_verify', 'waiting_approval'].includes(ps) || (hasSlip && !isOrderStatusApproved(formattedOrder))) {
                 setStep('verifying');
+              } else if (isOrderStatusApproved(formattedOrder)) {
+                setStep('approved');
+              } else {
+                setStep('pay');
               }
             }
           }
@@ -473,21 +525,23 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, o
         setUploadedSlipUrl(slipUrl);
       }
 
-      // Update to 'pending_verification' and 'waiting_approval'
-      setCurrentPaymentStatus('pending_verification');
-      setCurrentOrderStatus('waiting_approval');
+      // Update to status = 'pending_verification' and payment_status = 'pending' per requirement
+      setCurrentPaymentStatus('pending');
+      setCurrentOrderStatus('pending_verification');
 
       if (isSupabaseConfigured) {
         try {
-          await supabaseOrders.updateStatus(activeOrder.id, 'pending_verification');
           if (supabase) {
             await supabase.from('orders').update({
-              payment_status: 'pending_verification',
-              order_status: 'waiting_approval',
+              status: 'pending_verification',
+              payment_status: 'pending',
+              order_status: 'pending_verification',
               payment_slip_url: slipUrl,
-              slip_url: slipUrl
+              slip_url: slipUrl,
+              updated_at: new Date().toISOString()
             }).eq('id', activeOrder.id);
           }
+          await supabaseOrders.updateStatus(activeOrder.id, 'pending_verification');
         } catch (errStatus) {
           console.warn('Error updating status in Supabase:', errStatus);
         }
@@ -498,11 +552,44 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, o
         const localOrders = JSON.parse(localStorage.getItem('admin_orders') || '[]');
         const updatedLocal = localOrders.map((o: any) => 
           o.id === activeOrder.id 
-            ? { ...o, payment_slip_url: slipUrl || slipPreview, slip_url: slipUrl || slipPreview, payment_status: 'pending_verification', order_status: 'waiting_approval' }
+            ? { 
+                ...o, 
+                payment_slip_url: slipUrl || slipPreview, 
+                slip_url: slipUrl || slipPreview, 
+                status: 'pending_verification',
+                payment_status: 'pending', 
+                order_status: 'pending_verification' 
+              }
             : o
         );
         localStorage.setItem('admin_orders', JSON.stringify(updatedLocal));
+
+        const preLocal = JSON.parse(localStorage.getItem('admin_preorders') || '[]');
+        const updatedPre = preLocal.map((p: any) =>
+          p.id === activeOrder.id 
+            ? { 
+                ...p, 
+                payment_slip_url: slipUrl || slipPreview, 
+                slip_url: slipUrl || slipPreview, 
+                status: 'pending_verification',
+                payment_status: 'pending', 
+                order_status: 'pending_verification' 
+              }
+            : p
+        );
+        localStorage.setItem('admin_preorders', JSON.stringify(updatedPre));
+
+        window.dispatchEvent(new CustomEvent('orders-updated'));
       } catch {}
+
+      setActiveOrder((prev: any) => ({
+        ...prev,
+        status: 'pending_verification',
+        payment_status: 'pending',
+        order_status: 'pending_verification',
+        payment_slip_url: slipUrl,
+        slip_url: slipUrl
+      }));
 
       // Add a notification for the customer
       try {
@@ -523,7 +610,13 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, o
     } catch (err: any) {
       console.error('Failed to submit slip:', err);
       setUploadedSlipUrl(slipPreview || '');
-      setCurrentPaymentStatus('pending_verification');
+      setCurrentPaymentStatus('pending');
+      setCurrentOrderStatus('pending_verification');
+      setActiveOrder((prev: any) => ({
+        ...prev,
+        status: 'pending_verification',
+        payment_status: 'pending'
+      }));
       triggerToast('ระบบได้รับหลักฐานการชำระเงินเรียบร้อยแล้ว');
       setStep('verifying');
     } finally {
@@ -531,10 +624,87 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, o
     }
   };
 
+  // APPROVAL SUCCESS MODAL
+  const renderApprovalModal = () => {
+    if (!isApprovalModalOpen) return null;
+    const isPreOrder = isOrderPreOrder(activeOrder);
+    const orderId = activeOrder?.id || 'ORD';
+
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs font-sans animate-fadeIn">
+        <div className="relative w-full max-w-md bg-white rounded-3xl p-6 sm:p-7 shadow-2xl border border-emerald-100 text-center space-y-5 animate-scaleUp">
+          
+          {/* Animated Green Circular Icon */}
+          <div className="flex justify-center">
+            <div className="relative inline-flex items-center justify-center">
+              <div className="absolute -inset-2 rounded-full bg-emerald-400/25 blur-md animate-ping"></div>
+              <div className="relative h-16 w-16 rounded-full bg-gradient-to-tr from-emerald-600 via-emerald-500 to-teal-400 text-white flex items-center justify-center shadow-lg shadow-emerald-200">
+                <CheckCircle2 size={36} className="animate-in zoom-in-75 duration-300 drop-shadow-xs" />
+              </div>
+            </div>
+          </div>
+
+          {/* Badge & Titles */}
+          <div className="space-y-2">
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 text-emerald-700 font-bold text-[11px] border border-emerald-200">
+              <Check size={12} strokeWidth={3} />
+              <span>✓ แอดมินอนุมัติการชำระเงินเรียบร้อย</span>
+            </span>
+            <h3 className="font-display text-xl sm:text-2xl font-black text-slate-850">
+              การชำระเงินเสร็จสิ้น!
+            </h3>
+            <p className="text-xs sm:text-sm text-slate-600 leading-relaxed font-sans px-1">
+              {isPreOrder
+                ? `การชำระเงินเสร็จสิ้น! คำสั่งซื้อ #${orderId} เป็นสินค้าสั่งผลิต ลำดับคิวการผลิตเริ่มต้นแล้ว โรงงานเริ่มกระบวนการผลิตทันที`
+                : `การชำระเงินเสร็จสิ้น! คำสั่งซื้อ #${orderId} เป็นสินค้าพร้อมส่ง คลังสินค้ากำลังเตรียมจัดส่งตรงถึงคุณ`}
+            </p>
+          </div>
+
+          {/* Order ID Frame */}
+          <div className="bg-slate-50 p-3 rounded-2xl border border-dashed border-slate-200 text-xs flex justify-between items-center font-mono">
+            <span className="text-slate-400 font-sans">รหัสคำสั่งซื้อ:</span>
+            <span className="font-bold text-slate-800 bg-white px-2.5 py-0.5 rounded-lg border border-slate-200">
+              #{orderId}
+            </span>
+          </div>
+
+          {/* Action Buttons */}
+          <div className="grid grid-cols-2 gap-3 pt-1">
+            <button
+              type="button"
+              onClick={() => {
+                setIsApprovalModalOpen(false);
+                handleReturnHome();
+              }}
+              className="w-full py-3 rounded-xl border border-slate-200 hover:bg-slate-50 text-slate-700 font-bold text-xs cursor-pointer transition-all active:scale-[0.99]"
+              id="btn-dismiss-approval-modal"
+            >
+              รับทราบ
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setIsApprovalModalOpen(false);
+                handleGoToTracking();
+              }}
+              className="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs cursor-pointer shadow-md transition-all flex items-center justify-center gap-1.5 active:scale-[0.99]"
+              id="btn-view-order-history-modal"
+            >
+              <ShoppingBag size={14} />
+              <span>ดูประวัติคำสั่งซื้อ</span>
+            </button>
+          </div>
+
+        </div>
+      </div>
+    );
+  };
+
   // STEP 2: VERIFICATION PENDING SCREEN (กำลังตรวจสอบการชำระเงิน)
   if (step === 'verifying') {
     return (
-      <div className="font-sans min-h-screen bg-slate-50 flex items-center justify-center p-4 py-10">
+      <div className="font-sans min-h-screen bg-slate-50 flex items-center justify-center p-4 py-10 relative">
+        {renderApprovalModal()}
         <div className="max-w-xl w-full bg-white rounded-3xl border border-sky-100 shadow-2xl p-6 sm:p-8 text-center space-y-6 animate-fadeIn">
           
           {/* Animated Spinner & Clock Header Icon */}
@@ -667,7 +837,8 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, o
   // STEP 3: PAYMENT APPROVED SCREEN (ชำระเงินเสร็จสิ้น เรียลไทม์)
   if (step === 'approved') {
     return (
-      <div className="font-sans min-h-screen bg-slate-50 flex items-center justify-center p-4 py-10">
+      <div className="font-sans min-h-screen bg-slate-50 flex items-center justify-center p-4 py-10 relative">
+        {renderApprovalModal()}
         <div className="max-w-xl w-full bg-white rounded-3xl border border-emerald-100 shadow-2xl p-6 sm:p-8 text-center space-y-6 animate-fadeIn">
           
           {/* Glowing Green Checkmark Icon */}
@@ -822,7 +993,8 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, o
   const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(promptPayData)}&color=0d2b45`;
 
   return (
-    <div className="font-sans min-h-screen bg-slate-50 py-12 px-4 sm:px-6 lg:px-8">
+    <div className="font-sans min-h-screen bg-slate-50 py-12 px-4 sm:px-6 lg:px-8 relative">
+      {renderApprovalModal()}
       <div className="max-w-4xl mx-auto space-y-6 animate-fade-in">
         
         {/* Top Header Row with back controls */}
