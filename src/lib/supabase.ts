@@ -2107,12 +2107,55 @@ export const supabaseOrders = {
   },
 
   async listWaitingVerify(): Promise<any[]> {
+    const getApprovedIds = (): Set<string> => {
+      try {
+        return new Set(JSON.parse(localStorage.getItem('pornpong_approved_order_ids') || '[]').map(String));
+      } catch {
+        return new Set();
+      }
+    };
+    const getRejectedIds = (): Set<string> => {
+      try {
+        return new Set(JSON.parse(localStorage.getItem('pornpong_rejected_order_ids') || '[]').map(String));
+      } catch {
+        return new Set();
+      }
+    };
+
+    const isOrderExcludedFromPending = (order: any, approvedIds: Set<string>, rejectedIds: Set<string>): boolean => {
+      const id = String(order.id || '');
+      if (approvedIds.has(id) || rejectedIds.has(id)) return true;
+
+      const s = String(order.status || '').toLowerCase().trim();
+      const ps = String(order.payment_status || '').toLowerCase().trim();
+      const os = String(order.order_status || '').toLowerCase().trim();
+
+      // Explicitly excluded per user specification
+      const EXCLUDED_STATUSES = ['paid', 'ready_to_ship', 'producing', 'completed', 'in_transit', 'shipping', 'delivered', 'cancelled', 'payment_rejected'];
+      const EXCLUDED_PAYMENT_STATUSES = ['verified', 'paid', 'completed', 'approved', 'rejected', 'payment_rejected'];
+      const EXCLUDED_ORDER_STATUSES = ['manufacturing', 'producing', 'ready_to_ship', 'in_transit', 'shipping', 'completed', 'delivered'];
+
+      if (EXCLUDED_STATUSES.includes(s) || EXCLUDED_PAYMENT_STATUSES.includes(ps) || EXCLUDED_ORDER_STATUSES.includes(os)) {
+        return true;
+      }
+
+      // Must be waiting verification
+      const isPending = ['pending_verification', 'waiting_verify', 'waiting_approval'].includes(ps) ||
+                        ['pending_verification', 'waiting_verify', 'waiting_approval'].includes(s);
+      return !isPending;
+    };
+
+    const approvedIds = getApprovedIds();
+    const rejectedIds = getRejectedIds();
+
     if (!isSupabaseConfigured || !supabase) {
       // Local storage fallback
       try {
         const local = JSON.parse(localStorage.getItem('admin_orders') || '[]');
-        return local
-          .filter((o: any) => ['pending_verification', 'waiting_verify', 'waiting_approval'].includes(o.payment_status || o.status))
+        const preLocal = JSON.parse(localStorage.getItem('admin_preorders') || '[]');
+        const combined = [...local, ...preLocal];
+        return combined
+          .filter((o: any) => !isOrderExcludedFromPending(o, approvedIds, rejectedIds))
           .map((row: any) => ({
             ...row,
             id: row.id,
@@ -2131,7 +2174,7 @@ export const supabaseOrders = {
             customer_email: row.customer_email || 'guest@example.com',
             customer_phone: row.customer_phone || '',
             total_amount: Number(row.total_amount || row.amount || 0),
-            payment_status: row.payment_status || row.status || 'pending',
+            payment_status: row.payment_status || row.status || 'pending_verification',
             order_status: row.order_status || 'waiting_payment',
             created_at: row.created_at || row.date || ''
           }));
@@ -2141,59 +2184,80 @@ export const supabaseOrders = {
     }
 
     try {
-      const { data, error } = await supabase
+      // 1. Query orders with payment_status in pending
+      const { data: payPendingData, error: payErr } = await supabase
         .from('orders')
         .select('*')
         .in('payment_status', ['pending_verification', 'waiting_verify', 'waiting_approval'])
         .order('created_at', { ascending: false });
 
-      let list: any[] = [];
-      if (!error && data) {
-        list = data.map((row: any) => {
-          let slipUrl = row.payment_slip_url || row.slip_url || row.slipUrl || row.slip || row.image_url || '';
-          // If slipUrl is just a stored file path in 'payment-slips' bucket
-          if (slipUrl && !slipUrl.startsWith('http') && !slipUrl.startsWith('data:')) {
-            try {
-              const { data: pubData } = supabase.storage.from('payment-slips').getPublicUrl(slipUrl);
-              if (pubData?.publicUrl) {
-                slipUrl = pubData.publicUrl;
-              }
-            } catch {}
-          }
+      // 2. Query orders with status in pending
+      const { data: statusPendingData } = await supabase
+        .from('orders')
+        .select('*')
+        .in('status', ['pending_verification', 'waiting_verify', 'waiting_approval'])
+        .order('created_at', { ascending: false });
 
-          return {
-            ...row,
-            id: row.id,
-            customerName: row.customer_name || row.customerName || '',
-            date: row.created_at ? new Date(row.created_at).toISOString().split('T')[0] : '',
-            productName: row.productName || row.product_name || 'เรือพลาสติกและอุปกรณ์',
-            color: row.color || 'คละสี',
-            amount: Number(row.total_amount || row.amount || 0),
-            status: row.payment_status || row.status || 'Pending',
-            shipmentNo: row.shipmentNo || row.shipment_no || '',
-            payment_slip_url: slipUrl || row.slip_url || row.base64_slip || '',
-            slip_url: row.slip_url || slipUrl || row.base64_slip || '',
-            base64_slip: row.base64_slip || (slipUrl.startsWith('data:') ? slipUrl : ''),
-            customer_id: row.customer_id || null,
-            customer_name: row.customer_name || row.customerName || '',
-            customer_email: row.customer_email || 'guest@example.com',
-            customer_phone: row.customer_phone || '',
-            total_amount: Number(row.total_amount || row.amount || 0),
-            payment_status: row.payment_status || row.status || 'pending',
-            order_status: row.order_status || 'waiting_payment',
-            created_at: row.created_at || row.date || ''
-          };
-        });
+      const rawCombined = [
+        ...(!payErr && payPendingData ? payPendingData : []),
+        ...(statusPendingData ? statusPendingData : [])
+      ];
+
+      // De-duplicate by ID
+      const seenIds = new Set<string>();
+      const uniqueRaw: any[] = [];
+      for (const item of rawCombined) {
+        const idStr = String(item.id);
+        if (!seenIds.has(idStr)) {
+          seenIds.add(idStr);
+          uniqueRaw.push(item);
+        }
       }
+
+      // 3. Strict exclusion of paid/ready_to_ship/producing/completed
+      const strictlyFiltered = uniqueRaw.filter((row: any) => !isOrderExcludedFromPending(row, approvedIds, rejectedIds));
+
+      let list: any[] = strictlyFiltered.map((row: any) => {
+        let slipUrl = row.payment_slip_url || row.slip_url || row.slipUrl || row.slip || row.image_url || '';
+        if (slipUrl && !slipUrl.startsWith('http') && !slipUrl.startsWith('data:')) {
+          try {
+            const { data: pubData } = supabase.storage.from('payment-slips').getPublicUrl(slipUrl);
+            if (pubData?.publicUrl) {
+              slipUrl = pubData.publicUrl;
+            }
+          } catch {}
+        }
+
+        return {
+          ...row,
+          id: row.id,
+          customerName: row.customer_name || row.customerName || '',
+          date: row.created_at ? new Date(row.created_at).toISOString().split('T')[0] : '',
+          productName: row.productName || row.product_name || 'เรือพลาสติกและอุปกรณ์',
+          color: row.color || 'คละสี',
+          amount: Number(row.total_amount || row.amount || 0),
+          status: row.payment_status || row.status || 'Pending',
+          shipmentNo: row.shipmentNo || row.shipment_no || '',
+          payment_slip_url: slipUrl || row.slip_url || row.base64_slip || '',
+          slip_url: row.slip_url || slipUrl || row.base64_slip || '',
+          base64_slip: row.base64_slip || (slipUrl.startsWith('data:') ? slipUrl : ''),
+          customer_id: row.customer_id || null,
+          customer_name: row.customer_name || row.customerName || '',
+          customer_email: row.customer_email || 'guest@example.com',
+          customer_phone: row.customer_phone || '',
+          total_amount: Number(row.total_amount || row.amount || 0),
+          payment_status: row.payment_status || row.status || 'pending_verification',
+          order_status: row.order_status || 'waiting_payment',
+          created_at: row.created_at || row.date || ''
+        };
+      });
 
       // Also merge with local storage admin_orders to ensure any recently attached slips are never lost
       try {
         const local = JSON.parse(localStorage.getItem('admin_orders') || '[]');
-        const pendingLocal = local.filter((o: any) =>
-          ['pending_verification', 'waiting_verify', 'waiting_approval'].includes(o.payment_status || o.status)
-        );
+        const pendingLocal = local.filter((o: any) => !isOrderExcludedFromPending(o, approvedIds, rejectedIds));
         for (const loc of pendingLocal) {
-          const existingIdx = list.findIndex(r => r.id === loc.id);
+          const existingIdx = list.findIndex(r => String(r.id) === String(loc.id));
           const locSlip = loc.payment_slip_url || loc.slip_url || loc.base64_slip || '';
           if (existingIdx >= 0) {
             if (!list[existingIdx].payment_slip_url && locSlip) {
@@ -2210,7 +2274,8 @@ export const supabaseOrders = {
         }
       } catch {}
 
-      return list;
+      // Final strict filter pass
+      return list.filter((item: any) => !isOrderExcludedFromPending(item, approvedIds, rejectedIds));
     } catch (e: any) {
       console.warn('Orders fetch waiting verify caught error:', e.message);
       return [];
@@ -2219,6 +2284,21 @@ export const supabaseOrders = {
 
   async approve(id: string): Promise<boolean> {
     try {
+      const orderIdStr = String(id);
+
+      // Immediately save to approved set in localStorage so no refresh can re-render it
+      try {
+        const approvedList = JSON.parse(localStorage.getItem('pornpong_approved_order_ids') || '[]');
+        if (!approvedList.map(String).includes(orderIdStr)) {
+          approvedList.push(orderIdStr);
+          localStorage.setItem('pornpong_approved_order_ids', JSON.stringify(approvedList));
+        }
+        // Remove from rejected if was there
+        const rejectedList = JSON.parse(localStorage.getItem('pornpong_rejected_order_ids') || '[]');
+        const filteredRejected = rejectedList.filter((x: any) => String(x) !== orderIdStr);
+        localStorage.setItem('pornpong_rejected_order_ids', JSON.stringify(filteredRejected));
+      } catch {}
+
       let isPre = false;
       let orderData: any = null;
 
@@ -2241,7 +2321,7 @@ export const supabaseOrders = {
       if (!orderData) {
         try {
           const local = JSON.parse(localStorage.getItem('admin_orders') || '[]');
-          const found = local.find((o: any) => o.id === id);
+          const found = local.find((o: any) => String(o.id) === orderIdStr);
           if (found) {
             isPre = isOrderPreOrder(found);
             orderData = found;
@@ -2276,13 +2356,26 @@ export const supabaseOrders = {
           console.warn('Supabase approve order error, continuing fallback:', orderUpdateErr.message);
         }
 
+        // Also update preorders table if it exists
+        try {
+          await supabase
+            .from('preorders')
+            .update({
+              payment_status: 'verified',
+              status: nextStatus,
+              order_status: nextOrderStatus,
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', id);
+        } catch {}
+
         // 2. UPSERT deliveries table with { onConflict: 'order_id' } to prevent constraint errors
         try {
           const deliveryStatus = isPre ? 'queue_received' : 'ready_to_ship';
           const { error: deliveryErr } = await supabase
             .from('deliveries')
             .upsert({
-              order_id: String(id),
+              order_id: orderIdStr,
               delivery_status: deliveryStatus,
               updated_at: new Date().toISOString()
             }, { onConflict: 'order_id' });
@@ -2299,7 +2392,7 @@ export const supabaseOrders = {
       try {
         const local = JSON.parse(localStorage.getItem('admin_orders') || '[]');
         const updated = local.map((o: any) => 
-          o.id === id ? { 
+          String(o.id) === orderIdStr ? { 
             ...o, 
             payment_status: 'verified', 
             status: nextStatus, 
@@ -2310,6 +2403,19 @@ export const supabaseOrders = {
           } : o
         );
         localStorage.setItem('admin_orders', JSON.stringify(updated));
+
+        const preLocal = JSON.parse(localStorage.getItem('admin_preorders') || '[]');
+        const updatedPre = preLocal.map((p: any) =>
+          String(p.id) === orderIdStr ? {
+            ...p,
+            payment_status: 'verified',
+            status: nextStatus,
+            order_status: nextOrderStatus,
+            status_message: nextStatusMessage,
+            updated_at: new Date().toISOString()
+          } : p
+        );
+        localStorage.setItem('admin_preorders', JSON.stringify(updatedPre));
       } catch {}
 
       return true;
@@ -2321,6 +2427,17 @@ export const supabaseOrders = {
 
   async reject(id: string): Promise<boolean> {
     try {
+      const orderIdStr = String(id);
+
+      // Immediately save to rejected set in localStorage so no refresh can re-render it
+      try {
+        const rejectedList = JSON.parse(localStorage.getItem('pornpong_rejected_order_ids') || '[]');
+        if (!rejectedList.map(String).includes(orderIdStr)) {
+          rejectedList.push(orderIdStr);
+          localStorage.setItem('pornpong_rejected_order_ids', JSON.stringify(rejectedList));
+        }
+      } catch {}
+
       if (isSupabaseConfigured && supabase) {
         const { error } = await supabase
           .from('orders')
@@ -2342,7 +2459,7 @@ export const supabaseOrders = {
       try {
         const local = JSON.parse(localStorage.getItem('admin_orders') || '[]');
         const updated = local.map((o: any) => 
-          o.id === id ? { 
+          String(o.id) === orderIdStr ? { 
             ...o, 
             status: 'cancelled',
             payment_status: 'payment_rejected', 
@@ -2352,6 +2469,18 @@ export const supabaseOrders = {
           } : o
         );
         localStorage.setItem('admin_orders', JSON.stringify(updated));
+
+        const preLocal = JSON.parse(localStorage.getItem('admin_preorders') || '[]');
+        const updatedPre = preLocal.map((p: any) =>
+          String(p.id) === orderIdStr ? {
+            ...p,
+            status: 'cancelled',
+            payment_status: 'payment_rejected',
+            order_status: 'cancelled',
+            updated_at: new Date().toISOString()
+          } : p
+        );
+        localStorage.setItem('admin_preorders', JSON.stringify(updatedPre));
       } catch {}
 
       return true;

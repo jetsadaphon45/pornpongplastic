@@ -204,6 +204,37 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
   const [isVerifying, setIsVerifying] = React.useState<string | null>(null);
   const [zoomedSlipUrl, setZoomedSlipUrl] = React.useState<string | null>(null);
 
+  // Filtered pending orders strictly displaying pending_verification only
+  // Explicitly excludes paid, ready_to_ship, producing, completed, cancelled, rejected
+  const pendingOrdersList = React.useMemo(() => {
+    let approvedIds = new Set<string>();
+    let rejectedIds = new Set<string>();
+    try {
+      approvedIds = new Set(JSON.parse(localStorage.getItem('pornpong_approved_order_ids') || '[]').map(String));
+      rejectedIds = new Set(JSON.parse(localStorage.getItem('pornpong_rejected_order_ids') || '[]').map(String));
+    } catch {}
+
+    const EXCLUDED_STATUSES = ['paid', 'ready_to_ship', 'producing', 'completed', 'in_transit', 'shipping', 'delivered', 'cancelled', 'payment_rejected'];
+    const EXCLUDED_PAYMENT_STATUSES = ['verified', 'paid', 'completed', 'approved', 'rejected', 'payment_rejected'];
+    const EXCLUDED_ORDER_STATUSES = ['manufacturing', 'producing', 'ready_to_ship', 'in_transit', 'shipping', 'completed', 'delivered'];
+
+    return (waitingVerifyOrders || []).filter((ord: any) => {
+      const id = String(ord.id || '');
+      if (approvedIds.has(id) || rejectedIds.has(id)) return false;
+
+      const s = String(ord.status || '').toLowerCase().trim();
+      const ps = String(ord.payment_status || '').toLowerCase().trim();
+      const os = String(ord.order_status || '').toLowerCase().trim();
+
+      if (EXCLUDED_STATUSES.includes(s) || EXCLUDED_PAYMENT_STATUSES.includes(ps) || EXCLUDED_ORDER_STATUSES.includes(os)) {
+        return false;
+      }
+
+      return ['pending_verification', 'waiting_verify', 'waiting_approval'].includes(ps) ||
+             ['pending_verification', 'waiting_verify', 'waiting_approval'].includes(s);
+    });
+  }, [waitingVerifyOrders]);
+
   // Member & Preorder detail states
   const [selectedMember, setSelectedMember] = React.useState<any | null>(null);
   const [isMemberDetailOpen, setIsMemberDetailOpen] = React.useState<boolean>(false);
@@ -269,7 +300,33 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
   const reloadWaitingVerifyOrders = React.useCallback(async () => {
     try {
       const data = await supabaseOrders.listWaitingVerify();
-      setWaitingVerifyOrders(data);
+      let approvedIds = new Set<string>();
+      let rejectedIds = new Set<string>();
+      try {
+        approvedIds = new Set(JSON.parse(localStorage.getItem('pornpong_approved_order_ids') || '[]').map(String));
+        rejectedIds = new Set(JSON.parse(localStorage.getItem('pornpong_rejected_order_ids') || '[]').map(String));
+      } catch {}
+
+      const EXCLUDED_STATUSES = ['paid', 'ready_to_ship', 'producing', 'completed', 'in_transit', 'shipping', 'delivered', 'cancelled', 'payment_rejected'];
+      const EXCLUDED_PAYMENT_STATUSES = ['verified', 'paid', 'completed', 'approved', 'rejected', 'payment_rejected'];
+      const EXCLUDED_ORDER_STATUSES = ['manufacturing', 'producing', 'ready_to_ship', 'in_transit', 'shipping', 'completed', 'delivered'];
+
+      const filtered = (data || []).filter((ord: any) => {
+        const id = String(ord.id || '');
+        if (approvedIds.has(id) || rejectedIds.has(id)) return false;
+
+        const s = String(ord.status || '').toLowerCase().trim();
+        const ps = String(ord.payment_status || '').toLowerCase().trim();
+        const os = String(ord.order_status || '').toLowerCase().trim();
+
+        if (EXCLUDED_STATUSES.includes(s) || EXCLUDED_PAYMENT_STATUSES.includes(ps) || EXCLUDED_ORDER_STATUSES.includes(os)) {
+          return false;
+        }
+
+        return ['pending_verification', 'waiting_verify', 'waiting_approval'].includes(ps) ||
+               ['pending_verification', 'waiting_verify', 'waiting_approval'].includes(s);
+      });
+      setWaitingVerifyOrders(filtered);
     } catch (err) {
       console.error('Failed to reload waiting verify orders:', err);
     }
@@ -1951,11 +2008,11 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                     <IconComp size={15} className={activeMenu === menu.id ? 'text-white' : 'text-slate-500'} />
                     <span>
                       {menu.label}
-                      {menu.id === 'payment-verify' && waitingVerifyOrders.length > 0 && (
+                      {menu.id === 'payment-verify' && pendingOrdersList.length > 0 && (
                         <span className={`ml-2 px-1.5 py-0.5 rounded-full text-[9px] font-black inline-flex items-center justify-center ${
                           activeMenu === menu.id ? 'bg-white text-sky-600' : 'bg-rose-500 text-white'
                         }`}>
-                          {waitingVerifyOrders.length}
+                          {pendingOrdersList.length}
                         </span>
                       )}
                     </span>
@@ -3370,7 +3427,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                 <div>
                   <h2 className="text-base font-black text-slate-800 flex items-center gap-2">
                     <ShieldCheck className="text-emerald-500" size={20} />
-                    <span>รอตรวจสอบการชำระเงิน ({waitingVerifyOrders.length})</span>
+                    <span>รอตรวจสอบการชำระเงิน ({pendingOrdersList.length})</span>
                   </h2>
                   <p className="text-xs text-slate-500 mt-1">
                     ตรวจสอบยืนยันสลิปจากแอปพลิเคชันลูกค้า เพื่ออนุมัติการวางจองและการผลิตเข้าระบบ
@@ -3386,7 +3443,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
               </div>
 
               {/* Waiting Verify Grid / List */}
-              {waitingVerifyOrders.length === 0 ? (
+              {pendingOrdersList.length === 0 ? (
                 <div className="bg-white border border-dashed border-slate-200 rounded-2xl p-12 text-center text-slate-500 font-medium shadow-sm">
                   <CheckCircle2 size={36} className="mx-auto text-emerald-500/70 mb-3 animate-pulse" />
                   <p className="text-sm font-bold text-slate-700">ไม่มีคำสั่งซื้อที่รอตรวจสอบสลิปในขณะนี้</p>
@@ -3394,7 +3451,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                 </div>
               ) : (
                 <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-                  {waitingVerifyOrders.map((ord) => {
+                  {pendingOrdersList.map((ord) => {
                     const orderDateStr = ord.created_at 
                       ? new Date(ord.created_at).toLocaleString('th-TH', { 
                           year: 'numeric', 
@@ -3515,22 +3572,35 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                               disabled={isVerifying !== null}
                               onClick={async () => {
                                 if (confirm('คุณแน่ใจหรือไม่ว่าต้องการ "ปฏิเสธสลิปการโอนเงิน" นี้?')) {
-                                  setIsVerifying(ord.id);
+                                  const targetOrderId = String(ord.id);
+                                  setIsVerifying(targetOrderId);
                                   try {
                                     // 1. Instant card removal & badge decrement
-                                    setWaitingVerifyOrders(prev => prev.filter(o => o.id !== ord.id));
+                                    setWaitingVerifyOrders(prev => prev.filter(o => String(o.id) !== targetOrderId));
 
-                                    const success = await supabaseOrders.reject(ord.id);
+                                    // Persist in rejected IDs set
+                                    try {
+                                      const rejectedList = JSON.parse(localStorage.getItem('pornpong_rejected_order_ids') || '[]');
+                                      if (!rejectedList.map(String).includes(targetOrderId)) {
+                                        rejectedList.push(targetOrderId);
+                                        localStorage.setItem('pornpong_rejected_order_ids', JSON.stringify(rejectedList));
+                                      }
+                                    } catch {}
+
+                                    const success = await supabaseOrders.reject(targetOrderId);
                                     if (success) {
-                                      triggerToast(`ปฏิเสธการชำระเงินสำหรับคำสั่งซื้อ #${ord.id} เรียบร้อยแล้ว`);
+                                      triggerToast(`ปฏิเสธการชำระเงินสำหรับคำสั่งซื้อ #${targetOrderId} เรียบร้อยแล้ว`);
                                     } else {
-                                      triggerToast(`บันทึกการปฏิเสธคำสั่งซื้อ #${ord.id} เรียบร้อยแล้ว`);
+                                      triggerToast(`บันทึกการปฏิเสธคำสั่งซื้อ #${targetOrderId} เรียบร้อยแล้ว`);
                                     }
+                                    setWaitingVerifyOrders(prev => prev.filter(o => String(o.id) !== targetOrderId));
                                     await reloadWaitingVerifyOrders();
                                     await reloadOrders();
+                                    setWaitingVerifyOrders(prev => prev.filter(o => String(o.id) !== targetOrderId));
                                   } catch (err: any) {
                                     console.error('Reject payment error:', err);
                                     triggerToast('ข้อผิดพลาด: ' + (err?.message || 'ไม่สามารถปฏิเสธการชำระเงินได้'));
+                                    setWaitingVerifyOrders(prev => prev.filter(o => String(o.id) !== targetOrderId));
                                     await reloadWaitingVerifyOrders();
                                   } finally {
                                     setIsVerifying(null);
@@ -3552,18 +3622,32 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                               disabled={isVerifying !== null}
                               onClick={async () => {
                                 if (confirm('คุณแน่ใจหรือไม่ว่าต้องการ "อนุมัติสลิปการโอนเงิน" นี้?')) {
-                                  setIsVerifying(ord.id);
+                                  const targetOrderId = String(ord.id);
+                                  setIsVerifying(targetOrderId);
                                   try {
                                     // 1. Instant card removal & badge decrement
-                                    setWaitingVerifyOrders(prev => prev.filter(o => o.id !== ord.id));
+                                    setWaitingVerifyOrders(prev => prev.filter(o => String(o.id) !== targetOrderId));
 
-                                    const success = await supabaseOrders.approve(ord.id);
+                                    // Persist in approved IDs set immediately
+                                    try {
+                                      const approvedList = JSON.parse(localStorage.getItem('pornpong_approved_order_ids') || '[]');
+                                      if (!approvedList.map(String).includes(targetOrderId)) {
+                                        approvedList.push(targetOrderId);
+                                        localStorage.setItem('pornpong_approved_order_ids', JSON.stringify(approvedList));
+                                      }
+                                      // Remove from rejected if present
+                                      const rejectedList = JSON.parse(localStorage.getItem('pornpong_rejected_order_ids') || '[]');
+                                      const filteredRej = rejectedList.filter((x: any) => String(x) !== targetOrderId);
+                                      localStorage.setItem('pornpong_rejected_order_ids', JSON.stringify(filteredRej));
+                                    } catch {}
+
+                                    const success = await supabaseOrders.approve(targetOrderId);
                                     if (success) {
                                       // 1. Create In-App notification for customer
                                       const isPre = isOrderPreOrder(ord);
                                       const approvalMsg = isPre
-                                        ? `การชำระเงินเสร็จสิ้น! รายการสั่งซื้อพรีออเดอร์ #${ord.id} ได้รับการยืนยันแล้ว ทางโรงงานลงทะเบียนคิวผลิตเข้าระบบเรียบร้อยแล้ว`
-                                        : `การชำระเงินเสร็จสิ้น! คำสั่งซื้อ #${ord.id} เป็นสินค้าพร้อมส่ง (In-Stock) ชำระเงินเรียบร้อยแล้ว ทางคลังสินค้ากำลังเตรียมบรรจุหีบห่อและส่งมอบให้ขนส่งโดยตรง`;
+                                        ? `การชำระเงินเสร็จสิ้น! รายการสั่งซื้อพรีออเดอร์ #${targetOrderId} ได้รับการยืนยันแล้ว ทางโรงงานลงทะเบียนคิวผลิตเข้าระบบเรียบร้อยแล้ว`
+                                        : `การชำระเงินเสร็จสิ้น! คำสั่งซื้อ #${targetOrderId} เป็นสินค้าพร้อมส่ง (In-Stock) ชำระเงินเรียบร้อยแล้ว ทางคลังสินค้ากำลังเตรียมบรรจุหีบห่อและส่งมอบให้ขนส่งโดยตรง`;
                                       const newNoti = {
                                         id: 'noti-appr-' + Date.now(),
                                         title: 'การชำระเงินเสร็จสิ้น!',
@@ -3585,24 +3669,27 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                                       // Save to unshown approvals list so storefront shows Pop-up
                                       try {
                                         const unshown = JSON.parse(localStorage.getItem('pornpong_unshown_approvals') || '[]');
-                                        unshown.push({ orderId: ord.id, message: approvalMsg, timestamp: Date.now() });
+                                        unshown.push({ orderId: targetOrderId, message: approvalMsg, timestamp: Date.now() });
                                         localStorage.setItem('pornpong_unshown_approvals', JSON.stringify(unshown));
                                       } catch {}
 
                                       // Dispatch broadcast event for realtime tabs
                                       window.dispatchEvent(new CustomEvent('pornpong-order-approved', {
-                                        detail: { orderId: ord.id, notification: newNoti }
+                                        detail: { orderId: targetOrderId, notification: newNoti }
                                       }));
 
-                                      triggerToast(`อนุมัติการชำระเงินสำหรับคำสั่งซื้อ #${ord.id} สำเร็จ!`);
+                                      triggerToast(`อนุมัติการชำระเงินสำหรับคำสั่งซื้อ #${targetOrderId} สำเร็จ!`);
                                     } else {
-                                      triggerToast(`อนุมัติการชำระเงินคำสั่งซื้อ #${ord.id} เรียบร้อยแล้ว`);
+                                      triggerToast(`อนุมัติการชำระเงินคำสั่งซื้อ #${targetOrderId} เรียบร้อยแล้ว`);
                                     }
+                                    setWaitingVerifyOrders(prev => prev.filter(o => String(o.id) !== targetOrderId));
                                     await reloadWaitingVerifyOrders();
                                     await reloadOrders();
+                                    setWaitingVerifyOrders(prev => prev.filter(o => String(o.id) !== targetOrderId));
                                   } catch (err: any) {
                                     console.error('Approve payment error:', err);
                                     triggerToast('ข้อผิดพลาด: ' + (err?.message || 'ไม่สามารถอนุมัติได้'));
+                                    setWaitingVerifyOrders(prev => prev.filter(o => String(o.id) !== targetOrderId));
                                     await reloadWaitingVerifyOrders();
                                   } finally {
                                     setIsVerifying(null);
