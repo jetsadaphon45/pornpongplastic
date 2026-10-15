@@ -540,9 +540,9 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, o
         setUploadedSlipUrl(slipUrl);
       }
 
-      // Update to status = 'pending_verification' and payment_status = 'pending' per requirement
+      // Update to status = 'pending_verification' and payment_status = 'pending_verification' per requirement
       hasTriggeredApprovalRef.current = false;
-      setCurrentPaymentStatus('pending');
+      setCurrentPaymentStatus('pending_verification');
       setCurrentOrderStatus('pending_verification');
 
       if (isSupabaseConfigured) {
@@ -550,7 +550,7 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, o
           if (supabase) {
             await supabase.from('orders').update({
               status: 'pending_verification',
-              payment_status: 'pending',
+              payment_status: 'pending_verification',
               order_status: 'pending_verification',
               payment_slip_url: slipUrl,
               slip_url: slipUrl,
@@ -572,7 +572,7 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, o
                 payment_slip_url: slipUrl || slipPreview, 
                 slip_url: slipUrl || slipPreview, 
                 status: 'pending_verification',
-                payment_status: 'pending', 
+                payment_status: 'pending_verification', 
                 order_status: 'pending_verification' 
               }
             : o
@@ -587,7 +587,7 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, o
                 payment_slip_url: slipUrl || slipPreview, 
                 slip_url: slipUrl || slipPreview, 
                 status: 'pending_verification',
-                payment_status: 'pending', 
+                payment_status: 'pending_verification', 
                 order_status: 'pending_verification' 
               }
             : p
@@ -600,7 +600,7 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, o
       setActiveOrder((prev: any) => ({
         ...prev,
         status: 'pending_verification',
-        payment_status: 'pending',
+        payment_status: 'pending_verification',
         order_status: 'pending_verification',
         payment_slip_url: slipUrl,
         slip_url: slipUrl
@@ -625,12 +625,12 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, o
     } catch (err: any) {
       console.error('Failed to submit slip:', err);
       setUploadedSlipUrl(slipPreview || '');
-      setCurrentPaymentStatus('pending');
+      setCurrentPaymentStatus('pending_verification');
       setCurrentOrderStatus('pending_verification');
       setActiveOrder((prev: any) => ({
         ...prev,
         status: 'pending_verification',
-        payment_status: 'pending'
+        payment_status: 'pending_verification'
       }));
       triggerToast('ระบบได้รับหลักฐานการชำระเงินเรียบร้อยแล้ว');
       setStep('verifying');

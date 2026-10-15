@@ -2146,8 +2146,8 @@ export const supabaseOrders = {
       }
 
       // Must be waiting verification
-      const isPending = ['pending_verification', 'waiting_verify', 'waiting_approval'].includes(ps) ||
-                        ['pending_verification', 'waiting_verify', 'waiting_approval'].includes(s);
+      const isPending = ['pending_verification', 'waiting_verify', 'waiting_approval', 'pending'].includes(ps) ||
+                        ['pending_verification', 'waiting_verify', 'waiting_approval', 'pending'].includes(s);
       return !isPending;
     };
 
@@ -2190,24 +2190,30 @@ export const supabaseOrders = {
     }
 
     try {
-      // 1. Query orders with payment_status in pending
-      const { data: payPendingData, error: payErr } = await supabase
+      // Unified query: .or('status.eq.pending_verification,status.eq.pending,payment_status.eq.pending,payment_status.eq.pending_verification')
+      const { data: unifiedData, error: queryErr } = await supabase
         .from('orders')
         .select('*')
-        .in('payment_status', ['pending_verification', 'waiting_verify', 'waiting_approval'])
+        .or('status.eq.pending_verification,status.eq.pending,payment_status.eq.pending,payment_status.eq.pending_verification')
         .order('created_at', { ascending: false });
 
-      // 2. Query orders with status in pending
-      const { data: statusPendingData } = await supabase
-        .from('orders')
-        .select('*')
-        .in('status', ['pending_verification', 'waiting_verify', 'waiting_approval'])
-        .order('created_at', { ascending: false });
+      if (queryErr) {
+        console.warn('Unified pending verification query note:', queryErr.message);
+      }
 
-      const rawCombined = [
-        ...(!payErr && payPendingData ? payPendingData : []),
-        ...(statusPendingData ? statusPendingData : [])
-      ];
+      let rawCombined: any[] = (!queryErr && unifiedData) ? unifiedData : [];
+
+      // Fallback in case of syntax or empty response if orders exist with pending status
+      if (rawCombined.length === 0) {
+        const { data: fallbackData } = await supabase
+          .from('orders')
+          .select('*')
+          .in('payment_status', ['pending_verification', 'waiting_verify', 'waiting_approval', 'pending'])
+          .order('created_at', { ascending: false });
+        if (fallbackData && fallbackData.length > 0) {
+          rawCombined = fallbackData;
+        }
+      }
 
       // De-duplicate by ID
       const seenIds = new Set<string>();
@@ -2540,7 +2546,7 @@ export const supabaseOrders = {
         payment_slip_url: finalSlipUrl,
         slip_url: finalSlipUrl,
         status: 'pending_verification',
-        payment_status: 'pending',
+        payment_status: 'pending_verification',
         order_status: 'pending_verification',
         updated_at: new Date().toISOString()
       };
@@ -2566,7 +2572,7 @@ export const supabaseOrders = {
               payment_slip_url: finalSlipUrl, 
               slip_url: finalSlipUrl, 
               status: 'pending_verification',
-              payment_status: 'pending',
+              payment_status: 'pending_verification',
               order_status: 'pending_verification'
             })
             .eq('id', orderId);
@@ -2579,7 +2585,7 @@ export const supabaseOrders = {
               payment_slip_url: finalSlipUrl, 
               slip_url: finalSlipUrl, 
               status: 'pending_verification',
-              payment_status: 'pending',
+              payment_status: 'pending_verification',
               order_status: 'pending_verification'
             })
             .eq('id', orderId);
@@ -2596,7 +2602,7 @@ export const supabaseOrders = {
                 payment_slip_url: finalSlipUrl, 
                 slip_url: finalSlipUrl, 
                 status: 'pending_verification',
-                payment_status: 'pending',
+                payment_status: 'pending_verification',
                 order_status: 'pending_verification'
               } 
             : o
@@ -2611,7 +2617,7 @@ export const supabaseOrders = {
                 payment_slip_url: finalSlipUrl, 
                 slip_url: finalSlipUrl, 
                 status: 'pending_verification',
-                payment_status: 'pending',
+                payment_status: 'pending_verification',
                 order_status: 'pending_verification'
               }
             : p

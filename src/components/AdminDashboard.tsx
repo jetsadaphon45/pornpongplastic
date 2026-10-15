@@ -230,8 +230,8 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
         return false;
       }
 
-      return ['pending_verification', 'waiting_verify', 'waiting_approval'].includes(ps) ||
-             ['pending_verification', 'waiting_verify', 'waiting_approval'].includes(s);
+      return ['pending_verification', 'waiting_verify', 'waiting_approval', 'pending'].includes(ps) ||
+             ['pending_verification', 'waiting_verify', 'waiting_approval', 'pending'].includes(s);
     });
   }, [waitingVerifyOrders]);
 
@@ -323,8 +323,8 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
           return false;
         }
 
-        return ['pending_verification', 'waiting_verify', 'waiting_approval'].includes(ps) ||
-               ['pending_verification', 'waiting_verify', 'waiting_approval'].includes(s);
+        return ['pending_verification', 'waiting_verify', 'waiting_approval', 'pending'].includes(ps) ||
+               ['pending_verification', 'waiting_verify', 'waiting_approval', 'pending'].includes(s);
       });
       setWaitingVerifyOrders(filtered);
     } catch (err) {
