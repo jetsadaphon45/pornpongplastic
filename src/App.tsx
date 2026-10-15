@@ -733,6 +733,28 @@ export default function App() {
             setIsProfileOpen(true);
           }
         }}
+        onTrackOrder={(orderToTrack?: any) => {
+          const ord = orderToTrack || currentOrder;
+          setCurrentOrder(null);
+          navigateTo('/');
+          if (ord) {
+            const guestUser: User = {
+              id: ord.customer_id || ord.user_id || `guest-${Date.now()}`,
+              name: ord.customer_name || 'ลูกค้าทั่วไป',
+              email: ord.customer_email || 'guest@example.com',
+              phone: ord.customer_phone || '',
+              address: ord.address || ''
+            };
+            if (!currentUser) {
+              setCurrentUser(guestUser);
+              try {
+                localStorage.setItem('pornpong_current_user', JSON.stringify(guestUser));
+              } catch {}
+            }
+          }
+          setProfileInitialTab('deliveries');
+          setIsProfileOpen(true);
+        }}
         triggerToast={triggerToast}
       />
     );

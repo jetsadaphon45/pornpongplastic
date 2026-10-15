@@ -21,18 +21,86 @@ import {
   Loader2,
   Search,
   ExternalLink,
+  Truck,
   Image as ImageIcon
 } from 'lucide-react';
 import { supabaseOrders, isSupabaseConfigured, supabase, isOrderPreOrder } from '../lib/supabase';
+
+// Helper to determine if an order has been approved or moved beyond pending_verification
+export const isOrderStatusApproved = (ord: any): boolean => {
+  if (!ord) return false;
+  const s = String(ord.status || '').toLowerCase().trim();
+  const os = String(ord.order_status || '').toLowerCase().trim();
+  const ps = String(ord.payment_status || '').toLowerCase().trim();
+  const ds = String(ord.delivery_status || '').toLowerCase().trim();
+
+  const approvedPaymentStatuses = ['verified', 'paid', 'approved', 'completed', 'success'];
+  const approvedOrderStatuses = [
+    'paid',
+    'ready_to_ship',
+    'producing',
+    'manufacturing',
+    'in_transit',
+    'shipping',
+    'ready_for_shipping',
+    'completed',
+    'delivered',
+    'processing'
+  ];
+
+  if (approvedPaymentStatuses.includes(ps)) return true;
+  if (approvedOrderStatuses.includes(s) && !['pending_verification', 'waiting_verify', 'waiting_approval', 'pending'].includes(s)) return true;
+  if (approvedOrderStatuses.includes(os) && !['pending_verification', 'waiting_verify', 'waiting_approval', 'pending'].includes(os)) return true;
+  if (ds && !['pending', 'waiting'].includes(ds)) return true;
+
+  return false;
+};
+
+// Web Audio API success sound chime (zero external dependencies, reliable & crisp)
+const playSuccessChime = () => {
+  try {
+    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioContextClass) return;
+    const ctx = new AudioContextClass();
+    const now = ctx.currentTime;
+    
+    // Tone 1: E5 (659.25 Hz)
+    const osc1 = ctx.createOscillator();
+    const gain1 = ctx.createGain();
+    osc1.type = 'sine';
+    osc1.frequency.setValueAtTime(659.25, now);
+    gain1.gain.setValueAtTime(0.2, now);
+    gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+    osc1.connect(gain1);
+    gain1.connect(ctx.destination);
+    osc1.start(now);
+    osc1.stop(now + 0.35);
+
+    // Tone 2: A5 (880 Hz)
+    const osc2 = ctx.createOscillator();
+    const gain2 = ctx.createGain();
+    osc2.type = 'triangle';
+    osc2.frequency.setValueAtTime(880, now + 0.12);
+    gain2.gain.setValueAtTime(0.25, now + 0.12);
+    gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.65);
+    osc2.connect(gain2);
+    gain2.connect(ctx.destination);
+    osc2.start(now + 0.12);
+    osc2.stop(now + 0.65);
+  } catch {
+    // Autoplay policy or browser mute fallback
+  }
+};
 
 interface PaymentPageProps {
   order: any;
   onBackToHome: () => void;
   onViewOrderHistory?: () => void;
+  onTrackOrder?: (order?: any) => void;
   triggerToast: (msg: string) => void;
 }
 
-export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, triggerToast }: PaymentPageProps) {
+export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, onTrackOrder, triggerToast }: PaymentPageProps) {
   // Navigation Step: 'pay' -> 'verifying' -> 'approved'
   const [step, setStep] = React.useState<'pay' | 'verifying' | 'approved'>('pay');
   const [copiedAccount, setCopiedAccount] = React.useState(false);
@@ -41,45 +109,9 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, t
   const [slipError, setSlipError] = React.useState<string | null>(null);
   const [isProcessing, setIsProcessing] = React.useState(false);
 
-  // 3-Second Auto-Redirect countdown state when payment is completed
+  // 3-Second Auto-Redirect countdown state when payment is approved
   const [autoRedirectCountdown, setAutoRedirectCountdown] = React.useState<number>(3);
   const hasRedirectedRef = React.useRef(false);
-
-  const handleReturnHome = React.useCallback(() => {
-    if (hasRedirectedRef.current) return;
-    hasRedirectedRef.current = true;
-    if (onBackToHome) {
-      onBackToHome();
-    } else {
-      window.location.href = '/';
-    }
-    if (typeof window !== 'undefined' && window.location.pathname !== '/') {
-      window.history.pushState(null, '', '/');
-    }
-  }, [onBackToHome]);
-
-  // 3-Second Auto-Redirect effect when entering 'approved' step
-  React.useEffect(() => {
-    if (step !== 'approved') return;
-
-    setAutoRedirectCountdown(3);
-    hasRedirectedRef.current = false;
-
-    const timer = setInterval(() => {
-      setAutoRedirectCountdown((prev) => {
-        if (prev <= 1) {
-          clearInterval(timer);
-          handleReturnHome();
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-
-    return () => {
-      clearInterval(timer);
-    };
-  }, [step, handleReturnHome]);
 
   // Fallback initial order info
   const [activeOrder, setActiveOrder] = React.useState<any>(order || {
@@ -98,20 +130,90 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, t
   const [currentOrderStatus, setCurrentOrderStatus] = React.useState(activeOrder.order_status || 'waiting_payment');
   const [uploadedSlipUrl, setUploadedSlipUrl] = React.useState<string>('');
 
+  const handleReturnHome = React.useCallback(() => {
+    if (hasRedirectedRef.current) return;
+    hasRedirectedRef.current = true;
+    if (onBackToHome) {
+      onBackToHome();
+    } else {
+      window.location.href = '/';
+    }
+    if (typeof window !== 'undefined' && window.location.pathname !== '/') {
+      window.history.pushState(null, '', '/');
+    }
+  }, [onBackToHome]);
+
+  const handleGoToTracking = React.useCallback(() => {
+    if (hasRedirectedRef.current) return;
+    hasRedirectedRef.current = true;
+    if (onTrackOrder) {
+      onTrackOrder(activeOrder);
+    } else if (onViewOrderHistory) {
+      onViewOrderHistory();
+    } else {
+      handleReturnHome();
+    }
+  }, [onTrackOrder, onViewOrderHistory, handleReturnHome, activeOrder]);
+
+  // 3-Second Auto-Redirect effect to Track Order when entering 'approved' step
+  React.useEffect(() => {
+    if (step !== 'approved') return;
+
+    setAutoRedirectCountdown(3);
+    hasRedirectedRef.current = false;
+
+    const timer = setInterval(() => {
+      setAutoRedirectCountdown((prev) => {
+        if (prev <= 1) {
+          clearInterval(timer);
+          handleGoToTracking();
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => {
+      clearInterval(timer);
+    };
+  }, [step, handleGoToTracking]);
+
+  // Unified function to transition order to approved with sound and notification
+  const triggerApprovalSuccess = React.useCallback((updatedData?: any) => {
+    playSuccessChime();
+    triggerToast('🎉 ชำระเงินสำเร็จแล้ว! เจ้าหน้าที่ตรวจสอบและอนุมัติเรียบร้อยแล้ว');
+
+    const nextStatus = updatedData?.status || updatedData?.order_status || 'ready_to_ship';
+    setActiveOrder((prev: any) => ({
+      ...prev,
+      ...(updatedData || {}),
+      payment_status: 'paid',
+      status: nextStatus,
+      order_status: nextStatus
+    }));
+    setCurrentPaymentStatus('paid');
+    setCurrentOrderStatus(nextStatus);
+    if (updatedData?.payment_slip_url || updatedData?.slip_url) {
+      setUploadedSlipUrl(updatedData.payment_slip_url || updatedData.slip_url);
+    }
+    setStep('approved');
+  }, [triggerToast]);
+
   // Synchronize and lookup order from url params or prop
   React.useEffect(() => {
     if (order) {
       setActiveOrder(order);
       setCurrentPaymentStatus(order.payment_status || 'pending');
-      setCurrentOrderStatus(order.order_status || 'waiting_payment');
-      if (['paid', 'completed', 'approved'].includes(order.payment_status) || ['paid', 'completed'].includes(order.order_status)) {
-        if (order.payment_slip_url) {
-          setUploadedSlipUrl(order.payment_slip_url);
+      setCurrentOrderStatus(order.order_status || order.status || 'waiting_payment');
+      
+      if (isOrderStatusApproved(order)) {
+        if (order.payment_slip_url || order.slip_url) {
+          setUploadedSlipUrl(order.payment_slip_url || order.slip_url);
         }
         setStep('approved');
       } else if (['pending_verification', 'waiting_approval', 'waiting_verify'].includes(order.payment_status)) {
-        if (order.payment_slip_url) {
-          setUploadedSlipUrl(order.payment_slip_url);
+        if (order.payment_slip_url || order.slip_url) {
+          setUploadedSlipUrl(order.payment_slip_url || order.slip_url);
         }
         setStep('verifying');
       }
@@ -138,15 +240,17 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, t
                 customer_phone: data.customer_phone || '081-XXX-XXXX',
                 total_amount: Number(data.total_amount || data.amount || 0),
                 payment_status: data.payment_status || data.status || 'pending',
-                order_status: data.order_status || 'waiting_payment',
+                status: data.status || data.order_status || 'waiting_payment',
+                order_status: data.order_status || data.status || 'waiting_payment',
                 productName: data.productName || data.product_name || 'เรือและชุดพ่วงอุปกรณ์',
                 color: data.color || 'คละสี',
-                payment_slip_url: data.payment_slip_url || ''
+                payment_slip_url: data.payment_slip_url || data.slip_url || ''
               };
               setActiveOrder(formattedOrder);
               setCurrentPaymentStatus(formattedOrder.payment_status);
-              setCurrentOrderStatus(formattedOrder.order_status);
-              if (['paid', 'completed', 'approved'].includes(formattedOrder.payment_status) || ['paid', 'completed', 'ready_for_shipping', 'ready_to_ship', 'in_transit'].includes(formattedOrder.order_status)) {
+              setCurrentOrderStatus(formattedOrder.status);
+              
+              if (isOrderStatusApproved(formattedOrder)) {
                 if (formattedOrder.payment_slip_url) {
                   setUploadedSlipUrl(formattedOrder.payment_slip_url);
                 }
@@ -167,132 +271,129 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, t
     }
   }, [order]);
 
-  // REAL-TIME STATUS SYNC & POLLING (Supabase Realtime + 3-second Polling + Broadcast Event)
+  // REAL-TIME STATUS SYNC & POLLING (Supabase Realtime + 1.5s Polling + Window Broadcast + Cross-tab Storage)
   React.useEffect(() => {
-    if (!activeOrder?.id || step === 'approved') return;
+    const targetOrderId = activeOrder?.id;
+    if (!targetOrderId || step === 'approved') return;
 
-    // 1. Polling interval (Every 3 seconds)
+    // 1. High-frequency Polling (every 1.5 seconds) for guaranteed rapid responsiveness
     const pollInterval = setInterval(async () => {
       try {
-        // A. Check Supabase orders table
+        // A. Direct query to Supabase orders table
         if (isSupabaseConfigured && supabase) {
           const { data, error } = await supabase
             .from('orders')
             .select('*')
-            .eq('id', activeOrder.id)
+            .eq('id', targetOrderId)
             .maybeSingle();
 
-          if (data && !error) {
-            const isApproved = 
-              ['paid', 'completed', 'approved'].includes(data.payment_status) ||
-              ['paid', 'completed', 'processing', 'ready_for_shipping', 'ready_to_ship', 'in_transit'].includes(data.order_status);
+          if (data && !error && isOrderStatusApproved(data)) {
+            triggerApprovalSuccess(data);
+            return;
+          }
 
-            if (isApproved) {
-              const defaultOrdStatus = isOrderPreOrder(data) ? 'manufacturing' : 'ready_to_ship';
-              setActiveOrder((prev: any) => ({
-                ...prev,
-                ...data,
-                payment_status: 'paid',
-                order_status: data.order_status || defaultOrdStatus
-              }));
-              setCurrentPaymentStatus('paid');
-              setCurrentOrderStatus(data.order_status || defaultOrdStatus);
-              if (data.payment_slip_url) {
-                setUploadedSlipUrl(data.payment_slip_url);
-              }
-              setStep('approved');
-              triggerToast('ชำระเงินเสร็จสิ้นเรียบร้อยแล้ว!');
-              return;
-            }
+          // Also check deliveries table
+          const { data: delivData } = await supabase
+            .from('deliveries')
+            .select('*')
+            .eq('order_id', targetOrderId)
+            .maybeSingle();
+          if (delivData && delivData.delivery_status && !['pending', 'waiting'].includes(delivData.delivery_status)) {
+            triggerApprovalSuccess({ ...data, status: delivData.delivery_status, payment_status: 'verified' });
+            return;
           }
         }
 
-        // B. Check local storage fallback (for immediate sync when tested in same browser)
+        // B. Check local storage fallback (instant sync when tested in same browser)
         try {
           const localOrders = JSON.parse(localStorage.getItem('admin_orders') || '[]');
-          const found = localOrders.find((o: any) => o.id === activeOrder.id);
-          if (found) {
-            const isApproved = 
-              ['paid', 'completed', 'approved'].includes(found.payment_status) ||
-              ['paid', 'completed', 'processing', 'ready_for_shipping', 'ready_to_ship', 'in_transit'].includes(found.order_status);
+          const found = localOrders.find((o: any) => String(o.id) === String(targetOrderId));
+          if (found && isOrderStatusApproved(found)) {
+            triggerApprovalSuccess(found);
+            return;
+          }
 
-            if (isApproved) {
-              const defaultOrdStatus = isOrderPreOrder(found) ? 'manufacturing' : 'ready_to_ship';
-              setActiveOrder((prev: any) => ({
-                ...prev,
-                ...found,
-                payment_status: 'paid',
-                order_status: found.order_status || defaultOrdStatus
-              }));
-              setCurrentPaymentStatus('paid');
-              setCurrentOrderStatus(found.order_status || defaultOrdStatus);
-              if (found.payment_slip_url) {
-                setUploadedSlipUrl(found.payment_slip_url);
-              }
-              setStep('approved');
-              triggerToast('ชำระเงินเสร็จสิ้นเรียบร้อยแล้ว!');
-            }
+          // Check pornpong_unshown_approvals
+          const approvals = JSON.parse(localStorage.getItem('pornpong_unshown_approvals') || '[]');
+          const hasApproval = approvals.some((a: any) => String(a.orderId) === String(targetOrderId));
+          if (hasApproval) {
+            triggerApprovalSuccess({ status: 'ready_to_ship', payment_status: 'verified' });
+            return;
           }
         } catch {}
       } catch (pollErr) {
         console.warn('Polling order status check error:', pollErr);
       }
-    }, 3000);
+    }, 1500);
 
-    // 2. Custom window event listener (dispatched directly when admin approves in AdminDashboard)
+    // 2. Custom window event listeners (dispatched directly when admin approves in AdminDashboard)
     const handleBroadcastApproval = (e: any) => {
-      const targetOrderId = e.detail?.orderId;
-      if (targetOrderId && targetOrderId === activeOrder.id) {
-        setCurrentPaymentStatus('paid');
-        setCurrentOrderStatus('processing');
-        setActiveOrder((prev: any) => ({
-          ...prev,
-          payment_status: 'paid',
-          order_status: 'processing'
-        }));
-        setStep('approved');
-        triggerToast('ชำระเงินเสร็จสิ้นเรียบร้อยแล้ว!');
+      const orderId = e.detail?.orderId || e.detail?.id;
+      if (orderId && String(orderId) === String(targetOrderId)) {
+        triggerApprovalSuccess(e.detail);
       }
     };
     window.addEventListener('pornpong-order-approved', handleBroadcastApproval);
+    window.addEventListener('pornpong-shipping-in-transit', handleBroadcastApproval);
+    window.addEventListener('pornpong-delivery-updated', handleBroadcastApproval);
+    window.addEventListener('orders-updated', handleBroadcastApproval);
 
-    // 3. Supabase Realtime Subscription (postgres_changes)
+    // 3. Storage event listener for cross-window / cross-tab changes
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === 'pornpong_unshown_approvals' || e.key === 'admin_orders' || e.key === 'pornpong_orders') {
+        try {
+          const localOrders = JSON.parse(localStorage.getItem('admin_orders') || '[]');
+          const found = localOrders.find((o: any) => String(o.id) === String(targetOrderId));
+          if (found && isOrderStatusApproved(found)) {
+            triggerApprovalSuccess(found);
+          }
+        } catch {}
+      }
+    };
+    window.addEventListener('storage', handleStorageChange);
+
+    // 4. Supabase Realtime Subscription (postgres_changes on orders and deliveries)
     let channel: any = null;
     if (isSupabaseConfigured && supabase) {
       try {
         channel = supabase
-          .channel(`order-status-${activeOrder.id}`)
+          .channel(`order-realtime-listener-${targetOrderId}-${Date.now()}`)
           .on(
             'postgres_changes',
             {
-              event: 'UPDATE',
+              event: '*',
               schema: 'public',
               table: 'orders',
-              filter: `id=eq.${activeOrder.id}`
+              filter: `id=eq.${targetOrderId}`
             },
             (payload: any) => {
-              const updated = payload.new;
-              if (
-                ['paid', 'completed', 'approved'].includes(updated?.payment_status) ||
-                ['paid', 'completed', 'processing'].includes(updated?.order_status)
-              ) {
-                setActiveOrder((prev: any) => ({
-                  ...prev,
-                  ...updated,
-                  payment_status: 'paid',
-                  order_status: updated?.order_status || 'processing'
-                }));
-                setCurrentPaymentStatus('paid');
-                setCurrentOrderStatus(updated?.order_status || 'processing');
-                if (updated?.payment_slip_url) {
-                  setUploadedSlipUrl(updated.payment_slip_url);
-                }
-                setStep('approved');
-                triggerToast('ชำระเงินเสร็จสิ้นเรียบร้อยแล้ว!');
+              const updated = payload.new || payload.record;
+              if (updated && isOrderStatusApproved(updated)) {
+                triggerApprovalSuccess(updated);
               }
             }
           )
-          .subscribe();
+          .on(
+            'postgres_changes',
+            {
+              event: '*',
+              schema: 'public',
+              table: 'deliveries',
+              filter: `order_id=eq.${targetOrderId}`
+            },
+            (payload: any) => {
+              const updated = payload.new || payload.record;
+              if (updated) {
+                triggerApprovalSuccess({
+                  status: updated.delivery_status || 'ready_to_ship',
+                  payment_status: 'verified'
+                });
+              }
+            }
+          )
+          .subscribe((status: string) => {
+            console.log(`[Supabase Realtime] Order #${targetOrderId} subscription status:`, status);
+          });
       } catch (channelErr) {
         console.warn('Realtime channel subscription error:', channelErr);
       }
@@ -301,11 +402,15 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, t
     return () => {
       clearInterval(pollInterval);
       window.removeEventListener('pornpong-order-approved', handleBroadcastApproval);
+      window.removeEventListener('pornpong-shipping-in-transit', handleBroadcastApproval);
+      window.removeEventListener('pornpong-delivery-updated', handleBroadcastApproval);
+      window.removeEventListener('orders-updated', handleBroadcastApproval);
+      window.removeEventListener('storage', handleStorageChange);
       if (channel && supabase) {
         supabase.removeChannel(channel);
       }
     };
-  }, [activeOrder?.id, step, triggerToast]);
+  }, [activeOrder?.id, step, triggerApprovalSuccess]);
 
   const handleCopyAccount = () => {
     navigator.clipboard.writeText('123-4-56789-0');
@@ -580,17 +685,17 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, t
           
           {/* Main Titles */}
           <div className="space-y-2">
-            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-[11px] font-bold">
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-[11px] font-bold shadow-2xs">
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-              <span>ชำระเงินเสร็จสิ้น (Payment Completed)</span>
+              <span>ชำระเงินสำเร็จแล้ว (Payment Approved & Verified)</span>
             </div>
             
             <h1 className="font-display text-2xl sm:text-3xl font-extrabold text-slate-850">
-              ชำระเงินเสร็จสิ้นเรียบร้อยแล้ว!
+              ชำระเงินสำเร็จแล้ว!
             </h1>
             
             <p className="text-xs sm:text-sm text-slate-600 max-w-md mx-auto leading-relaxed">
-              ทางโรงงานได้รับการชำระเงินของท่านเรียบร้อยแล้ว เตรียมจัดส่งสินค้าตามกำหนดการ
+              ทางโรงงานได้ตรวจสอบและอนุมัติการชำระเงินของท่านเรียบร้อยแล้ว เตรียมจัดส่งสินค้าตามกำหนดการ
             </p>
           </div>
 
@@ -682,36 +787,29 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, t
             );
           })()}
 
-          {/* Action Button: Centered Return to Home with 3-Second Auto-Redirect */}
-          <div className="pt-2 flex flex-col items-center gap-2.5">
+          {/* Action Button: Auto-Redirect to Track Order + Primary Tracking Button */}
+          <div className="pt-2 flex flex-col items-center gap-3">
+            <button
+              type="button"
+              onClick={handleGoToTracking}
+              className="w-full sm:w-auto sm:min-w-[280px] px-8 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-display font-bold text-xs py-4 cursor-pointer shadow-md hover:shadow-lg transition-all duration-200 flex items-center justify-center gap-2 active:scale-[0.99]"
+              id="btn-track-order-from-approved"
+            >
+              <Truck size={17} />
+              <span>ไปยังหน้าติดตามคำสั่งซื้อทันที (Track Order)</span>
+            </button>
+            <p className="text-[11.5px] text-slate-500 font-medium flex items-center gap-1.5 animate-pulse">
+              <Clock size={13} className="text-emerald-600" />
+              <span>กำลังนำท่านไปยังหน้าติดตามคำสั่งซื้ออัตโนมัติใน {autoRedirectCountdown} วินาที...</span>
+            </p>
             <button
               type="button"
               onClick={handleReturnHome}
-              className="w-full sm:w-auto sm:min-w-[260px] px-8 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-display font-bold text-xs py-4 cursor-pointer shadow-md hover:shadow-lg transition-all duration-200 flex items-center justify-center gap-2 active:scale-[0.99]"
+              className="text-[11.5px] text-slate-500 hover:text-slate-700 font-semibold underline transition-colors cursor-pointer"
               id="btn-return-home-from-approved"
             >
-              <ArrowLeft size={16} />
-              <span>กลับสู่หน้าแรก</span>
+              กลับสู่หน้าแรก
             </button>
-            <p className="text-[11.5px] text-slate-500 font-medium flex items-center gap-1.5 animate-pulse">
-              <Clock size={12} className="text-emerald-600" />
-              <span>กำลังนำท่านกลับสู่หน้าหลักใน {autoRedirectCountdown} วินาที...</span>
-            </p>
-            {onViewOrderHistory && (
-              <button
-                type="button"
-                onClick={() => {
-                  hasRedirectedRef.current = true;
-                  onViewOrderHistory();
-                }}
-                className="text-[11.5px] text-emerald-700 hover:text-emerald-800 font-bold underline transition-colors cursor-pointer mt-0.5"
-                id="btn-view-order-history-from-approved"
-              >
-                {isOrderPreOrder(activeOrder)
-                  ? 'ดูสถานะและติดตามคิวผลิตในประวัติคำสั่งซื้อ'
-                  : '🚚 ดูสถานะและติดตามการจัดส่งในหน้าติดตามจัดส่ง'}
-              </button>
-            )}
           </div>
 
         </div>
