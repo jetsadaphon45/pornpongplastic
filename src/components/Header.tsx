@@ -239,6 +239,7 @@ export default function Header({
     const handleSync = () => checkUserOrders();
     window.addEventListener('orders-updated', handleSync);
     window.addEventListener('orders_updated', handleSync);
+    window.addEventListener('pornpong-order-approved', handleSync);
     window.addEventListener('pornpong-delivery-updated', handleSync);
     window.addEventListener('pornpong-order-delivered', handleSync);
     window.addEventListener('pornpong-order-status-updated', handleSync);
@@ -254,6 +255,7 @@ export default function Header({
       }
       window.removeEventListener('orders-updated', handleSync);
       window.removeEventListener('orders_updated', handleSync);
+      window.removeEventListener('pornpong-order-approved', handleSync);
       window.removeEventListener('pornpong-delivery-updated', handleSync);
       window.removeEventListener('pornpong-order-delivered', handleSync);
       window.removeEventListener('pornpong-order-status-updated', handleSync);

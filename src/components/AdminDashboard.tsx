@@ -177,6 +177,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
   const [productsCategoryFilter, setProductsCategoryFilter] = React.useState<string>('all');
   const [productsStatusFilter, setProductsStatusFilter] = React.useState<string>('all');
   const [ordersSearch, setOrdersSearch] = React.useState('');
+  const [ordersTabFilter, setOrdersTabFilter] = React.useState<'active' | 'completed'>('active');
   const [preordersSearch, setPreordersSearch] = React.useState('');
   const [supabaseOrdersSearch, setSupabaseOrdersSearch] = React.useState('');
 
@@ -400,6 +401,14 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
     reloadWaitingVerifyOrders();
     reloadPreOrderSettings();
   }, [reloadOrders, reloadPreOrders, reloadCoupons, reloadReviews, reloadPromotions, reloadWaitingVerifyOrders, reloadPreOrderSettings]);
+
+  // Sync data immediately when navigating between key tabs
+  React.useEffect(() => {
+    if (activeMenu === 'orders' || activeMenu === 'payment-verify' || activeMenu === 'queue-management') {
+      reloadOrders();
+      reloadWaitingVerifyOrders();
+    }
+  }, [activeMenu, ordersTabFilter, reloadOrders, reloadWaitingVerifyOrders]);
 
   // Real-time synchronization for orders & deliveries tables in Admin Dashboard
   React.useEffect(() => {
@@ -952,7 +961,6 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
   const grossSalesVolume = adminOrders.reduce((sum, ord) => sum + Number(ord.amount || 0), 0) + adminPreOrders.reduce((sum, pre) => sum + Number(pre.deposit || 0), 0);
 
   // Order actions
-  const [ordersTabFilter, setOrdersTabFilter] = React.useState<'active' | 'completed'>('active');
   const [selectedOrderForDetail, setSelectedOrderForDetail] = React.useState<any | null>(null);
 
   // 4-Stage Delivery Workflow Modals
@@ -1965,33 +1973,37 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
         return false;
       }
 
+      // Query criteria: .or('status.eq.ready_to_ship,status.eq.paid,status.eq.in_transit')
       const isPre = isOrderPreOrder(o);
-
-      if (isPre) {
-        // Requirement 2: หากเป็น Pre-Order (status = 'producing') ให้ย้ายไปแสดงในหน้า "จัดการคิวผลิตและจัดส่ง"
-        // ห้ามนำออเดอร์สั่งผลิตที่ยังอยู่ในขั้นตอนการผลิต (producing) มาปะปนในแท็บนี้เด็ดขาด
-        if (
-          s === 'producing' || os === 'producing' || ds === 'producing' ||
-          s === 'manufacturing' || os === 'manufacturing' || ds === 'manufacturing' ||
-          s === 'paid' || os === 'paid' ||
-          (o.queue_stage && Number(o.queue_stage) < 3)
-        ) {
-          return false;
-        }
-
-        // Only allow pre-orders that have finished production and reached shipping
-        const allowedShippingStatuses = ['ready_to_ship', 'ready_for_shipping', 'shipped', 'shipping', 'in_transit'];
-        return allowedShippingStatuses.includes(s) || allowedShippingStatuses.includes(os) || allowedShippingStatuses.includes(ds);
+      if (isPre && (s === 'producing' || os === 'producing' || ds === 'producing')) {
+        // Pre-orders currently in production queue are managed in queue-management
+        return false;
       }
 
-      // Requirement 2: หากเป็น In-Stock (status = 'ready_to_ship') ให้แสดงในหน้านี้
-      const allowedInStockStatuses = ['ready_to_ship', 'ready_for_shipping', 'shipped', 'shipping', 'in_transit'];
-      return allowedInStockStatuses.includes(s) || allowedInStockStatuses.includes(os) || allowedInStockStatuses.includes(ds);
+      const allowedActiveStatuses = [
+        'ready_to_ship',
+        'paid',
+        'ready_for_shipping',
+        'shipped',
+        'shipping',
+        'in_transit'
+      ];
+      return allowedActiveStatuses.includes(s) || allowedActiveStatuses.includes(os) || allowedActiveStatuses.includes(ds);
+    }).sort((a: any, b: any) => {
+      const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
+      const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
+      return timeB - timeA;
     });
   }, [approvedAdminOrders]);
 
   const completedOrdersList = React.useMemo(() => {
-    return approvedAdminOrders.filter(o => isOrderCompleted(o));
+    return approvedAdminOrders
+      .filter(o => isOrderCompleted(o))
+      .sort((a: any, b: any) => {
+        const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
+        const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
+        return timeB - timeA;
+      });
   }, [approvedAdminOrders]);
 
   const filteredActiveOrders = React.useMemo(() => {

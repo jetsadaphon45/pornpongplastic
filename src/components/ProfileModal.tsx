@@ -222,12 +222,12 @@ export function ProfileModal({
 
   // Helper to determine if an order is completed/delivered
   const isOrderCompleted = React.useCallback((o: any) => {
-    const s = String(o.status || '').toLowerCase().trim();
+    const s = String(o.status || (o as any).raw_status || '').toLowerCase().trim();
     const os = String((o as any).order_status || '').toLowerCase().trim();
     const ds = String(o.delivery_status || '').toLowerCase().trim();
     const sl = String(o.stageLabel || '').toLowerCase().trim();
 
-    // Must have completed/delivered status
+    // Must have completed/delivered status: status.eq.delivered or status.eq.completed
     const isDeliveredOrCompleted =
       s === 'delivered' ||
       s === 'completed' ||
@@ -240,41 +240,63 @@ export function ProfileModal({
 
     if (!isDeliveredOrCompleted) return false;
 
-    // Explicitly reject orders that are still in active stages (producing, ready_to_ship, in_transit)
-    const activeKeywords = ['producing', 'manufacturing', 'ready_to_ship', 'ready_for_shipping', 'in_transit', 'shipping', 'queue_received', 'pending_verification'];
+    // Explicitly reject orders that are still in active stages (producing, ready_to_ship, in_transit, pending_verification, paid)
+    const activeKeywords = ['producing', 'manufacturing', 'ready_to_ship', 'ready_for_shipping', 'in_transit', 'shipping', 'queue_received', 'pending_verification', 'paid'];
     if (activeKeywords.includes(s) || activeKeywords.includes(os) || activeKeywords.includes(ds)) {
       return false;
     }
-    if (['กำลังหลอม/ผลิต', 'รอขนย้าย', 'เตรียมพัสดุ / รอจัดส่ง', 'อยู่ระหว่างจัดส่ง', 'รับคิวผลิต'].includes(sl)) {
+    if (['กำลังหลอม/ผลิต', 'รอขนย้าย', 'เตรียมพัสดุ / รอจัดส่ง', 'อยู่ระหว่างจัดส่ง', 'รับคิวผลิต', 'รอตรวจสอบชำระเงิน'].includes(sl)) {
       return false;
     }
 
     return true;
   }, []);
 
-  // 1. Requirement 1: Completed Order History (Order History)
-  // Shows ONLY orders that are 'delivered' or 'completed'
-  // Strictly excludes orders still in producing/manufacturing, ready_to_ship, or in_transit
+  // 1. Requirement 2: Completed Order History (Order History)
+  // Shows ONLY orders with status.eq.delivered or status.eq.completed
+  // Strictly excludes orders still in producing, ready_to_ship, in_transit, or pending
   const completedOrders = React.useMemo(() => {
     return orders.filter(o => isOrderCompleted(o));
   }, [orders, isOrderCompleted]);
 
   // 2. Requirement 2: Active Tracked Orders (Active Shipments Tab)
-  // Shows orders that are NOT completed/delivered (status.neq.completed and status.neq.delivered)
+  // Shows active ongoing orders matching: status.eq.pending_verification, status.eq.ready_to_ship, status.eq.producing, status.eq.in_transit, status.eq.paid
+  // Strictly excludes orders that are delivered or completed
   const activeTrackedOrders = React.useMemo(() => {
     return orders.filter(o => {
-      const s = String(o.status || '').toLowerCase().trim();
+      const s = String(o.status || (o as any).raw_status || '').toLowerCase().trim();
       const os = String((o as any).order_status || '').toLowerCase().trim();
       const ds = String(o.delivery_status || '').toLowerCase().trim();
+      const ps = String((o as any).payment_status || '').toLowerCase().trim();
 
       const isCompleted = isOrderCompleted(o);
       const isCancelled =
         s === 'cancelled' ||
         s === 'ยกเลิกคำสั่งซื้อ' ||
         os === 'cancelled' ||
-        ds === 'cancelled';
+        ds === 'cancelled' ||
+        s === 'rejected';
 
-      return !isCompleted && !isCancelled;
+      if (isCompleted || isCancelled) return false;
+
+      const activeKeywords = [
+        'pending_verification',
+        'ready_to_ship',
+        'producing',
+        'manufacturing',
+        'in_transit',
+        'shipping',
+        'paid',
+        'ready_for_shipping',
+        'waiting_payment'
+      ];
+      return (
+        activeKeywords.includes(s) ||
+        activeKeywords.includes(os) ||
+        activeKeywords.includes(ds) ||
+        activeKeywords.includes(ps) ||
+        ['รับคิวผลิต', 'กำลังหลอม/ผลิต', 'รอขนย้าย', 'เตรียมพัสดุ / รอจัดส่ง', 'อยู่ระหว่างจัดส่ง', 'รอตรวจสอบชำระเงิน'].includes(o.stageLabel)
+      );
     });
   }, [orders, isOrderCompleted]);
 
@@ -320,24 +342,77 @@ export function ProfileModal({
       // 1. Fetch Supabase Orders & Deliveries table (JOIN via order_id)
       let fetchedOrders: any[] = [];
       let deliveriesMap: Record<string, any> = {};
-      try {
-        const [ordersList, delivs] = await Promise.all([
+
+      if (isSupabaseConfigured && supabase) {
+        try {
+          // Requirement 1: Query table 'orders' covering active statuses:
+          // .or('status.eq.pending_verification,status.eq.ready_to_ship,status.eq.producing,status.eq.in_transit,status.eq.paid')
+          // and also fetch completed orders (.or('status.eq.delivered,status.eq.completed')) for the completed history tab
+          const [activeRes, completedRes, delivs] = await Promise.all([
+            supabase
+              .from('orders')
+              .select('*')
+              .or('status.eq.pending_verification,status.eq.ready_to_ship,status.eq.producing,status.eq.in_transit,status.eq.paid')
+              .order('created_at', { ascending: false }),
+            supabase
+              .from('orders')
+              .select('*')
+              .or('status.eq.delivered,status.eq.completed')
+              .order('created_at', { ascending: false }),
+            supabaseDeliveries.getAll()
+          ]);
+
+          const orderMap = new Map<string, any>();
+          (activeRes.data || []).forEach((o: any) => { if (o && o.id) orderMap.set(String(o.id), o); });
+          (completedRes.data || []).forEach((o: any) => { if (o && o.id) orderMap.set(String(o.id), o); });
+          fetchedOrders = Array.from(orderMap.values());
+          deliveriesMap = delivs || {};
+        } catch (e) {
+          console.warn('Could not query orders directly from Supabase in ProfileModal:', e);
+          const [fallbackList, delivs] = await Promise.all([
+            supabaseOrders.list(),
+            supabaseDeliveries.getAll()
+          ]);
+          fetchedOrders = fallbackList || [];
+          deliveriesMap = delivs || {};
+        }
+      } else {
+        const [fallbackList, delivs] = await Promise.all([
           supabaseOrders.list(),
           supabaseDeliveries.getAll()
         ]);
-        fetchedOrders = ordersList || [];
+        fetchedOrders = fallbackList || [];
         deliveriesMap = delivs || {};
-      } catch (e) {
-        console.warn('Could not list orders and deliveries from Supabase:', e);
       }
+
+      // Merge local storage admin_orders to ensure newly placed or approved orders are present
+      try {
+        const local = JSON.parse(localStorage.getItem('admin_orders') || '[]');
+        for (const loc of local) {
+          if (!fetchedOrders.some((f: any) => String(f.id) === String(loc.id))) {
+            fetchedOrders.push(loc);
+          }
+        }
+      } catch {}
 
       // Filter orders for current user
       const userOrders = fetchedOrders.filter((o: any) => {
         if (!currentUser) return false;
-        if (currentUser.id && o.customer_id === currentUser.id) return true;
-        if (currentUser.email && o.customer_email && o.customer_email.toLowerCase() === currentUser.email.toLowerCase()) return true;
-        if (currentUser.phone && o.customer_phone === currentUser.phone) return true;
-        if (currentUser.name && o.customerName && o.customerName.toLowerCase() === currentUser.name.toLowerCase()) return true;
+        const uId = String(currentUser.id || '').trim();
+        const uEmail = String(currentUser.email || '').toLowerCase().trim();
+        const uPhone = String(currentUser.phone || '').replace(/\D/g, '');
+        const uName = String(currentUser.name || '').trim().toLowerCase();
+
+        const oId = String(o.customer_id || '').trim();
+        const oEmail = String(o.customer_email || o.email || '').toLowerCase().trim();
+        const oPhone = String(o.customer_phone || o.phone || '').replace(/\D/g, '');
+        const oName = String(o.customerName || o.customer_name || '').trim().toLowerCase();
+
+        if (uId && uId !== 'guest' && oId === uId) return true;
+        if (uEmail && uEmail !== 'guest@example.com' && oEmail === uEmail) return true;
+        if (uPhone && oPhone && (uPhone === oPhone || uPhone.endsWith(oPhone) || oPhone.endsWith(uPhone))) return true;
+        if (uName && oName && (uName === oName || uName.includes(oName) || oName.includes(uName))) return true;
+
         return false;
       });
 
@@ -358,6 +433,7 @@ export function ProfileModal({
         const estDate = delivery?.estimated_delivery_date || o.estimated_delivery_date || o.est_delivery || '';
         const delivStatus = (delivery?.delivery_status || '').toLowerCase();
         const ordStatus = (o.status || o.order_status || '').toLowerCase();
+        const payStatus = (o.payment_status || '').toLowerCase();
 
         let stageNumber: 1 | 2 | 3 | 4 = 1;
         let stageLabel = 'รับคิวผลิต';
@@ -420,6 +496,9 @@ export function ProfileModal({
           color: o.color || 'คละสี',
           amount: formattedAmount,
           status: stageLabel,
+          raw_status: ordStatus,
+          order_status: ordStatus,
+          payment_status: payStatus,
           stageNumber,
           stageLabel,
           statusMessage,
@@ -534,8 +613,9 @@ export function ProfileModal({
     let channel: any = null;
     if (isSupabaseConfigured && supabase) {
       try {
+        const channelName = `public:customer-profile-${currentUser?.id || 'guest'}-${Date.now()}`;
         channel = supabase
-          .channel('public:orders-deliveries-realtime')
+          .channel(channelName)
           .on(
             'postgres_changes',
             { event: '*', schema: 'public', table: 'orders' },
@@ -558,7 +638,11 @@ export function ProfileModal({
       }
     }
 
+    // Auto-poll every 3 seconds while ProfileModal is open to guarantee immediate update
+    const autoPoll = setInterval(handleSync, 3000);
+
     return () => {
+      clearInterval(autoPoll);
       window.removeEventListener('orders-updated', handleSync);
       window.removeEventListener('orders_updated', handleSync);
       window.removeEventListener('pornpong-order-delivered', handleSync);
@@ -572,7 +656,7 @@ export function ProfileModal({
         supabase.removeChannel(channel);
       }
     };
-  }, [isOpen, loadHistory]);
+  }, [isOpen, currentUser, loadHistory]);
 
   if (!isOpen || !currentUser) return null;
 

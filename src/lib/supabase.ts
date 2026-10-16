@@ -1540,8 +1540,185 @@ export const supabaseDeliveries = {
 };
 
 export const supabaseOrders = {
+  // Requirement 1: Query table 'orders' for active in-stock approved orders
+  // .or('status.eq.ready_to_ship,status.eq.paid,status.eq.in_transit').order('created_at', { ascending: false })
+  async listActiveInStock(): Promise<any[]> {
+    const formatRow = (row: any, delivery: any = null) => {
+      const isPre = isOrderPreOrder(row);
+      const carrier = delivery?.shipping_carrier || row.shipping_carrier || row.carrier_name || '';
+      const driver = delivery?.driver_phone || row.driver_phone || '';
+      const tracking = delivery?.tracking_number || row.tracking_number || row.shipmentNo || row.shipment_no || '';
+      const estDeliveryDate = delivery?.estimated_delivery_date || row.estimated_delivery_date || '';
+      const delivStatus = (delivery?.delivery_status || row.delivery_status || row.status || 'ready_to_ship').toLowerCase();
+
+      return {
+        ...row,
+        id: row.id,
+        customerName: row.customer_name || row.customerName || '',
+        customer_name: row.customer_name || row.customerName || '',
+        customer_email: row.customer_email || 'guest@example.com',
+        customer_phone: row.customer_phone || row.phone || '',
+        phone: row.customer_phone || row.phone || '',
+        date: row.created_at ? new Date(row.created_at).toISOString().split('T')[0] : '',
+        productName: row.productName || row.product_name || 'เรือพลาสติกและอุปกรณ์',
+        product_name: row.productName || row.product_name || 'เรือพลาสติกและอุปกรณ์',
+        color: row.color || 'คละสี',
+        amount: Number(row.total_amount || row.amount || 0),
+        total_amount: Number(row.total_amount || row.amount || 0),
+        status: row.status || 'ready_to_ship',
+        order_status: row.order_status || row.status || 'ready_to_ship',
+        payment_status: row.payment_status || 'verified',
+        delivery_status: delivStatus,
+        tracking_number: tracking,
+        shipmentNo: tracking,
+        shipment_no: tracking,
+        shipping_carrier: carrier,
+        carrier_name: carrier,
+        driver_phone: driver,
+        estimated_delivery_date: estDeliveryDate,
+        order_type: 'instock',
+        orderType: 'instock',
+        is_preorder: false,
+        isPreOrder: false
+      };
+    };
+
+    if (!isSupabaseConfigured || !supabase) {
+      try {
+        const local = JSON.parse(localStorage.getItem('admin_orders') || '[]');
+        return (local || [])
+          .filter((o: any) => {
+            const s = String(o.status || '').toLowerCase().trim();
+            const os = String(o.order_status || '').toLowerCase().trim();
+            return ['ready_to_ship', 'paid', 'producing', 'in_transit'].includes(s) || ['ready_to_ship', 'paid', 'producing', 'in_transit'].includes(os);
+          })
+          .sort((a: any, b: any) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime())
+          .map(o => formatRow(o));
+      } catch {
+        return [];
+      }
+    }
+
+    try {
+      const [ordersRes, deliveriesMap] = await Promise.all([
+        supabase
+          .from('orders')
+          .select('*')
+          .or('status.eq.ready_to_ship,status.eq.paid,status.eq.in_transit')
+          .order('created_at', { ascending: false }),
+        supabaseDeliveries.getAll()
+      ]);
+
+      let data = ordersRes.data || [];
+
+      // Merge local storage approved orders
+      try {
+        const local = JSON.parse(localStorage.getItem('admin_orders') || '[]');
+        for (const loc of local) {
+          if (isOrderPreOrder(loc)) continue;
+          const s = String(loc.status || '').toLowerCase().trim();
+          const os = String(loc.order_status || '').toLowerCase().trim();
+          if (['ready_to_ship', 'paid', 'in_transit'].includes(s) || ['ready_to_ship', 'paid', 'in_transit'].includes(os)) {
+            if (!data.some((r: any) => String(r.id) === String(loc.id))) {
+              data.push(loc);
+            }
+          }
+        }
+      } catch {}
+
+      // Filter: status in ready_to_ship, paid, in_transit
+      const filtered = data.filter((row: any) => {
+        if (isOrderPreOrder(row)) return false;
+        const s = String(row.status || '').toLowerCase().trim();
+        const os = String(row.order_status || '').toLowerCase().trim();
+        return ['ready_to_ship', 'paid', 'in_transit'].includes(s) || ['ready_to_ship', 'paid', 'in_transit'].includes(os);
+      });
+
+      // Sort by created_at descending
+      filtered.sort((a: any, b: any) => {
+        const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
+        const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
+        return timeB - timeA;
+      });
+
+      return filtered.map((row: any) => {
+        const orderIdStr = String(row.id).trim();
+        const delivery = deliveriesMap[orderIdStr] || deliveriesMap[row.id];
+        return formatRow(row, delivery);
+      });
+    } catch (err: any) {
+      console.warn('listActiveInStock error:', err?.message);
+      return [];
+    }
+  },
+
+  // Query table 'orders' for completed orders: .or('status.eq.delivered,status.eq.completed')
+  async listCompleted(): Promise<any[]> {
+    if (!isSupabaseConfigured || !supabase) {
+      try {
+        const local = JSON.parse(localStorage.getItem('admin_orders') || '[]');
+        return (local || []).filter((o: any) => {
+          const s = String(o.status || '').toLowerCase().trim();
+          const os = String(o.order_status || '').toLowerCase().trim();
+          const ds = String(o.delivery_status || '').toLowerCase().trim();
+          return s === 'delivered' || s === 'completed' || os === 'delivered' || os === 'completed' || ds === 'delivered' || ds === 'completed';
+        });
+      } catch {
+        return [];
+      }
+    }
+
+    try {
+      const [ordersRes, deliveriesMap] = await Promise.all([
+        supabase
+          .from('orders')
+          .select('*')
+          .or('status.eq.delivered,status.eq.completed')
+          .order('created_at', { ascending: false }),
+        supabaseDeliveries.getAll()
+      ]);
+
+      const data = ordersRes.data || [];
+      return data.map((row: any) => {
+        const orderIdStr = String(row.id).trim();
+        const delivery = deliveriesMap[orderIdStr] || deliveriesMap[row.id];
+        const carrier = delivery?.shipping_carrier || row.shipping_carrier || row.carrier_name || '';
+        const driver = delivery?.driver_phone || row.driver_phone || '';
+        const tracking = delivery?.tracking_number || row.tracking_number || row.shipmentNo || row.shipment_no || '';
+        return {
+          ...row,
+          delivery_status: 'delivered',
+          status: 'delivered',
+          order_status: 'delivered',
+          tracking_number: tracking,
+          shipmentNo: tracking,
+          shipping_carrier: carrier,
+          driver_phone: driver
+        };
+      });
+    } catch (err: any) {
+      console.warn('listCompleted error:', err?.message);
+      return [];
+    }
+  },
+
   async list(): Promise<any[]> {
-    if (!isSupabaseConfigured || !supabase) return [];
+    if (!isSupabaseConfigured || !supabase) {
+      try {
+        const local = JSON.parse(localStorage.getItem('admin_orders') || '[]');
+        return (local || []).filter((row: any) => {
+          const s = String(row.status || '').toLowerCase().trim();
+          const ps = String(row.payment_status || '').toLowerCase().trim();
+          if (['waiting_payment', 'pending_verification', 'waiting_verify', 'waiting_approval'].includes(s)) return false;
+          if (['pending_verification', 'waiting_verify', 'waiting_approval', 'pending_deposit'].includes(ps)) return false;
+          if (['cancelled', 'payment_rejected', 'rejected'].includes(s) || ['cancelled', 'payment_rejected', 'rejected'].includes(ps)) return false;
+          return true;
+        });
+      } catch {
+        return [];
+      }
+    }
+
     try {
       // JOIN orders with separate deliveries table
       const [ordersRes, deliveriesMap] = await Promise.all([
@@ -1552,12 +1729,22 @@ export const supabaseOrders = {
         supabaseDeliveries.getAll()
       ]);
 
-      if (ordersRes.error) {
-        console.warn('Could not select from orders table in Supabase:', ordersRes.error.message);
-        return [];
-      }
+      let rawData = ordersRes.data || [];
 
-      const data = (ordersRes.data || []).filter((row: any) => {
+      // Merge local storage approved orders so newly approved orders appear immediately
+      try {
+        const local = JSON.parse(localStorage.getItem('admin_orders') || '[]');
+        for (const loc of local) {
+          const s = String(loc.status || '').toLowerCase().trim();
+          if (['ready_to_ship', 'producing', 'paid', 'in_transit', 'completed', 'delivered'].includes(s)) {
+            if (!rawData.some((r: any) => String(r.id) === String(loc.id))) {
+              rawData.push(loc);
+            }
+          }
+        }
+      } catch {}
+
+      const data = rawData.filter((row: any) => {
         const s = String(row.status || '').toLowerCase().trim();
         const os = String(row.order_status || '').toLowerCase().trim();
         const ps = String(row.payment_status || '').toLowerCase().trim();
@@ -2562,6 +2749,18 @@ export const supabaseOrders = {
         );
         localStorage.setItem('admin_preorders', JSON.stringify(updatedPre));
       } catch {}
+
+      // Dispatch realtime events across all components
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('pornpong-order-approved', {
+          detail: { orderId: orderIdStr, queueNumber: assignedQueueNumber, isPre, nextStatus }
+        }));
+        window.dispatchEvent(new Event('orders-updated'));
+        window.dispatchEvent(new Event('orders_updated'));
+        window.dispatchEvent(new CustomEvent('pornpong-delivery-updated', {
+          detail: { order_id: orderIdStr, delivery_status: nextStatus }
+        }));
+      }
 
       return {
         success: true,
