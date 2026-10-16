@@ -313,8 +313,6 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
 
       const filtered = (data || []).filter((ord: any) => {
         const id = String(ord.id || '');
-        if (approvedIds.has(id) || rejectedIds.has(id)) return false;
-
         const s = String(ord.status || '').toLowerCase().trim();
         const ps = String(ord.payment_status || '').toLowerCase().trim();
         const os = String(ord.order_status || '').toLowerCase().trim();
@@ -323,8 +321,15 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
           return false;
         }
 
-        return ['pending_verification', 'waiting_verify', 'waiting_approval', 'pending'].includes(ps) ||
-               ['pending_verification', 'waiting_verify', 'waiting_approval', 'pending'].includes(s);
+        // Requirement 1: Any order with status = 'pending_verification' or payment_status = 'pending_verification' displays immediately!
+        if (s === 'pending_verification' || ps === 'pending_verification') {
+          return true;
+        }
+
+        if (approvedIds.has(id) || rejectedIds.has(id)) return false;
+
+        return ['waiting_verify', 'waiting_approval', 'pending'].includes(ps) ||
+               ['waiting_verify', 'waiting_approval', 'pending', 'waiting_payment'].includes(s);
       });
       setWaitingVerifyOrders(filtered);
     } catch (err) {
@@ -432,8 +437,13 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
     window.addEventListener('orders-updated', handleSync);
     window.addEventListener('pornpong-delivery-updated', handleSync);
     window.addEventListener('pornpong-order-delivered', handleSync);
+    window.addEventListener('focus', handleSync);
+
+    // Auto-poll every 5 seconds to ensure newly created orders in Supabase appear immediately
+    const pollTimer = setInterval(handleSync, 5000);
 
     return () => {
+      clearInterval(pollTimer);
       if (channel && supabase) {
         try {
           supabase.removeChannel(channel);
@@ -442,6 +452,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
       window.removeEventListener('orders-updated', handleSync);
       window.removeEventListener('pornpong-delivery-updated', handleSync);
       window.removeEventListener('pornpong-order-delivered', handleSync);
+      window.removeEventListener('focus', handleSync);
     };
   }, [reloadOrders, reloadWaitingVerifyOrders]);
 
@@ -1291,16 +1302,16 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
 
   // Sorted Queue Orders (ordered by Q-YYMM-XXX) - Pre-Orders only, In-Stock items auto-bypass production queue
   const sortedQueueOrders = React.useMemo(() => {
-    const preOrderOrders = adminOrders.filter(ord => isOrderPreOrder(ord));
+    const preOrderOrders = adminOrders.filter(ord => isOrderPreOrder(ord) && isOrderApproved(ord));
     const list = preOrderOrders.map((ord, idx) => {
-      const qId = ord.queue_id || formatQueueId(ord, idx);
+      const qId = ord.queue_id || ord.queue_number || formatQueueId(ord, idx);
       const ordSt = (ord.order_status || ord.status || '').toLowerCase();
       let defaultStage: 1 | 2 | 3 | 4 = 1;
       if (ordSt === 'in_transit' || ordSt === 'shipped' || ordSt === 'shipping' || ordSt === 'delivered' || ordSt === 'completed') {
         defaultStage = 4;
-      } else if (ordSt === 'ready_for_shipping' || ordSt === 'ready') {
+      } else if (ordSt === 'ready_for_shipping' || ordSt === 'ready' || ordSt === 'ready_to_ship') {
         defaultStage = 3;
-      } else if (ordSt === 'manufacturing' || ordSt === 'processing' || ordSt === 'paid') {
+      } else if (ordSt === 'manufacturing' || ordSt === 'processing') {
         defaultStage = 2;
       } else {
         defaultStage = 1;
@@ -1309,12 +1320,14 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
       return {
         ...ord,
         queue_id: qId,
+        queue_number: qId,
         queue_stage: qStage
       };
     });
 
     return list.sort((a, b) => parseQueueNumber(a.queue_id) - parseQueueNumber(b.queue_id));
   }, [adminOrders]);
+
 
   const filteredQueueOrders = React.useMemo(() => {
     return sortedQueueOrders.filter(item => {
@@ -1935,7 +1948,46 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
   }, [adminOrders]);
 
   const activeOrdersList = React.useMemo(() => {
-    return approvedAdminOrders.filter(o => !isOrderCompleted(o));
+    return approvedAdminOrders.filter(o => {
+      // Must not be completed
+      if (isOrderCompleted(o)) return false;
+
+      const s = String(o.status || '').toLowerCase().trim();
+      const os = String(o.order_status || '').toLowerCase().trim();
+      const ds = String(o.delivery_status || '').toLowerCase().trim();
+      const ps = String(o.payment_status || '').toLowerCase().trim();
+
+      // Rule: ห้ามแสดงออเดอร์ที่ยังมี status = 'pending_verification' ในหน้านี้เด็ดขาด
+      if (s === 'pending_verification' || os === 'pending_verification' || ps === 'pending_verification') {
+        return false;
+      }
+      if (s === 'waiting_payment' || s === 'pending') {
+        return false;
+      }
+
+      const isPre = isOrderPreOrder(o);
+
+      if (isPre) {
+        // Requirement 2: หากเป็น Pre-Order (status = 'producing') ให้ย้ายไปแสดงในหน้า "จัดการคิวผลิตและจัดส่ง"
+        // ห้ามนำออเดอร์สั่งผลิตที่ยังอยู่ในขั้นตอนการผลิต (producing) มาปะปนในแท็บนี้เด็ดขาด
+        if (
+          s === 'producing' || os === 'producing' || ds === 'producing' ||
+          s === 'manufacturing' || os === 'manufacturing' || ds === 'manufacturing' ||
+          s === 'paid' || os === 'paid' ||
+          (o.queue_stage && Number(o.queue_stage) < 3)
+        ) {
+          return false;
+        }
+
+        // Only allow pre-orders that have finished production and reached shipping
+        const allowedShippingStatuses = ['ready_to_ship', 'ready_for_shipping', 'shipped', 'shipping', 'in_transit'];
+        return allowedShippingStatuses.includes(s) || allowedShippingStatuses.includes(os) || allowedShippingStatuses.includes(ds);
+      }
+
+      // Requirement 2: หากเป็น In-Stock (status = 'ready_to_ship') ให้แสดงในหน้านี้
+      const allowedInStockStatuses = ['ready_to_ship', 'ready_for_shipping', 'shipped', 'shipping', 'in_transit'];
+      return allowedInStockStatuses.includes(s) || allowedInStockStatuses.includes(os) || allowedInStockStatuses.includes(ds);
+    });
   }, [approvedAdminOrders]);
 
   const completedOrdersList = React.useMemo(() => {
@@ -2054,6 +2106,20 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                           activeMenu === menu.id ? 'bg-white text-sky-600' : 'bg-rose-500 text-white'
                         }`}>
                           {pendingOrdersList.length}
+                        </span>
+                      )}
+                      {menu.id === 'queue-management' && sortedQueueOrders.length > 0 && (
+                        <span className={`ml-2 px-1.5 py-0.5 rounded-full text-[9px] font-black inline-flex items-center justify-center ${
+                          activeMenu === menu.id ? 'bg-white text-sky-600' : 'bg-violet-600 text-white'
+                        }`}>
+                          {sortedQueueOrders.length}
+                        </span>
+                      )}
+                      {menu.id === 'orders' && activeOrdersList.length > 0 && (
+                        <span className={`ml-2 px-1.5 py-0.5 rounded-full text-[9px] font-black inline-flex items-center justify-center ${
+                          activeMenu === menu.id ? 'bg-white text-sky-600' : 'bg-sky-600 text-white'
+                        }`}>
+                          {activeOrdersList.length}
                         </span>
                       )}
                     </span>
@@ -3682,12 +3748,13 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                                       localStorage.setItem('pornpong_rejected_order_ids', JSON.stringify(filteredRej));
                                     } catch {}
 
-                                    const success = await supabaseOrders.approve(targetOrderId);
-                                    if (success) {
+                                    const result: any = await supabaseOrders.approve(targetOrderId);
+                                    if (result) {
                                       // 1. Create In-App notification for customer
                                       const isPre = isOrderPreOrder(ord);
+                                      const qNum = (typeof result === 'object' && result?.queueNumber) || ord.queue_number || ord.queue_id || formatQueueId(ord);
                                       const approvalMsg = isPre
-                                        ? `การชำระเงินเสร็จสิ้น! คำสั่งซื้อ #${targetOrderId} เป็นสินค้าสั่งผลิต ลำดับคิวการผลิตเริ่มต้นแล้ว โรงงานเริ่มกระบวนการผลิตทันที`
+                                        ? `การชำระเงินเสร็จสิ้น! คำสั่งซื้อ #${targetOrderId} เป็นสินค้าสั่งผลิต ลำดับคิวการผลิตเริ่มต้นแล้ว [${qNum}] โรงงานเริ่มกระบวนการผลิตทันที`
                                         : `การชำระเงินเสร็จสิ้น! คำสั่งซื้อ #${targetOrderId} เป็นสินค้าพร้อมส่ง คลังสินค้ากำลังเตรียมจัดส่งตรงถึงคุณ`;
                                       const newNoti = {
                                         id: 'noti-appr-' + Date.now(),
@@ -3719,7 +3786,28 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                                         detail: { orderId: targetOrderId, notification: newNoti }
                                       }));
 
-                                      triggerToast(`อนุมัติการชำระเงินสำหรับคำสั่งซื้อ #${targetOrderId} สำเร็จ!`);
+                                      // Immediately update adminOrders state so the destination tab reflects it instantly
+                                      setAdminOrders(prev => {
+                                        const updatedOrder = {
+                                          ...ord,
+                                          id: targetOrderId,
+                                          status: isPre ? 'producing' : 'ready_to_ship',
+                                          order_status: isPre ? 'producing' : 'ready_to_ship',
+                                          payment_status: 'verified',
+                                          delivery_status: isPre ? 'producing' : 'ready_to_ship',
+                                          ...(isPre ? { queue_number: qNum, queue_id: qNum, queue_stage: 1 } : {})
+                                        };
+                                        const exists = prev.some(o => String(o.id) === targetOrderId);
+                                        return exists
+                                          ? prev.map(o => String(o.id) === targetOrderId ? updatedOrder : o)
+                                          : [updatedOrder, ...prev];
+                                      });
+
+                                      if (isPre) {
+                                        triggerToast(`อนุมัติการชำระเงิน #${targetOrderId} (สินค้าสั่งผลิต) สำเร็จ! ออกเลขคิว [${qNum}] และย้ายไปที่หน้า 'จัดการคิวผลิตและจัดส่ง' เรียบร้อยแล้ว`);
+                                      } else {
+                                        triggerToast(`อนุมัติการชำระเงิน #${targetOrderId} (สินค้าพร้อมส่ง) สำเร็จ! ย้ายไปที่หน้า 'คำสั่งซื้อสำเร็จ' (แท็บ รายการคำสั่งซื้อกำลังดำเนินการ) เรียบร้อยแล้ว`);
+                                      }
                                     } else {
                                       triggerToast(`อนุมัติการชำระเงินคำสั่งซื้อ #${targetOrderId} เรียบร้อยแล้ว`);
                                     }

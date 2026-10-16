@@ -215,6 +215,72 @@ export function parseQueueNumber(queueId?: string): number {
   return 0;
 }
 
+export async function getNextAvailableQueueNumber(): Promise<string> {
+  const now = new Date();
+  const yy = String(now.getFullYear()).slice(-2);
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  const prefix = `Q-${yy}${mm}-`;
+
+  let maxNum = 0;
+
+  // 1. Check deliveries table if supabase available
+  if (isSupabaseConfigured && supabase) {
+    try {
+      const { data } = await supabase
+        .from('deliveries')
+        .select('queue_number');
+      if (data && Array.isArray(data)) {
+        for (const row of data) {
+          const qn = String(row.queue_number || '').trim().toUpperCase();
+          if (qn.startsWith(prefix)) {
+            const numPart = parseInt(qn.replace(prefix, ''), 10);
+            if (!isNaN(numPart) && numPart > maxNum) {
+              maxNum = numPart;
+            }
+          }
+        }
+      }
+    } catch {}
+
+    try {
+      const { data: ordData } = await supabase
+        .from('orders')
+        .select('queue_number, queue_id');
+      if (ordData && Array.isArray(ordData)) {
+        for (const row of ordData) {
+          const qn = String(row.queue_number || row.queue_id || '').trim().toUpperCase();
+          if (qn.startsWith(prefix)) {
+            const numPart = parseInt(qn.replace(prefix, ''), 10);
+            if (!isNaN(numPart) && numPart > maxNum) {
+              maxNum = numPart;
+            }
+          }
+        }
+      }
+    } catch {}
+  }
+
+  // 2. Check localStorage admin_orders
+  try {
+    const local = JSON.parse(localStorage.getItem('admin_orders') || '[]');
+    if (Array.isArray(local)) {
+      for (const o of local) {
+        const qn = String(o.queue_number || o.queue_id || '').trim().toUpperCase();
+        if (qn.startsWith(prefix)) {
+          const numPart = parseInt(qn.replace(prefix, ''), 10);
+          if (!isNaN(numPart) && numPart > maxNum) {
+            maxNum = numPart;
+          }
+        }
+      }
+    }
+  } catch {}
+
+  const nextNum = maxNum + 1;
+  return `${prefix}${String(nextNum).padStart(3, '0')}`;
+}
+
+
 export function getActiveProductionQueue(orders?: any[]): string {
   if (typeof window !== 'undefined') {
     const saved = localStorage.getItem('pornpong_active_production_queue_id');
@@ -2154,14 +2220,11 @@ export const supabaseOrders = {
     };
 
     const isOrderExcludedFromPending = (order: any, approvedIds: Set<string>, rejectedIds: Set<string>): boolean => {
-      const id = String(order.id || '');
-      if (approvedIds.has(id) || rejectedIds.has(id)) return true;
-
       const s = String(order.status || '').toLowerCase().trim();
       const ps = String(order.payment_status || '').toLowerCase().trim();
       const os = String(order.order_status || '').toLowerCase().trim();
 
-      // Explicitly excluded per user specification
+      // Explicitly excluded statuses (already approved, produced, shipped, or completed)
       const EXCLUDED_STATUSES = ['paid', 'ready_to_ship', 'producing', 'completed', 'in_transit', 'shipping', 'delivered', 'cancelled', 'payment_rejected'];
       const EXCLUDED_PAYMENT_STATUSES = ['verified', 'paid', 'completed', 'approved', 'rejected', 'payment_rejected'];
       const EXCLUDED_ORDER_STATUSES = ['manufacturing', 'producing', 'ready_to_ship', 'in_transit', 'shipping', 'completed', 'delivered'];
@@ -2170,9 +2233,17 @@ export const supabaseOrders = {
         return true;
       }
 
-      // Must be waiting verification
-      const isPending = ['pending_verification', 'waiting_verify', 'waiting_approval', 'pending'].includes(ps) ||
-                        ['pending_verification', 'waiting_verify', 'waiting_approval', 'pending'].includes(s);
+      // Requirement 1: ดึงออเดอร์ที่มี status = 'pending_verification' หรือ payment_status = 'pending_verification' ออกมาแสดงผลทันที
+      if (s === 'pending_verification' || ps === 'pending_verification') {
+        return false;
+      }
+
+      const id = String(order.id || '');
+      if (approvedIds.has(id) || rejectedIds.has(id)) return true;
+
+      // Other pending states
+      const isPending = ['waiting_verify', 'waiting_approval', 'pending'].includes(ps) ||
+                        ['waiting_verify', 'waiting_approval', 'pending', 'waiting_payment'].includes(s);
       return !isPending;
     };
 
@@ -2195,7 +2266,7 @@ export const supabaseOrders = {
             productName: row.productName || row.product_name || 'เรือพลาสติกและอุปกรณ์',
             color: row.color || 'คละสี',
             amount: Number(row.total_amount || row.amount || 0),
-            status: row.payment_status || row.status || 'Pending',
+            status: row.payment_status || row.status || 'pending_verification',
             shipmentNo: row.shipmentNo || row.shipment_no || '',
             payment_slip_url: row.payment_slip_url || row.slip_url || row.base64_slip || '',
             slip_url: row.slip_url || row.payment_slip_url || row.base64_slip || '',
@@ -2206,7 +2277,7 @@ export const supabaseOrders = {
             customer_phone: row.customer_phone || '',
             total_amount: Number(row.total_amount || row.amount || 0),
             payment_status: row.payment_status || row.status || 'pending_verification',
-            order_status: row.order_status || 'waiting_payment',
+            order_status: row.order_status || 'pending_verification',
             created_at: row.created_at || row.date || ''
           }));
       } catch {
@@ -2215,44 +2286,50 @@ export const supabaseOrders = {
     }
 
     try {
-      // Unified query: .or('status.eq.pending_verification,status.eq.pending,payment_status.eq.pending,payment_status.eq.pending_verification')
-      const { data: unifiedData, error: queryErr } = await supabase
+      // 1. Direct query: status = 'pending_verification' OR payment_status = 'pending_verification'
+      const { data: pvData, error: pvErr } = await supabase
         .from('orders')
         .select('*')
-        .or('status.eq.pending_verification,status.eq.pending,payment_status.eq.pending,payment_status.eq.pending_verification')
+        .or('status.eq.pending_verification,payment_status.eq.pending_verification')
         .order('created_at', { ascending: false });
 
-      if (queryErr) {
-        console.warn('Unified pending verification query note:', queryErr.message);
+      if (pvErr) {
+        console.warn('Supabase pending_verification query error:', pvErr.message);
       }
 
-      let rawCombined: any[] = (!queryErr && unifiedData) ? unifiedData : [];
+      // 2. Secondary query: pending status
+      const { data: pendingData, error: pendingErr } = await supabase
+        .from('orders')
+        .select('*')
+        .or('status.eq.pending,payment_status.eq.pending')
+        .order('created_at', { ascending: false });
 
-      // Fallback in case of syntax or empty response if orders exist with pending status
-      if (rawCombined.length === 0) {
-        const { data: fallbackData } = await supabase
-          .from('orders')
-          .select('*')
-          .in('payment_status', ['pending_verification', 'waiting_verify', 'waiting_approval', 'pending'])
-          .order('created_at', { ascending: false });
-        if (fallbackData && fallbackData.length > 0) {
-          rawCombined = fallbackData;
+      // 3. Recent orders query (fetches latest orders to ensure the 2 latest orders are captured)
+      const { data: recentData, error: recentErr } = await supabase
+        .from('orders')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(20);
+
+      // Merge and deduplicate by ID
+      const rawMap = new Map<string, any>();
+      const addRows = (rows?: any[] | null) => {
+        if (!rows || !Array.isArray(rows)) return;
+        for (const row of rows) {
+          if (row && row.id) {
+            rawMap.set(String(row.id), row);
+          }
         }
-      }
+      };
 
-      // De-duplicate by ID
-      const seenIds = new Set<string>();
-      const uniqueRaw: any[] = [];
-      for (const item of rawCombined) {
-        const idStr = String(item.id);
-        if (!seenIds.has(idStr)) {
-          seenIds.add(idStr);
-          uniqueRaw.push(item);
-        }
-      }
+      addRows(pvData);
+      addRows(pendingData);
+      addRows(recentData);
 
-      // 3. Strict exclusion of paid/ready_to_ship/producing/completed
-      const strictlyFiltered = uniqueRaw.filter((row: any) => !isOrderExcludedFromPending(row, approvedIds, rejectedIds));
+      const rawCombined = Array.from(rawMap.values());
+
+      // Filter to only include unapproved pending_verification orders
+      const strictlyFiltered = rawCombined.filter((row: any) => !isOrderExcludedFromPending(row, approvedIds, rejectedIds));
 
       let list: any[] = strictlyFiltered.map((row: any) => {
         let slipUrl = row.payment_slip_url || row.slip_url || row.slipUrl || row.slip || row.image_url || '';
@@ -2273,7 +2350,7 @@ export const supabaseOrders = {
           productName: row.productName || row.product_name || 'เรือพลาสติกและอุปกรณ์',
           color: row.color || 'คละสี',
           amount: Number(row.total_amount || row.amount || 0),
-          status: row.payment_status || row.status || 'Pending',
+          status: row.payment_status || row.status || 'pending_verification',
           shipmentNo: row.shipmentNo || row.shipment_no || '',
           payment_slip_url: slipUrl || row.slip_url || row.base64_slip || '',
           slip_url: row.slip_url || slipUrl || row.base64_slip || '',
@@ -2284,12 +2361,12 @@ export const supabaseOrders = {
           customer_phone: row.customer_phone || '',
           total_amount: Number(row.total_amount || row.amount || 0),
           payment_status: row.payment_status || row.status || 'pending_verification',
-          order_status: row.order_status || 'waiting_payment',
+          order_status: row.order_status || 'pending_verification',
           created_at: row.created_at || row.date || ''
         };
       });
 
-      // Also merge with local storage admin_orders to ensure any recently attached slips are never lost
+      // Also merge with local storage admin_orders to ensure any recently attached slips/orders are never lost
       try {
         const local = JSON.parse(localStorage.getItem('admin_orders') || '[]');
         const pendingLocal = local.filter((o: any) => !isOrderExcludedFromPending(o, approvedIds, rejectedIds));
@@ -2366,13 +2443,24 @@ export const supabaseOrders = {
         } catch {}
       }
 
-      // Per Requirement 2:
+      // Per Requirement:
       // If In-Stock item: status is 'ready_to_ship'
-      // If Pre-Order item: status is 'producing'
+      // If Pre-Order item: status is 'producing', calculate & assign queue number
       const nextStatus = isPre ? 'producing' : 'ready_to_ship';
       const nextOrderStatus = isPre ? 'producing' : 'ready_to_ship';
+
+      let assignedQueueNumber: string | undefined = undefined;
+      if (isPre) {
+        const existingQ = orderData?.queue_number || orderData?.queue_id;
+        if (existingQ && /^Q-\d{4}-\d{3}$/i.test(String(existingQ).trim())) {
+          assignedQueueNumber = String(existingQ).trim().toUpperCase();
+        } else {
+          assignedQueueNumber = await getNextAvailableQueueNumber();
+        }
+      }
+
       const nextStatusMessage = isPre 
-        ? 'การชำระเงินเสร็จสิ้น! คำสั่งซื้อเป็นสินค้าสั่งผลิต (Pre-Order) ลำดับคิวการผลิตเริ่มต้นแล้ว โรงงานเริ่มกระบวนการผลิตทันที'
+        ? `การชำระเงินเสร็จสิ้น! คำสั่งซื้อเป็นสินค้าสั่งผลิต (Pre-Order) ออกหมายเลขคิวผลิต [${assignedQueueNumber}] เรียบร้อยแล้ว ลำดับคิวการผลิตเริ่มต้นแล้ว โรงงานเริ่มกระบวนการผลิตทันที`
         : 'การชำระเงินเสร็จสิ้น! คำสั่งซื้อเป็นสินค้าพร้อมส่ง (In-Stock) ชำระเงินเรียบร้อยแล้ว - ทางคลังสินค้ากำลังเตรียมบรรจุหีบห่อและส่งมอบให้ขนส่งโดยตรง';
 
       if (isSupabaseConfigured && supabase) {
@@ -2382,6 +2470,11 @@ export const supabaseOrders = {
           status: nextStatus,
           order_status: nextOrderStatus,
           status_message: nextStatusMessage,
+          ...(isPre && assignedQueueNumber ? {
+            queue_number: assignedQueueNumber,
+            queue_id: assignedQueueNumber,
+            queue_stage: 1
+          } : {}),
           updated_at: new Date().toISOString()
         };
 
@@ -2402,6 +2495,10 @@ export const supabaseOrders = {
               payment_status: 'verified',
               status: nextStatus,
               order_status: nextOrderStatus,
+              ...(assignedQueueNumber ? {
+                queue_number: assignedQueueNumber,
+                queue_id: assignedQueueNumber
+              } : {}),
               updated_at: new Date().toISOString()
             })
             .eq('id', id);
@@ -2415,6 +2512,7 @@ export const supabaseOrders = {
             .upsert({
               order_id: orderIdStr,
               delivery_status: deliveryStatus,
+              ...(assignedQueueNumber ? { queue_number: assignedQueueNumber } : {}),
               updated_at: new Date().toISOString()
             }, { onConflict: 'order_id' });
 
@@ -2437,6 +2535,11 @@ export const supabaseOrders = {
             order_status: nextOrderStatus,
             status_message: nextStatusMessage,
             delivery_status: isPre ? 'producing' : 'ready_to_ship',
+            ...(isPre && assignedQueueNumber ? {
+              queue_number: assignedQueueNumber,
+              queue_id: assignedQueueNumber,
+              queue_stage: o.queue_stage || 1
+            } : {}),
             updated_at: new Date().toISOString()
           } : o
         );
@@ -2450,13 +2553,22 @@ export const supabaseOrders = {
             status: nextStatus,
             order_status: nextOrderStatus,
             status_message: nextStatusMessage,
+            ...(assignedQueueNumber ? {
+              queue_number: assignedQueueNumber,
+              queue_id: assignedQueueNumber
+            } : {}),
             updated_at: new Date().toISOString()
           } : p
         );
         localStorage.setItem('admin_preorders', JSON.stringify(updatedPre));
       } catch {}
 
-      return true;
+      return {
+        success: true,
+        queueNumber: assignedQueueNumber,
+        isPre,
+        nextStatus
+      } as any;
     } catch (err: any) {
       console.error('Failed to approve order:', err.message);
       return false;
@@ -2572,7 +2684,7 @@ export const supabaseOrders = {
         payment_slip_url: finalSlipUrl,
         slip_url: finalSlipUrl,
         status: 'pending_verification',
-        payment_status: 'pending',
+        payment_status: 'pending_verification',
         order_status: 'pending_verification',
         updated_at: new Date().toISOString()
       };
@@ -2598,7 +2710,7 @@ export const supabaseOrders = {
               payment_slip_url: finalSlipUrl, 
               slip_url: finalSlipUrl, 
               status: 'pending_verification',
-              payment_status: 'pending',
+              payment_status: 'pending_verification',
               order_status: 'pending_verification'
             })
             .eq('id', orderId);
@@ -2611,7 +2723,7 @@ export const supabaseOrders = {
               payment_slip_url: finalSlipUrl, 
               slip_url: finalSlipUrl, 
               status: 'pending_verification',
-              payment_status: 'pending',
+              payment_status: 'pending_verification',
               order_status: 'pending_verification'
             })
             .eq('id', orderId);
@@ -2628,7 +2740,7 @@ export const supabaseOrders = {
                 payment_slip_url: finalSlipUrl, 
                 slip_url: finalSlipUrl, 
                 status: 'pending_verification',
-                payment_status: 'pending',
+                payment_status: 'pending_verification',
                 order_status: 'pending_verification'
               } 
             : o
@@ -2643,7 +2755,7 @@ export const supabaseOrders = {
                 payment_slip_url: finalSlipUrl, 
                 slip_url: finalSlipUrl, 
                 status: 'pending_verification',
-                payment_status: 'pending',
+                payment_status: 'pending_verification',
                 order_status: 'pending_verification'
               }
             : p

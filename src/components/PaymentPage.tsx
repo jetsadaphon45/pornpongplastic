@@ -550,7 +550,7 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, o
           if (supabase) {
             await supabase.from('orders').update({
               status: 'pending_verification',
-              payment_status: 'pending',
+              payment_status: 'pending_verification',
               order_status: 'pending_verification',
               payment_slip_url: slipUrl,
               slip_url: slipUrl,
@@ -572,7 +572,7 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, o
                 payment_slip_url: slipUrl || slipPreview, 
                 slip_url: slipUrl || slipPreview, 
                 status: 'pending_verification',
-                payment_status: 'pending', 
+                payment_status: 'pending_verification', 
                 order_status: 'pending_verification' 
               }
             : o
@@ -587,7 +587,7 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, o
                 payment_slip_url: slipUrl || slipPreview, 
                 slip_url: slipUrl || slipPreview, 
                 status: 'pending_verification',
-                payment_status: 'pending', 
+                payment_status: 'pending_verification', 
                 order_status: 'pending_verification' 
               }
             : p
@@ -600,7 +600,7 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, o
       setActiveOrder((prev: any) => ({
         ...prev,
         status: 'pending_verification',
-        payment_status: 'pending',
+        payment_status: 'pending_verification',
         order_status: 'pending_verification',
         payment_slip_url: slipUrl,
         slip_url: slipUrl

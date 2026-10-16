@@ -634,7 +634,7 @@ export default function PreorderSection({
             payment_slip_url: finalSlipUrl,
             slip_url: finalSlipUrl,
             status: 'pending_verification',
-            payment_status: 'pending',
+            payment_status: 'pending_verification',
             order_status: 'pending_verification'
           }).eq('id', confirmedOrder.id);
         } catch (errDb: any) {
@@ -652,7 +652,7 @@ export default function PreorderSection({
                 payment_slip_url: finalSlipUrl, 
                 slip_url: finalSlipUrl, 
                 status: 'pending_verification', 
-                payment_status: 'pending', 
+                payment_status: 'pending_verification', 
                 order_status: 'pending_verification' 
               } 
             : o
@@ -667,7 +667,7 @@ export default function PreorderSection({
                 payment_slip_url: finalSlipUrl, 
                 slip_url: finalSlipUrl, 
                 status: 'pending_verification', 
-                payment_status: 'pending', 
+                payment_status: 'pending_verification', 
                 order_status: 'pending_verification' 
               }
             : p
