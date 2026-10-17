@@ -1600,11 +1600,16 @@ export const supabaseOrders = {
     }
 
     try {
+      // Query criteria per requirement:
+      // .or('status.eq.ready_to_ship,status.eq.paid,status.eq.in_transit')
+      // .or('is_deleted.is.null,is_deleted.eq.false')
+      // .order('created_at', { ascending: false })
       const [ordersRes, deliveriesMap] = await Promise.all([
         supabase
           .from('orders')
           .select('*')
           .or('status.eq.ready_to_ship,status.eq.paid,status.eq.in_transit')
+          .or('is_deleted.is.null,is_deleted.eq.false')
           .order('created_at', { ascending: false }),
         supabaseDeliveries.getAll()
       ]);
@@ -1615,10 +1620,12 @@ export const supabaseOrders = {
       try {
         const local = JSON.parse(localStorage.getItem('admin_orders') || '[]');
         for (const loc of local) {
-          if (isOrderPreOrder(loc)) continue;
+          if (loc.is_deleted === true || loc.is_deleted === 'true') continue;
           const s = String(loc.status || '').toLowerCase().trim();
           const os = String(loc.order_status || '').toLowerCase().trim();
-          if (['ready_to_ship', 'paid', 'in_transit'].includes(s) || ['ready_to_ship', 'paid', 'in_transit'].includes(os)) {
+          const ps = String(loc.payment_status || '').toLowerCase().trim();
+          if (s === 'pending_verification' || s === 'pending' || ps === 'pending_verification' || ps === 'pending') continue;
+          if (['ready_to_ship', 'paid', 'in_transit'].includes(s) || ['ready_to_ship', 'paid', 'in_transit'].includes(os) || ps === 'paid') {
             if (!data.some((r: any) => String(r.id) === String(loc.id))) {
               data.push(loc);
             }
@@ -1626,15 +1633,25 @@ export const supabaseOrders = {
         }
       } catch {}
 
-      // Filter: status in ready_to_ship, paid, in_transit
+      // Filter: status in ready_to_ship, paid, in_transit; strictly exclude pending_verification and pending
       const filtered = data.filter((row: any) => {
-        if (isOrderPreOrder(row)) return false;
+        if (row.is_deleted === true || row.is_deleted === 'true') return false;
         const s = String(row.status || '').toLowerCase().trim();
         const os = String(row.order_status || '').toLowerCase().trim();
-        return ['ready_to_ship', 'paid', 'in_transit'].includes(s) || ['ready_to_ship', 'paid', 'in_transit'].includes(os);
+        const ps = String(row.payment_status || '').toLowerCase().trim();
+        
+        // ห้ามดึงรายการที่มี status = 'pending_verification' หรือ 'pending' มาแสดงในหน้านี้เด็ดขาด
+        if (s === 'pending_verification' || s === 'pending' || s === 'waiting_payment' ||
+            os === 'pending_verification' || os === 'pending' ||
+            ps === 'pending_verification' || ps === 'pending') {
+          return false;
+        }
+        return ['ready_to_ship', 'paid', 'in_transit'].includes(s) || 
+               ['ready_to_ship', 'paid', 'in_transit'].includes(os) || 
+               ps === 'paid';
       });
 
-      // Sort by created_at descending
+      // Sort by created_at descending (.order('created_at', { ascending: false }))
       filtered.sort((a: any, b: any) => {
         const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
         const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
@@ -1658,6 +1675,7 @@ export const supabaseOrders = {
       try {
         const local = JSON.parse(localStorage.getItem('admin_orders') || '[]');
         return (local || []).filter((o: any) => {
+          if (o.is_deleted === true || o.is_deleted === 'true') return false;
           const s = String(o.status || '').toLowerCase().trim();
           const os = String(o.order_status || '').toLowerCase().trim();
           const ds = String(o.delivery_status || '').toLowerCase().trim();
@@ -1674,11 +1692,12 @@ export const supabaseOrders = {
           .from('orders')
           .select('*')
           .or('status.eq.delivered,status.eq.completed')
+          .or('is_deleted.is.null,is_deleted.eq.false')
           .order('created_at', { ascending: false }),
         supabaseDeliveries.getAll()
       ]);
 
-      const data = ordersRes.data || [];
+      const data = (ordersRes.data || []).filter((row: any) => row.is_deleted !== true && row.is_deleted !== 'true');
       return data.map((row: any) => {
         const orderIdStr = String(row.id).trim();
         const delivery = deliveriesMap[orderIdStr] || deliveriesMap[row.id];
@@ -2161,24 +2180,129 @@ export const supabaseOrders = {
     }
   },
 
+  // 1. Switch Delete to Soft Delete (is_deleted = true)
   async delete(id: string): Promise<boolean> {
     try {
+      const orderIdStr = String(id);
       if (isSupabaseConfigured && supabase) {
-        const { error } = await supabase.from('orders').delete().eq('id', id);
+        const { error } = await supabase
+          .from('orders')
+          .update({ 
+            is_deleted: true,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', id);
+
         if (error) {
-          console.warn('Could not delete from orders table in Supabase:', error.message);
+          console.warn('Soft delete in Supabase orders warning:', error.message);
         }
       }
+
       // Sync local storage for immediate persistence
       try {
         const local = JSON.parse(localStorage.getItem('admin_orders') || '[]');
-        const filtered = local.filter((o: any) => o.id !== id);
-        localStorage.setItem('admin_orders', JSON.stringify(filtered));
+        const updated = local.map((o: any) => 
+          String(o.id) === orderIdStr ? { ...o, is_deleted: true, updated_at: new Date().toISOString() } : o
+        );
+        localStorage.setItem('admin_orders', JSON.stringify(updated));
       } catch {}
+
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('pornpong-order-deleted', { detail: { id: orderIdStr } }));
+        window.dispatchEvent(new Event('orders-updated'));
+        window.dispatchEvent(new Event('orders_updated'));
+      }
       return true;
     } catch (err: any) {
-      console.error('Failed to delete order from Supabase:', err.message);
+      console.error('Failed to soft delete order:', err.message);
       return false;
+    }
+  },
+
+  // 3. Restore Order (is_deleted = false)
+  async restore(id: string): Promise<boolean> {
+    try {
+      const orderIdStr = String(id);
+      if (isSupabaseConfigured && supabase) {
+        const { error } = await supabase
+          .from('orders')
+          .update({ 
+            is_deleted: false,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', id);
+
+        if (error) {
+          console.warn('Restore in Supabase orders warning:', error.message);
+        }
+      }
+
+      // Sync local storage
+      try {
+        const local = JSON.parse(localStorage.getItem('admin_orders') || '[]');
+        const updated = local.map((o: any) => 
+          String(o.id) === orderIdStr ? { ...o, is_deleted: false, updated_at: new Date().toISOString() } : o
+        );
+        localStorage.setItem('admin_orders', JSON.stringify(updated));
+      } catch {}
+
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('pornpong-order-restored', { detail: { id: orderIdStr } }));
+        window.dispatchEvent(new Event('orders-updated'));
+        window.dispatchEvent(new Event('orders_updated'));
+      }
+      return true;
+    } catch (err: any) {
+      console.error('Failed to restore order:', err.message);
+      return false;
+    }
+  },
+
+  // 2. Query Recycle Bin (is_deleted = true)
+  async listRecycleBin(): Promise<any[]> {
+    if (!isSupabaseConfigured || !supabase) {
+      try {
+        const local = JSON.parse(localStorage.getItem('admin_orders') || '[]');
+        return (local || []).filter((o: any) => o.is_deleted === true);
+      } catch {
+        return [];
+      }
+    }
+
+    try {
+      const [ordersRes, deliveriesMap] = await Promise.all([
+        supabase
+          .from('orders')
+          .select('*')
+          .eq('is_deleted', true)
+          .order('created_at', { ascending: false }),
+        supabaseDeliveries.getAll()
+      ]);
+
+      let data = ordersRes.data || [];
+      // Also merge local storage items with is_deleted === true
+      try {
+        const local = JSON.parse(localStorage.getItem('admin_orders') || '[]');
+        for (const loc of local) {
+          if (loc.is_deleted === true && !data.some((r: any) => String(r.id) === String(loc.id))) {
+            data.push(loc);
+          }
+        }
+      } catch {}
+
+      return data.map((row: any) => {
+        const orderIdStr = String(row.id).trim();
+        const delivery = deliveriesMap[orderIdStr] || deliveriesMap[row.id];
+        return {
+          ...row,
+          is_deleted: true,
+          shipmentNo: delivery?.tracking_number || row.tracking_number || row.shipmentNo || '',
+          shipping_carrier: delivery?.shipping_carrier || row.shipping_carrier || ''
+        };
+      });
+    } catch (err: any) {
+      console.warn('listRecycleBin error:', err?.message);
+      return [];
     }
   },
 
@@ -2651,12 +2775,14 @@ export const supabaseOrders = {
         : 'การชำระเงินเสร็จสิ้น! คำสั่งซื้อเป็นสินค้าพร้อมส่ง (In-Stock) ชำระเงินเรียบร้อยแล้ว - ทางคลังสินค้ากำลังเตรียมบรรจุหีบห่อและส่งมอบให้ขนส่งโดยตรง';
 
       if (isSupabaseConfigured && supabase) {
-        // 1. UPDATE orders table: status = 'producing' (pre-order) or 'ready_to_ship' (in-stock), payment_status = 'verified'
+        // 1. UPDATE orders table: status = 'producing' (pre-order) or 'ready_to_ship' (in-stock), payment_status = 'paid', is_deleted = false
         const updatePayload: any = {
-          payment_status: 'verified',
+          payment_status: 'paid',
           status: nextStatus,
           order_status: nextOrderStatus,
+          product_type: isPre ? 'pre_order' : 'in_stock',
           status_message: nextStatusMessage,
+          is_deleted: false,
           ...(isPre && assignedQueueNumber ? {
             queue_number: assignedQueueNumber,
             queue_id: assignedQueueNumber,
@@ -2679,9 +2805,10 @@ export const supabaseOrders = {
           await supabase
             .from('preorders')
             .update({
-              payment_status: 'verified',
+              payment_status: 'paid',
               status: nextStatus,
               order_status: nextOrderStatus,
+              is_deleted: false,
               ...(assignedQueueNumber ? {
                 queue_number: assignedQueueNumber,
                 queue_id: assignedQueueNumber
@@ -2717,11 +2844,13 @@ export const supabaseOrders = {
         const updated = local.map((o: any) => 
           String(o.id) === orderIdStr ? { 
             ...o, 
-            payment_status: 'verified', 
+            payment_status: 'paid', 
             status: nextStatus, 
             order_status: nextOrderStatus,
+            product_type: isPre ? 'pre_order' : 'in_stock',
             status_message: nextStatusMessage,
             delivery_status: isPre ? 'producing' : 'ready_to_ship',
+            is_deleted: false,
             ...(isPre && assignedQueueNumber ? {
               queue_number: assignedQueueNumber,
               queue_id: assignedQueueNumber,
@@ -2736,10 +2865,11 @@ export const supabaseOrders = {
         const updatedPre = preLocal.map((p: any) =>
           String(p.id) === orderIdStr ? {
             ...p,
-            payment_status: 'verified',
+            payment_status: 'paid',
             status: nextStatus,
             order_status: nextOrderStatus,
             status_message: nextStatusMessage,
+            is_deleted: false,
             ...(assignedQueueNumber ? {
               queue_number: assignedQueueNumber,
               queue_id: assignedQueueNumber

@@ -22,6 +22,7 @@ import {
   UserCheck, 
   Trash2, 
   RefreshCw, 
+  RotateCcw,
   PlusCircle, 
   Lock, 
   Store,
@@ -177,7 +178,8 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
   const [productsCategoryFilter, setProductsCategoryFilter] = React.useState<string>('all');
   const [productsStatusFilter, setProductsStatusFilter] = React.useState<string>('all');
   const [ordersSearch, setOrdersSearch] = React.useState('');
-  const [ordersTabFilter, setOrdersTabFilter] = React.useState<'active' | 'completed'>('active');
+  const [ordersTabFilter, setOrdersTabFilter] = React.useState<'active' | 'completed' | 'trash'>('active');
+  const [isRestoringOrder, setIsRestoringOrder] = React.useState<string | null>(null);
   const [preordersSearch, setPreordersSearch] = React.useState('');
   const [supabaseOrdersSearch, setSupabaseOrdersSearch] = React.useState('');
 
@@ -340,8 +342,19 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
 
   const reloadOrders = React.useCallback(async () => {
     try {
-      const data = await supabaseOrders.list();
-      setAdminOrders(data);
+      const [data, activeData] = await Promise.all([
+        supabaseOrders.list(),
+        supabaseOrders.listActiveInStock()
+      ]);
+      const map = new Map<string, any>();
+      (data || []).forEach(o => { if (o && o.id) map.set(String(o.id), o); });
+      (activeData || []).forEach(o => {
+        if (o && o.id) {
+          const existing = map.get(String(o.id));
+          map.set(String(o.id), existing ? { ...existing, ...o } : o);
+        }
+      });
+      setAdminOrders(Array.from(map.values()));
     } catch (err) {
       console.error('Failed to reload orders from Supabase:', err);
     }
@@ -402,12 +415,19 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
     reloadPreOrderSettings();
   }, [reloadOrders, reloadPreOrders, reloadCoupons, reloadReviews, reloadPromotions, reloadWaitingVerifyOrders, reloadPreOrderSettings]);
 
-  // Sync data immediately when navigating between key tabs
+  // Set default tab to 'active' when opening "คำสั่งซื้อสำเร็จ" (orders menu)
+  const prevActiveMenuRef = React.useRef(activeMenu);
   React.useEffect(() => {
-    if (activeMenu === 'orders' || activeMenu === 'payment-verify' || activeMenu === 'queue-management') {
-      reloadOrders();
-      reloadWaitingVerifyOrders();
+    if (activeMenu === 'orders' && prevActiveMenuRef.current !== 'orders') {
+      setOrdersTabFilter('active');
     }
+    prevActiveMenuRef.current = activeMenu;
+  }, [activeMenu]);
+
+  // Auto Refetch / Sync: เมื่อมีการกดเปลี่ยนแท็บ ให้สั่ง Refetch ดึงข้อมูลอัปเดตล่าสุดจาก Supabase ใหม่ทันที
+  React.useEffect(() => {
+    reloadOrders();
+    reloadWaitingVerifyOrders();
   }, [activeMenu, ordersTabFilter, reloadOrders, reloadWaitingVerifyOrders]);
 
   // Real-time synchronization for orders & deliveries tables in Admin Dashboard
@@ -444,6 +464,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
     };
 
     window.addEventListener('orders-updated', handleSync);
+    window.addEventListener('pornpong-order-approved', handleSync);
     window.addEventListener('pornpong-delivery-updated', handleSync);
     window.addEventListener('pornpong-order-delivered', handleSync);
     window.addEventListener('focus', handleSync);
@@ -459,6 +480,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
         } catch {}
       }
       window.removeEventListener('orders-updated', handleSync);
+      window.removeEventListener('pornpong-order-approved', handleSync);
       window.removeEventListener('pornpong-delivery-updated', handleSync);
       window.removeEventListener('pornpong-order-delivered', handleSync);
       window.removeEventListener('focus', handleSync);
@@ -1076,6 +1098,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
         detail: { orderId, notification: newNoti, status: nextStatus, meta }
       }));
       window.dispatchEvent(new CustomEvent('orders-updated'));
+      await reloadOrders();
 
       triggerToast(`อัปเดตออเดอร์ #${orderId} เป็น [${statusLabel}] สำเร็จ`);
     } catch (err: any) {
@@ -1310,7 +1333,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
 
   // Sorted Queue Orders (ordered by Q-YYMM-XXX) - Pre-Orders only, In-Stock items auto-bypass production queue
   const sortedQueueOrders = React.useMemo(() => {
-    const preOrderOrders = adminOrders.filter(ord => isOrderPreOrder(ord) && isOrderApproved(ord));
+    const preOrderOrders = adminOrders.filter(ord => ord.is_deleted !== true && isOrderPreOrder(ord) && isOrderApproved(ord));
     const list = preOrderOrders.map((ord, idx) => {
       const qId = ord.queue_id || ord.queue_number || formatQueueId(ord, idx);
       const ordSt = (ord.order_status || ord.status || '').toLowerCase();
@@ -1546,16 +1569,16 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
     try {
       const success = await supabaseOrders.delete(targetId);
       if (success) {
-        // Optimistically remove from state so row disappears in real-time
-        setAdminOrders(prev => prev.filter(o => o.id !== targetId));
-        setWaitingVerifyOrders(prev => prev.filter(o => o.id !== targetId));
+        // Optimistically mark as soft-deleted in state
+        setAdminOrders(prev => prev.map(o => String(o.id) === String(targetId) ? { ...o, is_deleted: true } : o));
+        setWaitingVerifyOrders(prev => prev.filter(o => String(o.id) !== String(targetId)));
         
         // Background sync
         await reloadOrders();
         await reloadWaitingVerifyOrders();
         
         window.dispatchEvent(new CustomEvent('orders-updated', { detail: { deletedId: targetId } }));
-        triggerToast('ลบรายการสั่งซื้อสำเร็จ');
+        triggerToast(`ย้ายคำสั่งซื้อ #${targetId} ไปยังถังขยะเรียบร้อยแล้ว (สามารถกู้คืนได้ที่แท็บ 'รายการที่ถูกลบ')`);
         setOrderToDelete(null);
       } else {
         triggerToast('ไม่สามารถลบรายการสั่งซื้อได้ กรุณาลองใหม่อีกครั้ง');
@@ -1565,6 +1588,25 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
       triggerToast('เกิดข้อผิดพลาดในการลบคำสั่งซื้อ');
     } finally {
       setIsDeletingOrder(false);
+    }
+  };
+
+  const handleRestoreOrder = async (orderId: string) => {
+    try {
+      setIsRestoringOrder(orderId);
+      const success = await supabaseOrders.restore(orderId);
+      if (success) {
+        setAdminOrders(prev => prev.map(o => String(o.id) === String(orderId) ? { ...o, is_deleted: false } : o));
+        triggerToast(`กู้คืนคำสั่งซื้อ #${orderId} สำเร็จ กลับสู่สถานะเดิมเรียบร้อยแล้ว`);
+        await reloadOrders();
+      } else {
+        triggerToast('ไม่สามารถกู้คืนคำสั่งซื้อได้ กรุณาลองใหม่อีกครั้ง');
+      }
+    } catch (err: any) {
+      console.error('Failed to restore order:', err);
+      triggerToast('เกิดข้อผิดพลาดในการกู้คืน');
+    } finally {
+      setIsRestoringOrder(null);
     }
   };
 
@@ -1957,6 +1999,9 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
 
   const activeOrdersList = React.useMemo(() => {
     return approvedAdminOrders.filter(o => {
+      // Must not be deleted (is_deleted === true)
+      if (o.is_deleted === true || o.is_deleted === 'true') return false;
+
       // Must not be completed
       if (isOrderCompleted(o)) return false;
 
@@ -1965,30 +2010,26 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
       const ds = String(o.delivery_status || '').toLowerCase().trim();
       const ps = String(o.payment_status || '').toLowerCase().trim();
 
-      // Rule: ห้ามแสดงออเดอร์ที่ยังมี status = 'pending_verification' ในหน้านี้เด็ดขาด
-      if (s === 'pending_verification' || os === 'pending_verification' || ps === 'pending_verification') {
-        return false;
-      }
-      if (s === 'waiting_payment' || s === 'pending') {
+      // Rule: ห้ามแสดงออเดอร์ที่ยังมี status = 'pending_verification' หรือ 'pending' ในหน้านี้เด็ดขาด
+      if (s === 'pending_verification' || s === 'pending' || s === 'waiting_payment' ||
+          os === 'pending_verification' || os === 'pending' ||
+          ps === 'pending_verification' || ps === 'pending') {
         return false;
       }
 
       // Query criteria: .or('status.eq.ready_to_ship,status.eq.paid,status.eq.in_transit')
-      const isPre = isOrderPreOrder(o);
-      if (isPre && (s === 'producing' || os === 'producing' || ds === 'producing')) {
-        // Pre-orders currently in production queue are managed in queue-management
-        return false;
-      }
-
       const allowedActiveStatuses = [
         'ready_to_ship',
         'paid',
+        'in_transit',
         'ready_for_shipping',
         'shipped',
-        'shipping',
-        'in_transit'
+        'shipping'
       ];
-      return allowedActiveStatuses.includes(s) || allowedActiveStatuses.includes(os) || allowedActiveStatuses.includes(ds);
+      return allowedActiveStatuses.includes(s) || 
+             allowedActiveStatuses.includes(os) || 
+             allowedActiveStatuses.includes(ds) ||
+             ps === 'paid';
     }).sort((a: any, b: any) => {
       const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
       const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
@@ -1996,15 +2037,30 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
     });
   }, [approvedAdminOrders]);
 
+  // Requirement 2: Completed History Tab - แสดงเฉพาะออเดอร์ที่มี status เป็น 'delivered' หรือ 'completed' และยังไม่ถูกลบ (is_deleted = false)
   const completedOrdersList = React.useMemo(() => {
-    return approvedAdminOrders
-      .filter(o => isOrderCompleted(o))
+    return adminOrders
+      .filter(o => {
+        if (!o) return false;
+        if (o.is_deleted === true || o.is_deleted === 'true') return false;
+        return isOrderCompleted(o);
+      })
       .sort((a: any, b: any) => {
         const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
         const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
         return timeB - timeA;
       });
-  }, [approvedAdminOrders]);
+  }, [adminOrders]);
+
+  const trashOrdersList = React.useMemo(() => {
+    return adminOrders
+      .filter(o => o && o.is_deleted === true)
+      .sort((a: any, b: any) => {
+        const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
+        const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
+        return timeB - timeA;
+      });
+  }, [adminOrders]);
 
   const filteredActiveOrders = React.useMemo(() => {
     const term = ordersSearch.toLowerCase().trim();
@@ -2027,7 +2083,23 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
     );
   }, [completedOrdersList, ordersSearch]);
 
-  const filteredAdminOrders = ordersTabFilter === 'active' ? filteredActiveOrders : filteredCompletedOrders;
+  const filteredTrashOrders = React.useMemo(() => {
+    const term = ordersSearch.toLowerCase().trim();
+    if (!term) return trashOrdersList;
+    return trashOrdersList.filter(o => 
+      (o.customerName || o.customer_name || '').toLowerCase().includes(term) ||
+      (o.id || '').toLowerCase().includes(term) ||
+      (o.productName || o.product_name || '').toLowerCase().includes(term) ||
+      (o.shipmentNo || o.tracking_number || '').toLowerCase().includes(term)
+    );
+  }, [trashOrdersList, ordersSearch]);
+
+  const filteredAdminOrders = 
+    ordersTabFilter === 'active' 
+      ? filteredActiveOrders 
+      : ordersTabFilter === 'trash'
+      ? filteredTrashOrders
+      : filteredCompletedOrders;
 
   const filteredAdminPreorders = adminPreOrders.filter(p => 
     p.customerName.toLowerCase().includes(preordersSearch.toLowerCase()) ||
@@ -2101,7 +2173,12 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
               return (
                 <button
                   key={menu.id}
-                  onClick={() => setActiveMenu(menu.id)}
+                  onClick={() => {
+                    setActiveMenu(menu.id);
+                    if (menu.id === 'orders') {
+                      setOrdersTabFilter('active');
+                    }
+                  }}
                   className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-left text-xs font-semibold cursor-pointer transition-all ${
                     activeMenu === menu.id
                       ? 'bg-sky-500 text-white shadow-sm font-bold scale-[1.01]'
@@ -2332,7 +2409,10 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                         คำสั่งซื้อสำเร็จล่าสุด (Recent Orders)
                       </span>
                       <button 
-                        onClick={() => setActiveMenu('orders')} 
+                        onClick={() => {
+                          setActiveMenu('orders');
+                          setOrdersTabFilter('active');
+                        }} 
                         className="text-[10px] text-sky-600 hover:underline cursor-pointer font-bold"
                       >
                         ดูทั้งหมด &raquo;
@@ -3226,7 +3306,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
               {/* Top Navigation & Sub-Tabs Switcher */}
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-3.5 rounded-2xl border border-slate-200 shadow-xs">
                 
-                {/* 2 Sub-Tabs */}
+                {/* 3 Sub-Tabs */}
                 <div className="flex items-center gap-2 flex-wrap">
                   {/* Tab 1: รายการคำสั่งซื้อกำลังดำเนินการ */}
                   <button
@@ -3267,6 +3347,26 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                       {completedOrdersList.length}
                     </span>
                   </button>
+
+                  {/* Tab 3: รายการที่ถูกลบ / ถังขยะ (Recycle Bin) */}
+                  <button
+                    type="button"
+                    onClick={() => setOrdersTabFilter('trash')}
+                    className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-2 ${
+                      ordersTabFilter === 'trash'
+                        ? 'bg-rose-600 text-white shadow-xs'
+                        : 'bg-slate-50 hover:bg-slate-100 text-slate-600 border border-slate-200'
+                    }`}
+                    id="tab-orders-trash"
+                  >
+                    <Trash2 size={14} />
+                    <span>รายการที่ถูกลบ (Recycle Bin)</span>
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${
+                      ordersTabFilter === 'trash' ? 'bg-rose-800 text-white' : 'bg-slate-200 text-slate-700'
+                    }`}>
+                      {trashOrdersList.length}
+                    </span>
+                  </button>
                 </div>
 
                 {/* Search Bar */}
@@ -3276,7 +3376,13 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                   </div>
                   <input
                     type="text"
-                    placeholder={ordersTabFilter === 'active' ? "ค้นหาคำสั่งซื้อกำลังดำเนินการ..." : "ค้นหาประวัติคำสั่งซื้อสำเร็จ, เลขพัสดุ..."}
+                    placeholder={
+                      ordersTabFilter === 'active' 
+                        ? "ค้นหาคำสั่งซื้อกำลังดำเนินการ..." 
+                        : ordersTabFilter === 'trash'
+                        ? "ค้นหารายการที่ถูกลบ..."
+                        : "ค้นหาประวัติคำสั่งซื้อสำเร็จ, เลขพัสดุ..."
+                    }
                     value={ordersSearch}
                     onChange={(e) => setOrdersSearch(e.target.value)}
                     className="w-full h-9 bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-8 text-xs leading-normal text-slate-800 placeholder-slate-400 outline-none focus:bg-white focus:border-sky-500 focus:ring-1 focus:ring-sky-500/20 shadow-xs transition-all"
@@ -3309,7 +3415,11 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                         <th className="py-3 px-3 text-right">ยอดเรียกเก็บ</th>
                         <th className="py-3 px-3 text-center">รหัสสิ่งส่งของขนส่ง</th>
                         <th className="py-3 px-3 text-center">
-                          {ordersTabFilter === 'active' ? 'ขั้นตอนจัดส่ง (4 ขั้นตอน)' : 'สถานะ / การจัดการ'}
+                          {ordersTabFilter === 'active' 
+                            ? 'ขั้นตอนจัดส่ง (4 ขั้นตอน)' 
+                            : ordersTabFilter === 'trash'
+                            ? 'การจัดการ / กู้คืนข้อมูล'
+                            : 'สถานะ / การจัดการ'}
                         </th>
                       </tr>
                     </thead>
@@ -3319,6 +3429,8 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                           <td colSpan={7} className="py-12 text-center text-slate-400 font-medium">
                             {ordersTabFilter === 'active' 
                               ? 'ไม่มีรายการคำสั่งซื้อที่กำลังดำเนินการในขณะนี้' 
+                              : ordersTabFilter === 'trash'
+                              ? 'ไม่มีรายการในถังขยะ'
                               : 'ยังไม่มีประวัติคำสั่งซื้อที่จัดส่งสำเร็จ'}
                           </td>
                         </tr>
@@ -3328,15 +3440,17 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                             <td className="py-3.5 px-4 font-mono font-bold text-slate-700">
                               <div className="flex items-center gap-2">
                                 <span>{ord.id}</span>
-                                <button
-                                  type="button"
-                                  onClick={() => handleRequestDeleteOrder(ord)}
-                                  className="p-1 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer border border-transparent hover:border-rose-200"
-                                  title={`ลบรายการคำสั่งซื้อ ${ord.id}`}
-                                  id={`btn-delete-order-${ord.id}`}
-                                >
-                                  <Trash2 size={13} />
-                                </button>
+                                {ordersTabFilter !== 'trash' && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRequestDeleteOrder(ord)}
+                                    className="p-1 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer border border-transparent hover:border-rose-200"
+                                    title={`ลบรายการคำสั่งซื้อ ${ord.id}`}
+                                    id={`btn-delete-order-${ord.id}`}
+                                  >
+                                    <Trash2 size={13} />
+                                  </button>
+                                )}
                               </div>
                             </td>
                             <td className="py-3.5 px-3">
@@ -3500,6 +3614,27 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                                     </div>
                                   );
                                 })()
+                              ) : ordersTabFilter === 'trash' ? (
+                                <div className="flex items-center justify-center gap-2">
+                                  <span className="px-2.5 py-0.5 rounded-full bg-rose-50 border border-rose-200 text-rose-700 font-bold text-[9.5px] inline-flex items-center gap-1">
+                                    <Trash2 size={10} /> อยู่ในถังขยะ
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRestoreOrder(ord.id)}
+                                    disabled={isRestoringOrder === ord.id}
+                                    className="px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10.5px] cursor-pointer transition-all flex items-center gap-1.5 shadow-xs disabled:opacity-50"
+                                    title={`กู้คืนคำสั่งซื้อ #${ord.id}`}
+                                    id={`btn-restore-order-${ord.id}`}
+                                  >
+                                    {isRestoringOrder === ord.id ? (
+                                      <div className="h-3 w-3 rounded-full border-2 border-white border-t-transparent animate-spin"></div>
+                                    ) : (
+                                      <RotateCcw size={12} />
+                                    )}
+                                    <span>กู้คืนข้อมูล (Restore)</span>
+                                  </button>
+                                </div>
                               ) : (
                                 <div className="flex items-center justify-center gap-1.5">
                                   <span className="px-2.5 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 font-bold text-[9.5px] inline-flex items-center gap-1">
@@ -3760,11 +3895,32 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                                       localStorage.setItem('pornpong_rejected_order_ids', JSON.stringify(filteredRej));
                                     } catch {}
 
-                                    const result: any = await supabaseOrders.approve(targetOrderId);
-                                    if (result) {
-                                      // 1. Create In-App notification for customer
-                                      const isPre = isOrderPreOrder(ord);
-                                      const qNum = (typeof result === 'object' && result?.queueNumber) || ord.queue_number || ord.queue_id || formatQueueId(ord);
+                                    const isPre = isOrderPreOrder(ord);
+                                      const nextStatus = isPre ? 'producing' : 'ready_to_ship';
+
+                                      // Requirement 2: เมื่อกดอนุมัติ ให้ส่งค่า status = 'ready_to_ship' และ is_deleted = false ลง Supabase ให้ชัดเจน
+                                      if (isSupabaseConfigured && supabase) {
+                                        try {
+                                          await supabase
+                                            .from('orders')
+                                            .update({
+                                              status: nextStatus,
+                                              order_status: nextStatus,
+                                              payment_status: 'paid',
+                                              product_type: isPre ? 'pre_order' : 'in_stock',
+                                              is_deleted: false,
+                                              updated_at: new Date().toISOString()
+                                            })
+                                            .eq('id', targetOrderId);
+                                        } catch (updateErr) {
+                                          console.warn('Direct Supabase update error in approve handler:', updateErr);
+                                        }
+                                      }
+
+                                      const result: any = await supabaseOrders.approve(targetOrderId);
+                                      if (result) {
+                                        // 1. Create In-App notification for customer
+                                        const qNum = (typeof result === 'object' && result?.queueNumber) || ord.queue_number || ord.queue_id || formatQueueId(ord);
                                       const approvalMsg = isPre
                                         ? `การชำระเงินเสร็จสิ้น! คำสั่งซื้อ #${targetOrderId} เป็นสินค้าสั่งผลิต ลำดับคิวการผลิตเริ่มต้นแล้ว [${qNum}] โรงงานเริ่มกระบวนการผลิตทันที`
                                         : `การชำระเงินเสร็จสิ้น! คำสั่งซื้อ #${targetOrderId} เป็นสินค้าพร้อมส่ง คลังสินค้ากำลังเตรียมจัดส่งตรงถึงคุณ`;
@@ -3805,7 +3961,9 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                                           id: targetOrderId,
                                           status: isPre ? 'producing' : 'ready_to_ship',
                                           order_status: isPre ? 'producing' : 'ready_to_ship',
-                                          payment_status: 'verified',
+                                          payment_status: 'paid',
+                                          product_type: isPre ? 'pre_order' : 'in_stock',
+                                          is_deleted: false,
                                           delivery_status: isPre ? 'producing' : 'ready_to_ship',
                                           ...(isPre ? { queue_number: qNum, queue_id: qNum, queue_stage: 1 } : {})
                                         };
@@ -3826,6 +3984,8 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                                     setWaitingVerifyOrders(prev => prev.filter(o => String(o.id) !== targetOrderId));
                                     await reloadWaitingVerifyOrders();
                                     await reloadOrders();
+                                    window.dispatchEvent(new Event('orders-updated'));
+                                    window.dispatchEvent(new Event('orders_updated'));
                                     setWaitingVerifyOrders(prev => prev.filter(o => String(o.id) !== targetOrderId));
                                   } catch (err: any) {
                                     console.error('Approve payment error:', err);
