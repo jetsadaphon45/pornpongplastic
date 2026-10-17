@@ -1,5 +1,5 @@
 import React from 'react';
-import { X, Mail, Lock, User, Phone, Eye, EyeOff, CheckCircle2, AlertCircle, KeyRound, ArrowLeft, ShieldCheck, RefreshCw, LogIn } from 'lucide-react';
+import { X, Mail, Lock, User, Phone, Eye, EyeOff, CheckCircle2, AlertCircle, KeyRound, ArrowLeft, ShieldCheck, RefreshCw, LogIn, Clock, Loader2 } from 'lucide-react';
 import { supabase, supabaseCustomers, supabaseProfiles } from '../lib/supabase';
 
 interface UserData {
@@ -16,30 +16,66 @@ const validateEmail = (emailStr: string) => {
   return re.test(emailStr);
 };
 
-// ข้อความแจ้งเตือนสีแดงกรณีอีเมลซ้ำในระบบสมัครสมาชิกตามข้อกำหนด
-export const DUPLICATE_EMAIL_ERROR_MSG = "อีเมลนี้ถูกใช้งานแล้ว กรุณาใช้อีเมลอื่น หรือกด 'ลืมรหัสผ่าน' เพื่อเข้าสู่ระบบ";
+// ข้อความแจ้งเตือนกรณีอีเมลมีในระบบแล้ว
+export const DUPLICATE_EMAIL_ERROR_MSG = "อีเมลนี้สมัครสมาชิกเรียบร้อยแล้ว กำลังนำท่านไปหน้าเข้าสู่ระบบ...";
 
-// ตรวจสอบข้อผิดพลาดอีเมลซ้ำ หรือ Rate limit จาก Supabase Auth
-export const isDuplicateEmailError = (error: any): boolean => {
+// Requirement 1: ตรวจสอบข้อผิดพลาดกรณีมีข้อมูลผู้ใช้ในระบบแล้ว ('User already registered' หรือ 'User already exists')
+export const isExistingUserError = (error: any): boolean => {
   if (!error) return false;
   const raw = typeof error === 'string'
     ? error
     : (error?.message || error?.error_description || error?.code || error?.msg || error?.error || '');
   const lower = String(raw).toLowerCase();
   return (
+    lower.includes('user already registered') ||
+    lower.includes('user already exists') ||
     lower.includes('already registered') ||
     lower.includes('already exists') ||
     lower.includes('already in use') ||
-    lower.includes('rate limit exceeded') ||
-    lower.includes('email rate limit') ||
-    lower.includes('rate_limit') ||
-    lower.includes('over_email_send_rate_limit') ||
     lower.includes('duplicate key') ||
     lower.includes('users_email_partial_key') ||
     lower.includes('user_already_exists') ||
     lower.includes('email_exists') ||
-    lower.includes('อีเมลนี้ถูกใช้งานแล้ว')
+    lower.includes('อีเมลนี้ถูกใช้งานแล้ว') ||
+    lower.includes('อีเมลนี้มีในระบบแล้ว') ||
+    lower.includes('อีเมลนี้สมัครสมาชิกเรียบร้อยแล้ว')
   );
+};
+
+// Backward-compatible alias
+export const isDuplicateEmailError = isExistingUserError;
+
+// Requirement 2: ตรวจจับ Error กรณีติด Rate Limit (429 / 'over_email_send_rate_limit')
+export const isRateLimitError = (error: any): boolean => {
+  if (!error) return false;
+  const status = error?.status || error?.statusCode;
+  if (status === 429) return true;
+  const raw = typeof error === 'string'
+    ? error
+    : (error?.message || error?.error_description || error?.code || error?.msg || error?.error || '');
+  const lower = String(raw).toLowerCase();
+  return (
+    lower.includes('429') ||
+    lower.includes('over_email_send_rate_limit') ||
+    lower.includes('rate limit exceeded') ||
+    lower.includes('email rate limit') ||
+    lower.includes('rate_limit') ||
+    lower.includes('rate limit') ||
+    lower.includes('too many requests')
+  );
+};
+
+// ดึงตัวเลขวินาทีที่ต้องรอกรณีติด Rate Limit (default: 60 วินาที)
+export const extractRateLimitSeconds = (error: any): number => {
+  const raw = typeof error === 'string'
+    ? error
+    : (error?.message || error?.error_description || '');
+  const match = String(raw).match(/(\d+)\s*(?:seconds|sec|วินาที)/i);
+  if (match && match[1]) {
+    const s = parseInt(match[1], 10);
+    if (!isNaN(s) && s > 0 && s <= 600) return s;
+  }
+  return 60;
 };
 
 // ตรวจสอบข้อผิดพลาดรหัสผ่านซ้ำกับของเดิม (Password History / Same Password)
@@ -62,9 +98,7 @@ export const isSamePasswordError = (error: any): boolean => {
   );
 };
 
-// ดักจับและแสดงข้อผิดพลาดจาก Supabase ใน Alert:
-// - ให้แสดงข้อความ error.message หรือ error.error_description จาก Supabase โดยตรงใน Alert
-// - หาก error มีวัตถุซ้อน ให้แปลงเป็น alert(JSON.stringify(error, null, 2)) เพื่อให้เห็นสาเหตุที่แท้จริงจาก Supabase
+// ดักจับและแสดงข้อผิดพลาดจาก Supabase ใน Alert
 export const handleSupabaseAuthError = (error: any): string => {
   if (!error) {
     const fallback = 'เกิดข้อผิดพลาดในการเชื่อมต่อกับ Supabase';
@@ -72,8 +106,15 @@ export const handleSupabaseAuthError = (error: any): string => {
     return fallback;
   }
 
-  // หากเป็นข้อผิดพลาดกรณีอีเมลซ้ำในระบบ
-  if (isDuplicateEmailError(error)) {
+  // หากเป็นข้อผิดพลาดกรณีติด Rate Limit
+  if (isRateLimitError(error)) {
+    const sec = extractRateLimitSeconds(error);
+    const msg = `กรุณารอ ${sec} วินาทีก่อนลองใหม่อีกครั้ง`;
+    return msg;
+  }
+
+  // หากเป็นข้อผิดพลาดกรณีอีเมลมีในระบบแล้ว
+  if (isExistingUserError(error)) {
     return DUPLICATE_EMAIL_ERROR_MSG;
   }
 
@@ -408,12 +449,41 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
   const [confirmPassword, setConfirmPassword] = React.useState('');
   const [otpCode, setOtpCode] = React.useState('');
   const [isDuplicateEmail, setIsDuplicateEmail] = React.useState(false);
+  const [showExistingUserModal, setShowExistingUserModal] = React.useState(false);
+  const [rateLimitCountdown, setRateLimitCountdown] = React.useState<number>(0);
 
   const [showPassword, setShowPassword] = React.useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = React.useState(false);
 
   const [errors, setErrors] = React.useState<Record<string, string>>({});
   const [isLoading, setIsLoading] = React.useState(false);
+
+  // Requirement 2: Countdown Timer สำหรับ Rate Limit ป้องกันการกดซ้ำและปลดล็อกปุ่มอัตโนมัติ
+  React.useEffect(() => {
+    if (rateLimitCountdown <= 0) return;
+    const timer = setInterval(() => {
+      setRateLimitCountdown((prev) => {
+        if (prev <= 1) {
+          clearInterval(timer);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [rateLimitCountdown]);
+
+  // Requirement 1: เมื่อพบว่ามีบัญชีในระบบแล้ว แสดง Modal แจ้งเตือนและเปลี่ยนหน้าไป Login ทันที
+  React.useEffect(() => {
+    if (!showExistingUserModal) return;
+    const timer = setTimeout(() => {
+      const targetEmail = email.trim();
+      setShowExistingUserModal(false);
+      onClose();
+      onOpenLogin(targetEmail);
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [showExistingUserModal, email, onClose, onOpenLogin]);
 
   // Reset step on modal open/close
   React.useEffect(() => {
@@ -422,6 +492,7 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
       setOtpCode('');
       setErrors({});
       setIsDuplicateEmail(false);
+      setShowExistingUserModal(false);
     }
   }, [isOpen]);
 
@@ -439,6 +510,15 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
   // 1. ฟังก์ชันสั่งส่ง OTP ผ่าน Supabase Auth พร้อมตรวจสอบอีเมลซ้ำในระบบ
   const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    // Requirement 2: Prevent Duplicate Click & Rate Limit Lock
+    if (isLoading || rateLimitCountdown > 0) {
+      if (rateLimitCountdown > 0) {
+        triggerToast(`กรุณารอ ${rateLimitCountdown} วินาทีก่อนลองใหม่อีกครั้ง`);
+      }
+      return;
+    }
+
     const newErrors: Record<string, string> = {};
 
     if (!fullName.trim()) {
@@ -481,6 +561,7 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
 
     setIsLoading(true);
     setIsDuplicateEmail(false);
+    setShowExistingUserModal(false);
 
     try {
       const cleanEmail = email.trim().toLowerCase();
@@ -488,12 +569,13 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
       // ตรวจสอบอีเมลซ้ำในระบบ (ตาราง customers, profiles และ local cache)
       const isTaken = await supabaseCustomers.checkEmailExists(cleanEmail);
       if (isTaken) {
+        setIsLoading(false);
+        setIsDuplicateEmail(true);
+        setShowExistingUserModal(true);
         setErrors({
           form: DUPLICATE_EMAIL_ERROR_MSG,
           email: DUPLICATE_EMAIL_ERROR_MSG
         });
-        setIsDuplicateEmail(true);
-        setIsLoading(false);
         return;
       }
 
@@ -505,7 +587,7 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
         return;
       }
 
-      // ตรวจสอบผ่าน Supabase Auth ด้วย signUp เพื่อดัก Error เช่น "User already registered" หรือ "Email rate limit exceeded"
+      // Requirement 1: เรียก supabase.auth.signUp() และดักจับ 'User already registered' หรือ 'User already exists'
       const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
         email: cleanEmail,
         password: password,
@@ -518,14 +600,28 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
       });
 
       if (signUpError) {
-        if (isDuplicateEmailError(signUpError)) {
+        setIsLoading(false);
+        // Requirement 1: ตรวจจับ error จาก signUp หากพบ 'User already registered' หรือ 'User already exists'
+        if (isExistingUserError(signUpError)) {
+          setIsDuplicateEmail(true);
+          setShowExistingUserModal(true);
           setErrors({
             form: DUPLICATE_EMAIL_ERROR_MSG,
             email: DUPLICATE_EMAIL_ERROR_MSG
           });
-          setIsDuplicateEmail(true);
           return;
         }
+
+        // Requirement 2: ดักจับ error กรณีติด Rate Limit (429 / 'over_email_send_rate_limit')
+        if (isRateLimitError(signUpError)) {
+          const waitSec = extractRateLimitSeconds(signUpError);
+          setRateLimitCountdown(waitSec);
+          const rateMsg = `กรุณารอ ${waitSec} วินาทีก่อนลองใหม่อีกครั้ง`;
+          setErrors({ form: rateMsg, rateLimit: rateMsg });
+          triggerToast(rateMsg);
+          return;
+        }
+
         const errorMsg = handleSupabaseAuthError(signUpError);
         setErrors({ form: errorMsg });
         return;
@@ -533,11 +629,13 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
 
       // Supabase Auth อาจคืนค่า identities: [] หากอีเมลมีอยู่ในระบบแล้ว (เมื่อเปิด email confirmation)
       if (signUpData?.user && Array.isArray(signUpData.user.identities) && signUpData.user.identities.length === 0) {
+        setIsLoading(false);
+        setIsDuplicateEmail(true);
+        setShowExistingUserModal(true);
         setErrors({
           form: DUPLICATE_EMAIL_ERROR_MSG,
           email: DUPLICATE_EMAIL_ERROR_MSG
         });
-        setIsDuplicateEmail(true);
         return;
       }
 
@@ -554,12 +652,22 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
       });
 
       if (otpError) {
-        if (isDuplicateEmailError(otpError)) {
+        setIsLoading(false);
+        if (isExistingUserError(otpError)) {
+          setIsDuplicateEmail(true);
+          setShowExistingUserModal(true);
           setErrors({
             form: DUPLICATE_EMAIL_ERROR_MSG,
             email: DUPLICATE_EMAIL_ERROR_MSG
           });
-          setIsDuplicateEmail(true);
+          return;
+        }
+        if (isRateLimitError(otpError)) {
+          const waitSec = extractRateLimitSeconds(otpError);
+          setRateLimitCountdown(waitSec);
+          const rateMsg = `กรุณารอ ${waitSec} วินาทีก่อนลองใหม่อีกครั้ง`;
+          setErrors({ form: rateMsg, rateLimit: rateMsg });
+          triggerToast(rateMsg);
           return;
         }
         const errorMsg = handleSupabaseAuthError(otpError);
@@ -571,12 +679,22 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
       setErrors({});
       triggerToast(`ส่งรหัส OTP ไปยัง ${email.trim()} เรียบร้อยแล้ว`);
     } catch (err: any) {
-      if (isDuplicateEmailError(err)) {
+      setIsLoading(false);
+      if (isExistingUserError(err)) {
+        setIsDuplicateEmail(true);
+        setShowExistingUserModal(true);
         setErrors({
           form: DUPLICATE_EMAIL_ERROR_MSG,
           email: DUPLICATE_EMAIL_ERROR_MSG
         });
-        setIsDuplicateEmail(true);
+        return;
+      }
+      if (isRateLimitError(err)) {
+        const waitSec = extractRateLimitSeconds(err);
+        setRateLimitCountdown(waitSec);
+        const rateMsg = `กรุณารอ ${waitSec} วินาทีก่อนลองใหม่อีกครั้ง`;
+        setErrors({ form: rateMsg, rateLimit: rateMsg });
+        triggerToast(rateMsg);
         return;
       }
       const errorMsg = handleSupabaseAuthError(err);
@@ -588,6 +706,14 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
 
   // 2. ฟังก์ชันขอส่งรหัส OTP ใหม่อีกครั้ง
   const handleResendOtp = async () => {
+    // Requirement 2: Prevent Duplicate Click & Rate Limit Lock
+    if (isLoading || rateLimitCountdown > 0) {
+      if (rateLimitCountdown > 0) {
+        triggerToast(`กรุณารอ ${rateLimitCountdown} วินาทีก่อนลองใหม่อีกครั้ง`);
+      }
+      return;
+    }
+
     setIsLoading(true);
     try {
       if (!supabase) {
@@ -606,13 +732,23 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
       });
 
       if (error) {
-        if (isDuplicateEmailError(error)) {
+        setIsLoading(false);
+        if (isExistingUserError(error)) {
           setStep('form');
           setIsDuplicateEmail(true);
+          setShowExistingUserModal(true);
           setErrors({
             form: DUPLICATE_EMAIL_ERROR_MSG,
             email: DUPLICATE_EMAIL_ERROR_MSG
           });
+          return;
+        }
+        if (isRateLimitError(error)) {
+          const waitSec = extractRateLimitSeconds(error);
+          setRateLimitCountdown(waitSec);
+          const rateMsg = `กรุณารอ ${waitSec} วินาทีก่อนลองใหม่อีกครั้ง`;
+          setErrors({ otp: rateMsg });
+          triggerToast(rateMsg);
           return;
         }
         const errorMsg = handleSupabaseAuthError(error);
@@ -620,16 +756,27 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
         return;
       }
 
+      setRateLimitCountdown(60);
       setErrors({});
       triggerToast(`ส่งรหัส OTP ใหม่ไปยัง ${email.trim()} เรียบร้อยแล้ว`);
     } catch (err: any) {
-      if (isDuplicateEmailError(err)) {
+      setIsLoading(false);
+      if (isExistingUserError(err)) {
         setStep('form');
         setIsDuplicateEmail(true);
+        setShowExistingUserModal(true);
         setErrors({
           form: DUPLICATE_EMAIL_ERROR_MSG,
           email: DUPLICATE_EMAIL_ERROR_MSG
         });
+        return;
+      }
+      if (isRateLimitError(err)) {
+        const waitSec = extractRateLimitSeconds(err);
+        setRateLimitCountdown(waitSec);
+        const rateMsg = `กรุณารอ ${waitSec} วินาทีก่อนลองใหม่อีกครั้ง`;
+        setErrors({ otp: rateMsg });
+        triggerToast(rateMsg);
         return;
       }
       const errorMsg = handleSupabaseAuthError(err);
@@ -841,12 +988,23 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
             <div className="flex flex-col items-center gap-2 pt-1 text-xs">
               <button
                 type="button"
-                disabled={isLoading}
+                disabled={isLoading || rateLimitCountdown > 0}
                 onClick={handleResendOtp}
-                className="font-semibold text-brand-blue hover:text-sky-700 hover:underline cursor-pointer disabled:opacity-50"
+                className={`font-semibold inline-flex items-center gap-1.5 transition-colors ${
+                  rateLimitCountdown > 0
+                    ? 'text-amber-600 cursor-not-allowed opacity-90'
+                    : 'text-brand-blue hover:text-sky-700 hover:underline cursor-pointer disabled:opacity-50'
+                }`}
                 id="register-resend-otp-button"
               >
-                ไม่ได้รับรหัส? คลิกเพื่อส่ง OTP ใหม่อีกครั้ง
+                {rateLimitCountdown > 0 ? (
+                  <>
+                    <Clock size={13} className="animate-pulse text-amber-600" />
+                    <span>กรุณารอ {rateLimitCountdown} วินาทีก่อนลองใหม่อีกครั้ง</span>
+                  </>
+                ) : (
+                  <span>ไม่ได้รับรหัส? คลิกเพื่อส่ง OTP ใหม่อีกครั้ง</span>
+                )}
               </button>
 
               <button
@@ -866,6 +1024,23 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
         ) : (
           /* Modal Body: STEP 1 - REGISTRATION FORM */
           <form onSubmit={handleRegisterSubmit} className="p-6 space-y-3.5 max-h-[80vh] overflow-y-auto">
+            {rateLimitCountdown > 0 && (
+              <div 
+                className="rounded-xl p-3.5 bg-amber-50 border border-amber-200 text-amber-800 text-xs flex items-center gap-2.5 animate-fadeIn shadow-xs" 
+                id="rate-limit-warning-banner"
+              >
+                <Clock size={18} className="shrink-0 text-amber-600 animate-pulse" />
+                <div className="flex-1">
+                  <p className="font-bold text-amber-900">
+                    กรุณารอ {rateLimitCountdown} วินาทีก่อนลองใหม่อีกครั้ง
+                  </p>
+                  <p className="text-[10px] text-amber-700 mt-0.5">
+                    ระบบจะปลดล็อกปุ่มสมัครสมาชิกโดยอัตโนมัติตามเวลานับถอยหลัง
+                  </p>
+                </div>
+              </div>
+            )}
+
             {errors.form && (
               <div 
                 className={`rounded-xl p-3.5 text-xs border shadow-xs animate-fadeIn space-y-2.5 ${
@@ -1097,12 +1272,26 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
             {/* Submit Action Button */}
             <button
               type="submit"
-              disabled={isLoading}
-              className="w-full mt-2 rounded-xl bg-brand-blue hover:bg-brand-blue-light text-white font-bold text-xs py-2.8 shadow-md shadow-sky-50 transition-colors cursor-pointer disabled:opacity-50 flex items-center justify-center gap-1.5"
+              disabled={isLoading || rateLimitCountdown > 0}
+              className={`w-full mt-2 rounded-xl text-white font-bold text-xs py-3 shadow-md transition-all flex items-center justify-center gap-1.5 ${
+                rateLimitCountdown > 0
+                  ? 'bg-amber-600 hover:bg-amber-600 cursor-not-allowed opacity-90 shadow-amber-100'
+                  : isLoading
+                    ? 'bg-brand-blue/70 cursor-wait'
+                    : 'bg-brand-blue hover:bg-brand-blue-light shadow-sky-50 cursor-pointer'
+              }`}
               id="register-submit-button"
             >
-              {isLoading ? (
-                <div className="h-4 w-4 rounded-full border-2 border-white border-t-transparent animate-spin" />
+              {rateLimitCountdown > 0 ? (
+                <>
+                  <Clock size={15} className="animate-pulse" />
+                  <span>กรุณารอ {rateLimitCountdown} วินาทีก่อนลองใหม่อีกครั้ง</span>
+                </>
+              ) : isLoading ? (
+                <>
+                  <div className="h-4 w-4 rounded-full border-2 border-white border-t-transparent animate-spin" />
+                  <span>กำลังสมัครสมาชิก...</span>
+                </>
               ) : (
                 <span>สมัครสมาชิก</span>
               )}
@@ -1124,6 +1313,75 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
               </button>
             </div>
           </form>
+        )}
+
+        {/* Requirement 1: Modal แจ้งเตือนภาษาไทยเมื่อมีข้อมูลในระบบแล้ว พร้อมเปลี่ยนหน้าไป Login ทันที */}
+        {showExistingUserModal && (
+          <div 
+            className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs font-sans animate-fadeIn"
+            id="existing-user-modal-overlay"
+          >
+            <div 
+              className="relative w-full max-w-sm rounded-3xl bg-white p-6 shadow-2xl border border-sky-100 text-center space-y-4 animate-scaleUp"
+              id="existing-user-modal-box"
+            >
+              <div className="mx-auto w-16 h-16 rounded-2xl bg-sky-50 text-brand-blue border border-sky-200/80 flex items-center justify-center shadow-xs relative">
+                <ShieldCheck size={32} className="text-brand-blue" />
+                <div className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-emerald-500 text-white flex items-center justify-center shadow-xs">
+                  <CheckCircle2 size={12} />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <h3 className="text-base font-extrabold text-slate-850">
+                  แจ้งเตือนบัญชีสมาชิก
+                </h3>
+                <p className="text-xs text-slate-700 leading-relaxed font-semibold">
+                  อีเมลนี้สมัครสมาชิกเรียบร้อยแล้ว กำลังนำท่านไปหน้าเข้าสู่ระบบ...
+                </p>
+                {email && (
+                  <div className="pt-0.5">
+                    <span className="text-[11px] font-mono text-slate-600 bg-slate-100 py-1 px-3 rounded-lg border border-slate-200 inline-block font-semibold">
+                      {email.trim()}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex items-center justify-center gap-2 text-[11px] text-slate-500 font-medium">
+                <Loader2 size={13} className="animate-spin text-brand-blue" />
+                <span>กำลังนำทางไปหน้าเข้าสู่ระบบอัตโนมัติ...</span>
+              </div>
+
+              <div className="space-y-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const targetEmail = email.trim();
+                    setShowExistingUserModal(false);
+                    onClose();
+                    onOpenLogin(targetEmail);
+                  }}
+                  className="w-full py-3 px-4 rounded-xl bg-brand-blue hover:bg-brand-blue-light text-white font-bold text-xs shadow-md shadow-sky-100 transition-all flex items-center justify-center gap-2 cursor-pointer"
+                  id="existing-user-modal-login-btn"
+                >
+                  <LogIn size={15} />
+                  <span>เข้าสู่ระบบทันที (Sign In)</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowExistingUserModal(false);
+                  }}
+                  className="w-full py-2 px-4 rounded-xl text-slate-500 hover:text-slate-800 hover:bg-slate-100 text-xs font-semibold transition-all cursor-pointer"
+                  id="existing-user-modal-cancel-btn"
+                >
+                  เปลี่ยนอีเมล / กรอกข้อมูลใหม่
+                </button>
+              </div>
+            </div>
+          </div>
         )}
       </div>
     </div>

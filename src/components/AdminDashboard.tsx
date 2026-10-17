@@ -1094,9 +1094,11 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
           notification: newNoti
         }
       }));
-      window.dispatchEvent(new CustomEvent('pornpong-order-delivered', {
-        detail: { orderId, notification: newNoti, status: nextStatus, meta }
-      }));
+      if (isDeliv) {
+        window.dispatchEvent(new CustomEvent('pornpong-order-delivered', {
+          detail: { orderId, notification: newNoti, status: nextStatus, meta }
+        }));
+      }
       window.dispatchEvent(new CustomEvent('orders-updated'));
       await reloadOrders();
 
