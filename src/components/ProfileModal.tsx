@@ -222,13 +222,14 @@ export function ProfileModal({
 
   // Helper to determine if an order is completed/delivered
   const isOrderCompleted = React.useCallback((o: any) => {
+    if (!o) return false;
     const s = String(o.status || (o as any).raw_status || '').toLowerCase().trim();
     const os = String((o as any).order_status || '').toLowerCase().trim();
     const ds = String(o.delivery_status || '').toLowerCase().trim();
     const sl = String(o.stageLabel || '').toLowerCase().trim();
 
     // Must have completed/delivered status: status.eq.delivered or status.eq.completed
-    const isDeliveredOrCompleted =
+    return (
       s === 'delivered' ||
       s === 'completed' ||
       s === 'จัดส่งสำเร็จ' ||
@@ -236,20 +237,8 @@ export function ProfileModal({
       os === 'completed' ||
       ds === 'delivered' ||
       ds === 'completed' ||
-      sl === 'จัดส่งสำเร็จ';
-
-    if (!isDeliveredOrCompleted) return false;
-
-    // Explicitly reject orders that are still in active stages (producing, ready_to_ship, in_transit, pending_verification, paid)
-    const activeKeywords = ['producing', 'manufacturing', 'ready_to_ship', 'ready_for_shipping', 'in_transit', 'shipping', 'queue_received', 'pending_verification', 'paid'];
-    if (activeKeywords.includes(s) || activeKeywords.includes(os) || activeKeywords.includes(ds)) {
-      return false;
-    }
-    if (['กำลังหลอม/ผลิต', 'รอขนย้าย', 'เตรียมพัสดุ / รอจัดส่ง', 'อยู่ระหว่างจัดส่ง', 'รับคิวผลิต', 'รอตรวจสอบชำระเงิน'].includes(sl)) {
-      return false;
-    }
-
-    return true;
+      sl === 'จัดส่งสำเร็จ'
+    );
   }, []);
 
   // 1. Requirement 2: Completed Order History (Order History)
@@ -259,26 +248,32 @@ export function ProfileModal({
     return orders.filter(o => isOrderCompleted(o));
   }, [orders, isOrderCompleted]);
 
-  // 2. Requirement 2: Active Tracked Orders (Active Shipments Tab)
-  // Shows active ongoing orders matching: status.eq.pending_verification, status.eq.ready_to_ship, status.eq.producing, status.eq.in_transit, status.eq.paid
-  // Strictly excludes orders that are delivered or completed
+  // 2. Requirement 1: Active Tracked Orders (Active Shipments Tab)
+  // Shows active ongoing orders matching: status.eq.pending_verification, status.eq.ready_to_ship, status.eq.producing, status.eq.in_transit
+  // Strictly excludes orders that are delivered or completed (they drop out immediately!)
   const activeTrackedOrders = React.useMemo(() => {
     return orders.filter(o => {
-      const s = String(o.status || (o as any).raw_status || '').toLowerCase().trim();
+      // Condition 1: If order is completed or delivered, drop out of tracking tab immediately!
+      if (isOrderCompleted(o)) return false;
+
+      const s = String(o.raw_status || o.status || '').toLowerCase().trim();
       const os = String((o as any).order_status || '').toLowerCase().trim();
       const ds = String(o.delivery_status || '').toLowerCase().trim();
       const ps = String((o as any).payment_status || '').toLowerCase().trim();
 
-      const isCompleted = isOrderCompleted(o);
+      // Condition 2: If cancelled or rejected, exclude
       const isCancelled =
         s === 'cancelled' ||
         s === 'ยกเลิกคำสั่งซื้อ' ||
         os === 'cancelled' ||
         ds === 'cancelled' ||
-        s === 'rejected';
+        s === 'rejected' ||
+        ps === 'cancelled' ||
+        ps === 'rejected';
 
-      if (isCompleted || isCancelled) return false;
+      if (isCancelled) return false;
 
+      // Condition 3: Match active in-progress statuses: pending_verification, ready_to_ship, producing, in_transit
       const activeKeywords = [
         'pending_verification',
         'ready_to_ship',
@@ -288,7 +283,10 @@ export function ProfileModal({
         'shipping',
         'paid',
         'ready_for_shipping',
-        'waiting_payment'
+        'waiting_payment',
+        'processing',
+        'waiting_verify',
+        'waiting_approval'
       ];
       return (
         activeKeywords.includes(s) ||
@@ -301,6 +299,16 @@ export function ProfileModal({
   }, [orders, isOrderCompleted]);
 
   const [selectedTrackedId, setSelectedTrackedId] = React.useState<string | null>(null);
+
+  // Auto-reset selected tracked order if it became completed
+  React.useEffect(() => {
+    if (selectedTrackedId) {
+      const isStillActive = activeTrackedOrders.some(o => o.id === selectedTrackedId);
+      if (!isStillActive) {
+        setSelectedTrackedId(activeTrackedOrders[0]?.id || null);
+      }
+    }
+  }, [activeTrackedOrders, selectedTrackedId]);
 
   // Track primary order for the Live Queue Card
   const primaryTrackedOrder = React.useMemo(() => {
@@ -345,14 +353,14 @@ export function ProfileModal({
 
       if (isSupabaseConfigured && supabase) {
         try {
-          // Requirement 1: Query table 'orders' covering active statuses:
-          // .or('status.eq.pending_verification,status.eq.ready_to_ship,status.eq.producing,status.eq.in_transit,status.eq.paid')
-          // and also fetch completed orders (.or('status.eq.delivered,status.eq.completed')) for the completed history tab
+          // Requirement 1 & 2:
+          // 1. "ติดตามสถานะจัดส่ง" Tab: .or('status.eq.pending_verification,status.eq.ready_to_ship,status.eq.producing,status.eq.in_transit')
+          // 2. "ประวัติการสั่งซื้อและจัดจอง" Tab: .or('status.eq.delivered,status.eq.completed')
           const [activeRes, completedRes, delivs] = await Promise.all([
             supabase
               .from('orders')
               .select('*')
-              .or('status.eq.pending_verification,status.eq.ready_to_ship,status.eq.producing,status.eq.in_transit,status.eq.paid')
+              .or('status.eq.pending_verification,status.eq.ready_to_ship,status.eq.producing,status.eq.in_transit')
               .order('created_at', { ascending: false }),
             supabase
               .from('orders')
@@ -363,8 +371,14 @@ export function ProfileModal({
           ]);
 
           const orderMap = new Map<string, any>();
-          (activeRes.data || []).forEach((o: any) => { if (o && o.id) orderMap.set(String(o.id), o); });
-          (completedRes.data || []).forEach((o: any) => { if (o && o.id) orderMap.set(String(o.id), o); });
+          // Active in-progress orders
+          (activeRes.data || []).forEach((o: any) => { 
+            if (o && o.id) orderMap.set(String(o.id), o); 
+          });
+          // Completed orders overwrite any earlier active records
+          (completedRes.data || []).forEach((o: any) => { 
+            if (o && o.id) orderMap.set(String(o.id), o); 
+          });
           fetchedOrders = Array.from(orderMap.values());
           deliveriesMap = delivs || {};
         } catch (e) {
@@ -385,11 +399,16 @@ export function ProfileModal({
         deliveriesMap = delivs || {};
       }
 
-      // Merge local storage admin_orders to ensure newly placed or approved orders are present
+      // Merge local storage admin_orders to ensure newly placed or updated orders are present with latest status
       try {
         const local = JSON.parse(localStorage.getItem('admin_orders') || '[]');
         for (const loc of local) {
-          if (!fetchedOrders.some((f: any) => String(f.id) === String(loc.id))) {
+          const locId = String(loc.id);
+          const existingIdx = fetchedOrders.findIndex((f: any) => String(f.id) === locId);
+          if (existingIdx >= 0) {
+            // Overwrite with latest local administrative data (e.g. status was set to delivered by admin)
+            fetchedOrders[existingIdx] = { ...fetchedOrders[existingIdx], ...loc };
+          } else {
             fetchedOrders.push(loc);
           }
         }
@@ -495,9 +514,9 @@ export function ProfileModal({
           productName: o.productName || 'เรือพลาสติกและอุปกรณ์',
           color: o.color || 'คละสี',
           amount: formattedAmount,
-          status: stageLabel,
-          raw_status: ordStatus,
-          order_status: ordStatus,
+          status: isDelivered ? 'จัดส่งสำเร็จ' : stageLabel,
+          raw_status: isDelivered ? 'delivered' : ordStatus,
+          order_status: isDelivered ? 'completed' : ordStatus,
           payment_status: payStatus,
           stageNumber,
           stageLabel,
@@ -510,7 +529,7 @@ export function ProfileModal({
           shipping_carrier: carrier,
           driverPhone: driver,
           driver_phone: driver,
-          delivery_status: delivStatus || ordStatus,
+          delivery_status: isDelivered ? 'delivered' : (delivStatus || ordStatus),
           orderType,
           isPreOrder: isPre
         };
@@ -601,13 +620,41 @@ export function ProfileModal({
 
     window.addEventListener('orders-updated', handleSync);
     window.addEventListener('orders_updated', handleSync);
-    window.addEventListener('pornpong-order-delivered', handleSync);
+
+    // Instant optimistic update on status change event
+    const handleStatusUpdateEvent = (e: any) => {
+      const orderId = e?.detail?.orderId || e?.detail?.order_id;
+      const nextStatus = String(e?.detail?.status || e?.detail?.stage || e?.detail?.delivery_status || '').toLowerCase();
+      if (orderId && (nextStatus === 'delivered' || nextStatus === 'completed' || e.type === 'pornpong-order-delivered')) {
+        setOrders(prev => prev.map(o => {
+          if (String(o.id) === String(orderId)) {
+            return {
+              ...o,
+              status: 'จัดส่งสำเร็จ',
+              raw_status: 'delivered',
+              order_status: 'completed',
+              delivery_status: 'delivered',
+              stageNumber: 4,
+              stageLabel: 'จัดส่งสำเร็จ',
+              statusMessage: e?.detail?.message || 'จัดส่งสำเร็จเรียบร้อยแล้ว - ขอบคุณที่ไว้วางใจใช้บริการพรพงศ์พลาสติก'
+            };
+          }
+          return o;
+        }));
+      }
+      // Immediate database refetch
+      loadHistory();
+      setActiveFactoryQueue(getActiveProductionQueue());
+    };
+
+    window.addEventListener('pornpong-order-delivered', handleStatusUpdateEvent);
     window.addEventListener('pornpong-order-approved', handleSync);
-    window.addEventListener('pornpong-order-status-updated', handleSync);
+    window.addEventListener('pornpong-order-status-updated', handleStatusUpdateEvent);
     window.addEventListener('pornpong-shipping-in-transit', handleSync);
     window.addEventListener('pornpong-queue-updated', handleQueueSync);
-    window.addEventListener('pornpong-delivery-updated', handleSync);
+    window.addEventListener('pornpong-delivery-updated', handleStatusUpdateEvent);
     window.addEventListener('storage', handleSync);
+    window.addEventListener('focus', handleSync);
 
     // Supabase Realtime Channel Subscription for both orders and deliveries tables
     let channel: any = null;
@@ -619,7 +666,27 @@ export function ProfileModal({
           .on(
             'postgres_changes',
             { event: '*', schema: 'public', table: 'orders' },
-            () => {
+            (payload: any) => {
+              if (payload?.new?.id) {
+                const newStatus = String(payload.new.status || payload.new.order_status || payload.new.delivery_status || '').toLowerCase();
+                if (newStatus === 'delivered' || newStatus === 'completed') {
+                  setOrders(prev => prev.map(o => {
+                    if (String(o.id) === String(payload.new.id)) {
+                      return {
+                        ...o,
+                        status: 'จัดส่งสำเร็จ',
+                        raw_status: 'delivered',
+                        order_status: 'completed',
+                        delivery_status: 'delivered',
+                        stageNumber: 4,
+                        stageLabel: 'จัดส่งสำเร็จ',
+                        statusMessage: 'จัดส่งสำเร็จเรียบร้อยแล้ว - ขอบคุณที่ไว้วางใจใช้บริการพรพงศ์พลาสติก'
+                      };
+                    }
+                    return o;
+                  }));
+                }
+              }
               loadHistory();
               setActiveFactoryQueue(getActiveProductionQueue());
             }
@@ -627,7 +694,27 @@ export function ProfileModal({
           .on(
             'postgres_changes',
             { event: '*', schema: 'public', table: 'deliveries' },
-            () => {
+            (payload: any) => {
+              if (payload?.new?.order_id) {
+                const delivSt = String(payload.new.delivery_status || '').toLowerCase();
+                if (delivSt === 'delivered' || delivSt === 'completed') {
+                  setOrders(prev => prev.map(o => {
+                    if (String(o.id) === String(payload.new.order_id)) {
+                      return {
+                        ...o,
+                        status: 'จัดส่งสำเร็จ',
+                        raw_status: 'delivered',
+                        order_status: 'completed',
+                        delivery_status: 'delivered',
+                        stageNumber: 4,
+                        stageLabel: 'จัดส่งสำเร็จ',
+                        statusMessage: 'จัดส่งสำเร็จเรียบร้อยแล้ว - ขอบคุณที่ไว้วางใจใช้บริการพรพงศ์พลาสติก'
+                      };
+                    }
+                    return o;
+                  }));
+                }
+              }
               loadHistory();
               setActiveFactoryQueue(getActiveProductionQueue());
             }
@@ -638,20 +725,21 @@ export function ProfileModal({
       }
     }
 
-    // Auto-poll every 3 seconds while ProfileModal is open to guarantee immediate update
-    const autoPoll = setInterval(handleSync, 3000);
+    // Auto-poll every 2.5 seconds while ProfileModal is open to guarantee immediate update
+    const autoPoll = setInterval(handleSync, 2500);
 
     return () => {
       clearInterval(autoPoll);
       window.removeEventListener('orders-updated', handleSync);
       window.removeEventListener('orders_updated', handleSync);
-      window.removeEventListener('pornpong-order-delivered', handleSync);
+      window.removeEventListener('pornpong-order-delivered', handleStatusUpdateEvent);
       window.removeEventListener('pornpong-order-approved', handleSync);
-      window.removeEventListener('pornpong-order-status-updated', handleSync);
+      window.removeEventListener('pornpong-order-status-updated', handleStatusUpdateEvent);
       window.removeEventListener('pornpong-shipping-in-transit', handleSync);
       window.removeEventListener('pornpong-queue-updated', handleQueueSync);
-      window.removeEventListener('pornpong-delivery-updated', handleSync);
+      window.removeEventListener('pornpong-delivery-updated', handleStatusUpdateEvent);
       window.removeEventListener('storage', handleSync);
+      window.removeEventListener('focus', handleSync);
       if (channel && supabase) {
         supabase.removeChannel(channel);
       }
