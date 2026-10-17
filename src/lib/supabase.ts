@@ -1669,6 +1669,64 @@ export const supabaseOrders = {
     }
   },
 
+  // Requirement 1: Query table 'orders' for active in-progress orders (Deliveries Tracking Tab)
+  // .or('status.eq.pending_verification,status.eq.ready_to_ship,status.eq.producing,status.eq.in_transit')
+  async listActiveTracking(): Promise<any[]> {
+    if (!isSupabaseConfigured || !supabase) {
+      try {
+        const local = JSON.parse(localStorage.getItem('admin_orders') || '[]');
+        return (local || []).filter((o: any) => {
+          if (o.is_deleted === true || o.is_deleted === 'true') return false;
+          const s = String(o.status || '').toLowerCase().trim();
+          const os = String(o.order_status || '').toLowerCase().trim();
+          const ds = String(o.delivery_status || '').toLowerCase().trim();
+          if (s === 'delivered' || s === 'completed' || os === 'delivered' || os === 'completed' || ds === 'delivered' || ds === 'completed') return false;
+          return ['pending_verification', 'ready_to_ship', 'producing', 'in_transit'].includes(s) ||
+                 ['ready_to_ship', 'producing', 'in_transit'].includes(os);
+        });
+      } catch {
+        return [];
+      }
+    }
+
+    try {
+      const [ordersRes, deliveriesMap] = await Promise.all([
+        supabase
+          .from('orders')
+          .select('*')
+          .or('status.eq.pending_verification,status.eq.ready_to_ship,status.eq.producing,status.eq.in_transit')
+          .or('is_deleted.is.null,is_deleted.eq.false')
+          .order('created_at', { ascending: false }),
+        supabaseDeliveries.getAll()
+      ]);
+
+      const data = (ordersRes.data || []).filter((row: any) => {
+        if (row.is_deleted === true || row.is_deleted === 'true') return false;
+        const s = String(row.status || '').toLowerCase().trim();
+        const os = String(row.order_status || '').toLowerCase().trim();
+        const ds = String(row.delivery_status || '').toLowerCase().trim();
+        if (s === 'delivered' || s === 'completed' || os === 'delivered' || os === 'completed' || ds === 'delivered' || ds === 'completed') return false;
+        return true;
+      });
+
+      return data.map((row: any) => {
+        const orderIdStr = String(row.id).trim();
+        const delivery = deliveriesMap[orderIdStr] || deliveriesMap[row.id];
+        return {
+          ...row,
+          shipping_carrier: delivery?.shipping_carrier || row.shipping_carrier || row.carrier_name || '',
+          driver_phone: delivery?.driver_phone || row.driver_phone || '',
+          tracking_number: delivery?.tracking_number || row.tracking_number || row.shipmentNo || row.shipment_no || '',
+          estimated_delivery_date: delivery?.estimated_delivery_date || row.estimated_delivery_date || '',
+          delivery_status: delivery?.delivery_status || row.delivery_status || row.status || ''
+        };
+      });
+    } catch (err: any) {
+      console.warn('listActiveTracking error:', err?.message);
+      return [];
+    }
+  },
+
   // Query table 'orders' for completed orders: .or('status.eq.delivered,status.eq.completed')
   async listCompleted(): Promise<any[]> {
     if (!isSupabaseConfigured || !supabase) {
