@@ -441,7 +441,8 @@ interface RegisterModalProps {
 }
 
 export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPassword, onRegisterSuccess, triggerToast }: RegisterModalProps) {
-  const [step, setStep] = React.useState<'form' | 'otp'>('form');
+  // Requirement 1: State สำหรับจัดการขั้นตอนสมัคร 'form' | 'verify_otp'
+  const [step, setStep] = React.useState<'form' | 'verify_otp'>('form');
   const [fullName, setFullName] = React.useState('');
   const [phone, setPhone] = React.useState('');
   const [email, setEmail] = React.useState('');
@@ -458,7 +459,7 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
   const [errors, setErrors] = React.useState<Record<string, string>>({});
   const [isLoading, setIsLoading] = React.useState(false);
 
-  // Requirement 2: Countdown Timer สำหรับ Rate Limit ป้องกันการกดซ้ำและปลดล็อกปุ่มอัตโนมัติ
+  // Requirement 2 & 3: Countdown Timer สำหรับ Rate Limit และปุ่มขอรหัส OTP ใหม่
   React.useEffect(() => {
     if (rateLimitCountdown <= 0) return;
     const timer = setInterval(() => {
@@ -473,7 +474,7 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
     return () => clearInterval(timer);
   }, [rateLimitCountdown]);
 
-  // Requirement 1: เมื่อพบว่ามีบัญชีในระบบแล้ว แสดง Modal แจ้งเตือนและเปลี่ยนหน้าไป Login ทันที
+  // Requirement: เมื่อพบว่ามีบัญชีในระบบแล้ว แสดง Modal แจ้งเตือนและเปลี่ยนหน้าไป Login ทันที
   React.useEffect(() => {
     if (!showExistingUserModal) return;
     const timer = setTimeout(() => {
@@ -507,14 +508,14 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
     return cleaned;
   };
 
-  // 1. ฟังก์ชันสั่งส่ง OTP ผ่าน Supabase Auth พร้อมตรวจสอบอีเมลซ้ำในระบบ
+  // 1. ฟังก์ชันสั่งส่ง OTP ผ่าน supabase.auth.signUp() และสลับไป step: 'verify_otp' ทันที
   const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    // Requirement 2: Prevent Duplicate Click & Rate Limit Lock
+    // Requirement 3: ป้องกันการกดซ้ำ และตรวจสอบ Rate Limit
     if (isLoading || rateLimitCountdown > 0) {
       if (rateLimitCountdown > 0) {
-        triggerToast(`กรุณารอ ${rateLimitCountdown} วินาทีก่อนลองใหม่อีกครั้ง`);
+        triggerToast(`คุณกดขอรหัสบ่อยเกินไป กรุณารอ ${rateLimitCountdown} วินาที`);
       }
       return;
     }
@@ -580,14 +581,15 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
       }
 
       if (!supabase) {
-        // กรณีไม่มี Supabase ให้จำลองส่ง OTP
-        setStep('otp');
+        // กรณีไม่มี Supabase ให้จำลองส่ง OTP และเปลี่ยน step เป็น verify_otp ทันที
+        setStep('verify_otp');
+        setRateLimitCountdown(60);
         setErrors({});
         triggerToast(`ส่งรหัส OTP จำลองไปยัง ${email.trim()} เรียบร้อยแล้ว`);
         return;
       }
 
-      // Requirement 1: เรียก supabase.auth.signUp() และดักจับ 'User already registered' หรือ 'User already exists'
+      // Requirement 1: เรียกใช้ supabase.auth.signUp({ email, password }) สำหรับการสมัคร
       const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
         email: cleanEmail,
         password: password,
@@ -601,7 +603,7 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
 
       if (signUpError) {
         setIsLoading(false);
-        // Requirement 1: ตรวจจับ error จาก signUp หากพบ 'User already registered' หรือ 'User already exists'
+        // ตรวจจับ Error หากพบ 'User already registered' หรือ 'User already exists'
         if (isExistingUserError(signUpError)) {
           setIsDuplicateEmail(true);
           setShowExistingUserModal(true);
@@ -612,11 +614,11 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
           return;
         }
 
-        // Requirement 2: ดักจับ error กรณีติด Rate Limit (429 / 'over_email_send_rate_limit')
+        // ตรวจจับ Error กรณีติด Rate Limit (429 / 'over_email_send_rate_limit')
         if (isRateLimitError(signUpError)) {
           const waitSec = extractRateLimitSeconds(signUpError);
           setRateLimitCountdown(waitSec);
-          const rateMsg = `กรุณารอ ${waitSec} วินาทีก่อนลองใหม่อีกครั้ง`;
+          const rateMsg = `คุณกดขอรหัสบ่อยเกินไป กรุณารอ ${waitSec} วินาที`;
           setErrors({ form: rateMsg, rateLimit: rateMsg });
           triggerToast(rateMsg);
           return;
@@ -627,7 +629,7 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
         return;
       }
 
-      // Supabase Auth อาจคืนค่า identities: [] หากอีเมลมีอยู่ในระบบแล้ว (เมื่อเปิด email confirmation)
+      // Supabase Auth อาจคืนค่า identities: [] หากอีเมลมีอยู่ในระบบแล้ว
       if (signUpData?.user && Array.isArray(signUpData.user.identities) && signUpData.user.identities.length === 0) {
         setIsLoading(false);
         setIsDuplicateEmail(true);
@@ -639,45 +641,11 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
         return;
       }
 
-      // สั่งส่ง OTP สำหรับยืนยันอีเมล
-      const { error: otpError } = await supabase.auth.signInWithOtp({
-        email: cleanEmail,
-        options: {
-          shouldCreateUser: true,
-          data: {
-            full_name: fullName.trim(),
-            phone: cleanedPhone,
-          }
-        }
-      });
-
-      if (otpError) {
-        setIsLoading(false);
-        if (isExistingUserError(otpError)) {
-          setIsDuplicateEmail(true);
-          setShowExistingUserModal(true);
-          setErrors({
-            form: DUPLICATE_EMAIL_ERROR_MSG,
-            email: DUPLICATE_EMAIL_ERROR_MSG
-          });
-          return;
-        }
-        if (isRateLimitError(otpError)) {
-          const waitSec = extractRateLimitSeconds(otpError);
-          setRateLimitCountdown(waitSec);
-          const rateMsg = `กรุณารอ ${waitSec} วินาทีก่อนลองใหม่อีกครั้ง`;
-          setErrors({ form: rateMsg, rateLimit: rateMsg });
-          triggerToast(rateMsg);
-          return;
-        }
-        const errorMsg = handleSupabaseAuthError(otpError);
-        setErrors({ form: errorMsg });
-        return;
-      }
-
-      setStep('otp'); // สลับไปหน้ากรอก OTP
+      // Requirement 1: เมื่อสมัครสำเร็จ เปลี่ยน step เป็น 'verify_otp' สลับหน้าต่างไปกรอก OTP ทันที
+      setStep('verify_otp');
+      setRateLimitCountdown(60); // นับถอยหลัง 60s สำหรับปุ่มขอรหัสใหม่
       setErrors({});
-      triggerToast(`ส่งรหัส OTP ไปยัง ${email.trim()} เรียบร้อยแล้ว`);
+      triggerToast(`ส่งรหัสยืนยัน OTP ไปยัง ${email.trim()} เรียบร้อยแล้ว`);
     } catch (err: any) {
       setIsLoading(false);
       if (isExistingUserError(err)) {
@@ -692,7 +660,7 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
       if (isRateLimitError(err)) {
         const waitSec = extractRateLimitSeconds(err);
         setRateLimitCountdown(waitSec);
-        const rateMsg = `กรุณารอ ${waitSec} วินาทีก่อนลองใหม่อีกครั้ง`;
+        const rateMsg = `คุณกดขอรหัสบ่อยเกินไป กรุณารอ ${waitSec} วินาที`;
         setErrors({ form: rateMsg, rateLimit: rateMsg });
         triggerToast(rateMsg);
         return;
@@ -704,12 +672,12 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
     }
   };
 
-  // 2. ฟังก์ชันขอส่งรหัส OTP ใหม่อีกครั้ง
+  // 2. ฟังก์ชันขอส่งรหัส OTP ใหม่อีกครั้ง (Resend OTP)
   const handleResendOtp = async () => {
-    // Requirement 2: Prevent Duplicate Click & Rate Limit Lock
+    // Requirement 3: ป้องกันการกดซ้ำ และเคารพเวลานับถอยหลัง 60s
     if (isLoading || rateLimitCountdown > 0) {
       if (rateLimitCountdown > 0) {
-        triggerToast(`กรุณารอ ${rateLimitCountdown} วินาทีก่อนลองใหม่อีกครั้ง`);
+        triggerToast(`คุณกดขอรหัสบ่อยเกินไป กรุณารอ ${rateLimitCountdown} วินาที`);
       }
       return;
     }
@@ -717,64 +685,57 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
     setIsLoading(true);
     try {
       if (!supabase) {
-        throw new Error('Supabase client ยังไม่ได้ถูกกำหนดค่า');
-      }
-      const cleanedPhone = normalizeThaiPhone(phone);
-      const { error } = await supabase.auth.signInWithOtp({
-        email: email.trim(),
-        options: {
-          shouldCreateUser: true,
-          data: {
-            full_name: fullName.trim(),
-            phone: cleanedPhone,
-          }
-        }
-      });
-
-      if (error) {
-        setIsLoading(false);
-        if (isExistingUserError(error)) {
-          setStep('form');
-          setIsDuplicateEmail(true);
-          setShowExistingUserModal(true);
-          setErrors({
-            form: DUPLICATE_EMAIL_ERROR_MSG,
-            email: DUPLICATE_EMAIL_ERROR_MSG
-          });
-          return;
-        }
-        if (isRateLimitError(error)) {
-          const waitSec = extractRateLimitSeconds(error);
-          setRateLimitCountdown(waitSec);
-          const rateMsg = `กรุณารอ ${waitSec} วินาทีก่อนลองใหม่อีกครั้ง`;
-          setErrors({ otp: rateMsg });
-          triggerToast(rateMsg);
-          return;
-        }
-        const errorMsg = handleSupabaseAuthError(error);
-        setErrors({ otp: errorMsg });
+        setRateLimitCountdown(60);
+        triggerToast(`ส่งรหัส OTP จำลองใหม่ไปยัง ${email.trim()} เรียบร้อยแล้ว`);
         return;
       }
 
+      const cleanEmail = email.trim().toLowerCase();
+
+      // สั่งส่ง OTP ใหม่อีกครั้งด้วย resend
+      let resendError: any = null;
+      try {
+        const { error } = await supabase.auth.resend({
+          type: 'signup',
+          email: cleanEmail
+        });
+        resendError = error;
+      } catch (err) {
+        resendError = err;
+      }
+
+      // หาก resend พบ error ให้ fallback ลองใช้ signInWithOtp
+      if (resendError) {
+        const { error: fallbackError } = await supabase.auth.signInWithOtp({
+          email: cleanEmail,
+          options: {
+            shouldCreateUser: false
+          }
+        });
+        if (fallbackError) {
+          if (isRateLimitError(fallbackError) || isRateLimitError(resendError)) {
+            const waitSec = extractRateLimitSeconds(fallbackError || resendError);
+            setRateLimitCountdown(waitSec);
+            const rateMsg = `คุณกดขอรหัสบ่อยเกินไป กรุณารอ ${waitSec} วินาที`;
+            setErrors({ otp: rateMsg });
+            triggerToast(rateMsg);
+            return;
+          }
+          const msg = handleSupabaseAuthError(fallbackError || resendError);
+          setErrors({ otp: msg });
+          return;
+        }
+      }
+
+      // ส่งสำเร็จ ให้เริ่มนับถอยหลัง 60 วินาที
       setRateLimitCountdown(60);
       setErrors({});
-      triggerToast(`ส่งรหัส OTP ใหม่ไปยัง ${email.trim()} เรียบร้อยแล้ว`);
+      triggerToast(`ส่งรหัส OTP ใหม่ไปยัง ${cleanEmail} เรียบร้อยแล้ว`);
     } catch (err: any) {
-      setIsLoading(false);
-      if (isExistingUserError(err)) {
-        setStep('form');
-        setIsDuplicateEmail(true);
-        setShowExistingUserModal(true);
-        setErrors({
-          form: DUPLICATE_EMAIL_ERROR_MSG,
-          email: DUPLICATE_EMAIL_ERROR_MSG
-        });
-        return;
-      }
       if (isRateLimitError(err)) {
         const waitSec = extractRateLimitSeconds(err);
         setRateLimitCountdown(waitSec);
-        const rateMsg = `กรุณารอ ${waitSec} วินาทีก่อนลองใหม่อีกครั้ง`;
+        const rateMsg = `คุณกดขอรหัสบ่อยเกินไป กรุณารอ ${waitSec} วินาที`;
         setErrors({ otp: rateMsg });
         triggerToast(rateMsg);
         return;
@@ -786,9 +747,10 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
     }
   };
 
-  // 3. ฟังก์ชันยืนยัน OTP ผ่าน Supabase Auth
+  // 3. ฟังก์ชันยืนยัน OTP ผ่าน supabase.auth.verifyOtp({ email, token, type: 'signup' })
   const handleVerifyOtpAndCreate = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isLoading) return;
     const cleanedOtp = otpCode.trim();
 
     if (!cleanedOtp) {
@@ -803,49 +765,61 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
 
     try {
       setIsLoading(true);
+      const cleanEmail = email.trim().toLowerCase();
+      let registeredUserId = '';
 
-      if (!supabase) {
-        throw new Error('Supabase client ยังไม่ได้ถูกกำหนดค่า');
-      }
-
-      // Verify OTP via Supabase Auth (รองรับทั้ง type: 'email' จาก signInWithOtp และ 'signup')
-      let verifyResult = await supabase.auth.verifyOtp({
-        email: email.trim(),
-        token: cleanedOtp,
-        type: 'email'
-      });
-
-      if (verifyResult.error) {
-        const fallbackResult = await supabase.auth.verifyOtp({
-          email: email.trim(),
+      if (supabase) {
+        // Requirement 2: เมื่อกดปุ่มยืนยัน ให้เรียกใช้ supabase.auth.verifyOtp({ email, token, type: 'signup' })
+        let verifyResult = await supabase.auth.verifyOtp({
+          email: cleanEmail,
           token: cleanedOtp,
           type: 'signup'
         });
-        if (!fallbackResult.error) {
-          verifyResult = fallbackResult;
-        }
-      }
 
-      if (verifyResult.error) {
-        if (isDuplicateEmailError(verifyResult.error)) {
-          setStep('form');
-          setIsDuplicateEmail(true);
-          setErrors({
-            form: DUPLICATE_EMAIL_ERROR_MSG,
-            email: DUPLICATE_EMAIL_ERROR_MSG
+        // Fallback กรณี Supabase Project ตั้งค่า OTP เป็นแบบ email
+        if (verifyResult.error) {
+          const fallbackResult = await supabase.auth.verifyOtp({
+            email: cleanEmail,
+            token: cleanedOtp,
+            type: 'email'
           });
+          if (!fallbackResult.error) {
+            verifyResult = fallbackResult;
+          }
+        }
+
+        if (verifyResult.error) {
+          if (isDuplicateEmailError(verifyResult.error)) {
+            setStep('form');
+            setIsDuplicateEmail(true);
+            setShowExistingUserModal(true);
+            setErrors({
+              form: DUPLICATE_EMAIL_ERROR_MSG,
+              email: DUPLICATE_EMAIL_ERROR_MSG
+            });
+            return;
+          }
+          if (isRateLimitError(verifyResult.error)) {
+            const waitSec = extractRateLimitSeconds(verifyResult.error);
+            setRateLimitCountdown(waitSec);
+            const rateMsg = `คุณกดขอรหัสบ่อยเกินไป กรุณารอ ${waitSec} วินาที`;
+            setErrors({ otp: rateMsg });
+            triggerToast(rateMsg);
+            return;
+          }
+          const errorMsg = handleSupabaseAuthError(verifyResult.error);
+          setErrors({ otp: errorMsg });
           return;
         }
-        const errorMsg = handleSupabaseAuthError(verifyResult.error);
-        setErrors({ otp: errorMsg });
-        return;
+
+        registeredUserId = (verifyResult as any)?.data?.user?.id || '';
       }
 
-      // Save customer profile in database
+      // บันทึกโปรไฟล์สมาชิกลงในฐานข้อมูล (Supabase Customers & Profiles)
       const finalPhone = normalizeThaiPhone(phone) || phone.trim();
       const newAccount = {
         name: fullName.trim(),
-        email: email.trim(),
+        email: cleanEmail,
         phone: finalPhone,
         password: password,
         membership_level: 'Standard',
@@ -853,9 +827,32 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
       };
 
       const createdCustomer = await supabaseCustomers.create(newAccount);
-      const registeredUserId = (verifyResult as any)?.data?.user?.id || createdCustomer?.id || `customer_${email.trim().replace(/[^a-zA-Z0-9]/g, '_')}`;
+      if (!registeredUserId) {
+        registeredUserId = createdCustomer?.id || `customer_${cleanEmail.replace(/[^a-zA-Z0-9]/g, '_')}`;
+      }
 
-      // Clear state
+      if (registeredUserId) {
+        try {
+          await supabaseProfiles.upsertProfile({
+            id: registeredUserId,
+            fullName: fullName.trim(),
+            phone: finalPhone,
+            email: cleanEmail,
+            address: ''
+          });
+        } catch {
+          // ignore
+        }
+      }
+
+      const userData: UserData = {
+        id: registeredUserId,
+        name: newAccount.name,
+        email: newAccount.email,
+        phone: newAccount.phone
+      };
+
+      // Reset state
       setFullName('');
       setPhone('');
       setEmail('');
@@ -866,14 +863,11 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
       setStep('form');
 
       triggerToast('ยืนยันรหัส OTP และสมัครสมาชิกสำเร็จ!');
-      onRegisterSuccess({
-        id: registeredUserId,
-        name: newAccount.name,
-        email: newAccount.email,
-        phone: newAccount.phone
-      });
+      
+      // Requirement 2: หากยืนยันสำเร็จ ให้พาผู้ใช้เข้าสู่ระบบ/เปิดหน้าโปรไฟล์ทันที
+      onRegisterSuccess(userData);
 
-      // Dispatch customer-registered and customers-updated event
+      // Dispatch events เพื่อให้ระบบอัปเดตข้อมูลผู้ใช้แบบเรียลไทม์
       window.dispatchEvent(new Event('customer-registered'));
       window.dispatchEvent(new Event('customers-updated'));
 
@@ -882,10 +876,19 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
       if (isDuplicateEmailError(err)) {
         setStep('form');
         setIsDuplicateEmail(true);
+        setShowExistingUserModal(true);
         setErrors({
           form: DUPLICATE_EMAIL_ERROR_MSG,
           email: DUPLICATE_EMAIL_ERROR_MSG
         });
+        return;
+      }
+      if (isRateLimitError(err)) {
+        const waitSec = extractRateLimitSeconds(err);
+        setRateLimitCountdown(waitSec);
+        const rateMsg = `คุณกดขอรหัสบ่อยเกินไป กรุณารอ ${waitSec} วินาที`;
+        setErrors({ otp: rateMsg });
+        triggerToast(rateMsg);
         return;
       }
       const errorMsg = handleSupabaseAuthError(err);
@@ -904,10 +907,12 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
         {/* Modal Header */}
         <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4.5 bg-gradient-to-r from-sky-50 to-white">
           <div>
-            <h2 className="font-display text-lg font-extrabold text-slate-850">สมัครสมาชิกใหม่</h2>
+            <h2 className="font-display text-lg font-extrabold text-slate-850">
+              {step === 'verify_otp' ? 'ยืนยันรหัส OTP' : 'สมัครสมาชิกใหม่'}
+            </h2>
             <p className="text-[11px] text-slate-500 mt-0.5">
-              {step === 'otp' 
-                ? `กรอกรหัสยืนยัน 6 หลักที่ส่งไปที่ ${email || 'example@yourmail.com'}`
+              {step === 'verify_otp' 
+                ? `กรอกรหัสยืนยัน 6 หลักที่ส่งไปที่ ${email || 'อีเมลของคุณ'}`
                 : 'กรอกข้อมูลเบื้องต้นเพื่อเข้าร่วมเป็นครอบครัวพรพงศ์เรือพลาสติก'
               }
             </p>
@@ -921,8 +926,8 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
           </button>
         </div>
 
-        {/* Modal Body: STEP 2 - OTP VERIFICATION */}
-        {step === 'otp' ? (
+        {/* Modal Body: STEP 2 - OTP VERIFICATION ('verify_otp') */}
+        {step === 'verify_otp' ? (
           <form onSubmit={handleVerifyOtpAndCreate} className="p-6 space-y-4 max-h-[80vh] overflow-y-auto">
             {errors.form && (
               <div className="flex items-start gap-2.5 rounded-lg bg-red-50 p-3 text-xs text-red-600 border border-red-100">
@@ -938,14 +943,16 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
               </div>
               <div className="flex-1">
                 <span className="font-bold text-brand-blue block text-[11px]">รหัสยืนยัน OTP ถูกส่งไปยังอีเมลของคุณแล้ว</span>
-                <span className="text-[10px] text-slate-500">กรุณาตรวจสอบกล่องข้อความหรือโฟลเดอร์ Junk/Spam ในอีเมลของคุณเพื่อนำรหัส 6 หลักมายืนยัน</span>
+                <span className="text-[10px] text-slate-500">
+                  กรุณาตรวจสอบกล่องข้อความหรือ Junk/Spam ในอีเมล <span className="font-semibold text-slate-700">{email}</span> เพื่อนำรหัส 6 หลักมายืนยัน
+                </span>
               </div>
             </div>
 
             {/* Single Centered OTP Input Field */}
             <div className="space-y-2 py-2">
               <label className="block text-center text-xs font-bold text-slate-700">
-                รหัสยืนยันความปลอดภัย (OTP 6 หลัก)
+                รหัสยืนยัน OTP (6 หลัก)
               </label>
               <div className="relative flex justify-center">
                 <input
@@ -970,22 +977,25 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
               )}
             </div>
 
-            {/* Main Button: Emerald Green */}
+            {/* Main Button: ยืนยันรหัส OTP */}
             <button
               type="submit"
-              disabled={isLoading}
-              className="w-full rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs py-3 shadow-md shadow-emerald-50 transition-colors cursor-pointer disabled:opacity-50 flex items-center justify-center gap-1.5"
+              disabled={isLoading || otpCode.length !== 6}
+              className="w-full rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs py-3 shadow-md shadow-emerald-50 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-1.5"
               id="register-verify-otp-button"
             >
               {isLoading ? (
-                <div className="h-4 w-4 rounded-full border-2 border-white border-t-transparent animate-spin" />
+                <>
+                  <div className="h-4 w-4 rounded-full border-2 border-white border-t-transparent animate-spin" />
+                  <span>กำลังตรวจสอบรหัส OTP...</span>
+                </>
               ) : (
-                <span>ยืนยันรหัส OTP และสร้างบัญชี</span>
+                <span>ยืนยันรหัส OTP</span>
               )}
             </button>
 
-            {/* Resend OTP & Back Button Links */}
-            <div className="flex flex-col items-center gap-2 pt-1 text-xs">
+            {/* Resend OTP & Back Button Links with 60s Countdown Timer */}
+            <div className="flex flex-col items-center gap-2.5 pt-1 text-xs">
               <button
                 type="button"
                 disabled={isLoading || rateLimitCountdown > 0}
@@ -1000,10 +1010,13 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
                 {rateLimitCountdown > 0 ? (
                   <>
                     <Clock size={13} className="animate-pulse text-amber-600" />
-                    <span>กรุณารอ {rateLimitCountdown} วินาทีก่อนลองใหม่อีกครั้ง</span>
+                    <span>ขอรหัส OTP ใหม่ ({rateLimitCountdown}s)</span>
                   </>
                 ) : (
-                  <span>ไม่ได้รับรหัส? คลิกเพื่อส่ง OTP ใหม่อีกครั้ง</span>
+                  <>
+                    <RefreshCw size={13} />
+                    <span>ขอรหัส OTP ใหม่ (Resend OTP)</span>
+                  </>
                 )}
               </button>
 
@@ -1013,7 +1026,7 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
                   setStep('form');
                   setErrors({});
                 }}
-                className="font-medium text-slate-500 hover:text-slate-700 inline-flex items-center gap-1 transition-colors cursor-pointer"
+                className="font-medium text-slate-500 hover:text-slate-700 inline-flex items-center gap-1 transition-colors cursor-pointer text-[11px]"
                 id="back-to-register-form"
               >
                 <ArrowLeft size={13} />

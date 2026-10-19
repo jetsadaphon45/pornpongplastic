@@ -1479,6 +1479,7 @@ export default function App() {
           }
           setCurrentUser(enrichedUser);
           localStorage.setItem('pornpong_current_user', JSON.stringify(enrichedUser));
+          setIsProfileOpen(true);
         }}
         triggerToast={triggerToast}
       />
