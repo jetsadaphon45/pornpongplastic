@@ -1384,26 +1384,28 @@ export function ForgotPasswordModal({
     setErrors({});
 
     try {
-      if (!supabase) {
-        throw new Error('Supabase client ยังไม่ได้ถูกกำหนดค่า');
-      }
+      // เรียกใช้ API Route ส่ง OTP ที่สร้างไว้ (/api/auth/send-otp)
+      const resp = await fetch('/api/auth/send-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: cleanEmail,
+          name: 'ลูกค้า',
+        }),
+      });
 
-      // เรียกใช้งาน supabase.auth.resetPasswordForEmail(email)
-      const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail);
-
-      if (error) {
-        const errorMsg = handleSupabaseAuthError(error);
-        setErrors({ email: errorMsg });
+      const data = await resp.json();
+      if (!resp.ok || !data.success) {
+        setErrors({ email: data.error || 'ไม่สามารถส่งรหัส OTP ได้ กรุณาลองใหม่อีกครั้ง' });
         return;
       }
 
-      triggerToast(`ส่งรหัส OTP 6 หลักไปยัง ${cleanEmail} เรียบร้อยแล้ว`);
+      triggerToast(`ส่งรหัส OTP 6 หลักไปยัง ${cleanEmail} เรียบร้อยแล้ว (รหัสมีอายุ 5 นาที)`);
       setCountdown(60);
       // สลับหน้า Modal ไปยังหน้า "กรอกรหัส OTP 6 หลัก"
       setStep('otp');
     } catch (err: any) {
-      const errorMsg = handleSupabaseAuthError(err);
-      setErrors({ email: errorMsg });
+      setErrors({ email: err?.message || 'เกิดข้อผิดพลาดในการส่ง OTP' });
     } finally {
       setIsLoading(false);
     }
@@ -1414,22 +1416,29 @@ export function ForgotPasswordModal({
     if (countdown > 0 || isLoading) return;
     setIsLoading(true);
     try {
-      if (!supabase) throw new Error('Supabase client ยังไม่ได้ถูกกำหนดค่า');
-      const { error } = await supabase.auth.resetPasswordForEmail(email.trim());
-      if (error) {
-        triggerToast(handleSupabaseAuthError(error));
+      const resp = await fetch('/api/auth/send-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: email.trim(),
+          name: 'ลูกค้า',
+        }),
+      });
+      const data = await resp.json();
+      if (!resp.ok || !data.success) {
+        triggerToast(data.error || 'ไม่สามารถส่งรหัส OTP ใหม่ได้ กรุณาลองอีกครั้ง');
         return;
       }
       setCountdown(60);
       triggerToast(`ส่งรหัส OTP ใหม่อีกครั้งไปยัง ${email.trim()} เรียบร้อยแล้ว`);
     } catch (err: any) {
-      triggerToast(handleSupabaseAuthError(err));
+      triggerToast(err?.message || 'เกิดข้อผิดพลาดในการส่ง OTP');
     } finally {
       setIsLoading(false);
     }
   };
 
-  // ขั้นตอนที่ 2 (ยืนยัน OTP 6 หลัก): เรียกใช้งาน supabase.auth.verifyOtp({ email, token, type: 'recovery' })
+  // ขั้นตอนที่ 2 (ยืนยัน OTP 6 หลัก): เรียกใช้งาน Custom API Route /api/auth/verify-otp
   const handleVerifyOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     const cleanedOtp = otpCode.trim();
@@ -1447,20 +1456,19 @@ export function ForgotPasswordModal({
     setErrors({});
 
     try {
-      if (!supabase) {
-        throw new Error('Supabase client ยังไม่ได้ถูกกำหนดค่า');
-      }
-
-      // เรียกใช้งาน supabase.auth.verifyOtp({ email, token, type: 'recovery' })
-      const { error } = await supabase.auth.verifyOtp({
-        email: email.trim(),
-        token: cleanedOtp,
-        type: 'recovery',
+      // เรียกใช้งาน /api/auth/verify-otp เพื่อตรวจสอบกับตาราง otp_requests
+      const resp = await fetch('/api/auth/verify-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: email.trim(),
+          otpCode: cleanedOtp,
+        }),
       });
 
-      if (error) {
-        const errorMsg = handleSupabaseAuthError(error);
-        setErrors({ otp: errorMsg });
+      const data = await resp.json();
+      if (!resp.ok || !data.success) {
+        setErrors({ otp: data.error || 'รหัส OTP ไม่ถูกต้องหรือหมดอายุ กรุณาตรวจสอบอีกครั้ง' });
         return;
       }
 
@@ -1468,8 +1476,7 @@ export function ForgotPasswordModal({
       setStep('new_password');
       triggerToast('ยืนยันรหัส OTP ถูกต้อง กรุณากำหนดรหัสผ่านใหม่');
     } catch (err: any) {
-      const errorMsg = handleSupabaseAuthError(err);
-      setErrors({ otp: errorMsg });
+      setErrors({ otp: err?.message || 'เกิดข้อผิดพลาดในการตรวจสอบ OTP' });
     } finally {
       setIsLoading(false);
     }

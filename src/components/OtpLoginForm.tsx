@@ -88,16 +88,6 @@ export default function OtpLoginForm() {
       });
       const reqData = await reqRes.json();
 
-      // ลองเรียก Supabase Auth เพิ่มเติมหากพร้อมใช้งาน
-      try {
-        await supabase.auth.signInWithOtp({
-          email,
-          options: { shouldCreateUser: true },
-        });
-      } catch {
-        // ignore Supabase auth error if custom OTP succeeds
-      }
-
       setLoading(false);
 
       if (reqRes.ok && reqData.success) {
