@@ -571,7 +571,7 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
         return;
       }
 
-      // 1. ปรับการเช็กอีเมลซ้ำจากตาราง profiles (แก้ Error 400 Bad Request)
+      // 1. ตรวจสอบและดัก Error 400 จาก profiles query
       const { data: existingUser } = await supabase
         .from('profiles')
         .select('id')
@@ -580,11 +580,11 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
 
       if (existingUser) {
         setIsLoading(false);
-        alert('อีเมลนี้มีในระบบแล้ว กรุณาเข้าสู่ระบบ');
+        alert('อีเมลนี้ถูกใช้งานแล้ว กรุณาเข้าสู่ระบบ');
         return;
       }
 
-      // 2. เรียก supabase.auth.signUp
+      // 2. เรียกใช้ supabase.auth.signUp() เพื่อให้ Supabase ส่งอีเมล OTP
       const { data, error } = await supabase.auth.signUp({
         email: email.trim().toLowerCase(),
         password: password,
@@ -602,70 +602,14 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
         return;
       }
 
-      // หากสำเร็จ (data.user มีค่า) ให้ปิด Modal สมัครสมาชิก และแจ้งเตือน "สมัครสมาชิกและเข้าสู่ระบบสำเร็จเรียบร้อย" พร้อมรีเฟรชหน้าเว็บหรืออัปเดตสถานะล็อกอินทันที
-      if (data?.user) {
-        const cleanEmail = email.trim().toLowerCase();
-        const finalPhone = normalizeThaiPhone(phone) || phone.trim();
-        const registeredUserId = data.user.id || `user_${Date.now()}`;
-
-        // บันทึก/อัปเดตข้อมูลลูกค้าและโปรไฟล์ใน Supabase
-        try {
-          await supabaseCustomers.create({
-            name: fullName.trim(),
-            email: cleanEmail,
-            phone: finalPhone,
-            membership_level: 'Standard',
-            points: 0
-          });
-        } catch {
-          // ignore
-        }
-
-        try {
-          await supabaseProfiles.upsertProfile({
-            id: registeredUserId,
-            fullName: fullName.trim(),
-            phone: finalPhone,
-            email: cleanEmail,
-            address: ''
-          });
-        } catch {
-          // ignore
-        }
-
-        const userData: UserData = {
-          id: registeredUserId,
-          name: fullName.trim(),
-          email: cleanEmail,
-          phone: finalPhone
-        };
-
-        // Reset state
-        setFullName('');
-        setPhone('');
-        setEmail('');
-        setPassword('');
-        setConfirmPassword('');
-        setOtpCode('');
-        setErrors({});
-        setStep('form');
-
-        alert('สมัครสมาชิกและเข้าสู่ระบบสำเร็จเรียบร้อย');
-        triggerToast('สมัครสมาชิกและเข้าสู่ระบบสำเร็จเรียบร้อย');
-
-        onRegisterSuccess(userData);
-        window.dispatchEvent(new Event('customer-registered'));
-        window.dispatchEvent(new Event('customers-updated'));
-
-        onClose();
-        return;
-      }
-
-      // กรณีต้องยืนยัน OTP เพิ่มเติม
+      // เมื่อคำสั่ง signUp สำเร็จ:
+      // - จำค่า email และ password ไว้ใน State ชั่วคราว (เก็บใน email, password state)
+      // - สลับหน้าต่าง Modal ไปยัง step: 'verify_otp' ทันที
+      // - แสดงข้อความ "ระบบได้ส่งรหัส OTP 6 หลักไปยังอีเมลของคุณแล้ว กรุณากรอกเพื่อยืนยัน"
       setStep('verify_otp');
       setRateLimitCountdown(60);
       setErrors({});
-      triggerToast(`ส่งรหัส OTP ไปยัง ${email.trim().toLowerCase()} เรียบร้อยแล้ว`);
+      triggerToast('ระบบได้ส่งรหัส OTP 6 หลักไปยังอีเมลของคุณแล้ว กรุณากรอกเพื่อยืนยัน');
     } catch (err: any) {
       setIsLoading(false);
       alert(err?.message || 'เกิดข้อผิดพลาดในการสมัครสมาชิก');
@@ -749,7 +693,7 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
       }
 
       // ยืนยันสำเร็จ ปิด modal และรีเฟรชสถานะเข้าสู่ระบบ
-      alert('ยืนยันตัวตนและสมัครสมาชิกสำเร็จ!');
+      alert('ยืนยันตัวตนสำเร็จ!');
 
       const finalPhone = normalizeThaiPhone(phone) || phone.trim();
       const registeredUserId = data?.user?.id || `user_${Date.now()}`;
@@ -855,7 +799,7 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
                 <KeyRound size={15} />
               </div>
               <div className="flex-1">
-                <span className="font-bold text-brand-blue block text-[11px]">รหัสยืนยัน OTP ถูกส่งไปยังอีเมลของคุณแล้ว</span>
+                <span className="font-bold text-brand-blue block text-[11px]">ระบบได้ส่งรหัส OTP 6 หลักไปยังอีเมลของคุณแล้ว กรุณากรอกเพื่อยืนยัน</span>
                 <span className="text-[10px] text-slate-500">
                   กรุณาตรวจสอบกล่องข้อความหรือ Junk/Spam ในอีเมล <span className="font-semibold text-slate-700">{email}</span> เพื่อนำรหัส 6 หลักมายืนยัน
                 </span>
