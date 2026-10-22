@@ -16,34 +16,39 @@ const transporter = nodemailer.createTransport({
   },
 });
 
+export async function OPTIONS() {
+  return new NextResponse(null, {
+    status: 204,
+    headers: {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    },
+  });
+}
+
 export async function POST(req: Request) {
   try {
-    const body = await req.json();
-    const { email } = body;
-
+    const { email } = await req.json();
     if (!email) {
-      return NextResponse.json({ success: false, error: 'กรุณาระบุอีเมล' }, { status: 400 });
+      return NextResponse.json({ success: false, error: 'กรุณากรอกอีเมล' }, { status: 400 });
     }
 
-    // 3. สุ่มรหัส OTP 6 หลัก
+    // สุ่ม OTP 6 หลัก และบันทึกลงตาราง otp_requests
     const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
-    const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString(); // หมดอายุใน 5 นาที
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
 
-    // 4. บันทึกลงตาราง otp_requests ใน Supabase
     const { error: dbError } = await supabase
       .from('otp_requests')
       .insert([{ email, otp_code: otpCode, expires_at: expiresAt }]);
 
-    if (dbError) {
-      console.error('Supabase Insert Error:', dbError);
-      return NextResponse.json({ success: false, error: 'บันทึก OTP ไม่สำเร็จ' }, { status: 500 });
-    }
+    if (dbError) throw dbError;
 
-    // 5. ส่งอีเมลผ่าน Gmail SMTP
-    const mailOptions = {
+    // ส่งอีเมลผ่าน Nodemailer
+    await transporter.sendMail({
       from: `"Pornpong Plastic" <${process.env.GMAIL_USER || '666051000345@mail.rmutk.ac.th'}>`,
       to: email,
-      subject: 'รหัส OTP สำหรับยืนยันตัวตน - พรพงศ์พลาสติก',
+      subject: 'รหัส OTP สำหรับยืนยันตัวตน',
       html: `
         <div style="font-family: Arial, sans-serif; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px; max-width: 500px; margin: auto;">
           <h2 style="color: #0088cc; text-align: center;">พรพงศ์พลาสติก</h2>
@@ -57,16 +62,10 @@ export async function POST(req: Request) {
           <p style="color: #999; font-size: 12px; margin-top: 30px;">หากคุณไม่ได้ร้องขอรหัสนี้ สามารถเพิกเฉยต่ออีเมลนี้ได้ทันที</p>
         </div>
       `,
-    };
+    });
 
-    await transporter.sendMail(mailOptions);
-
-    return NextResponse.json(
-      { success: true, message: 'ส่ง OTP สำเร็จ' },
-      { status: 200 }
-    );
-  } catch (error: any) {
-    console.error('Send OTP Error:', error);
-    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+    return NextResponse.json({ success: true, message: 'ส่ง OTP สำเร็จ' }, { status: 200 });
+  } catch (err: any) {
+    return NextResponse.json({ success: false, error: err.message || 'เกิดข้อผิดพลาดในการส่ง OTP' }, { status: 500 });
   }
 }

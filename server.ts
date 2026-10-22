@@ -240,7 +240,7 @@ async function startServer() {
       const recipientName = (name || fullName || '').trim();
 
       if (!targetEmail) {
-        return res.status(400).json({ success: false, error: 'กรุณากรอกอีเมล (Email is required)' });
+        return res.status(400).json({ success: false, error: 'กรุณากรอกอีเมล' });
       }
 
       // Basic email regex validation
