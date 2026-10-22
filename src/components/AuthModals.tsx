@@ -602,23 +602,34 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
 
       if (error) {
         setIsLoading(false);
-        alert(error.message);
+        const msg = error.message || JSON.stringify(error);
+        if (msg.includes('already registered') || msg.includes('User already registered') || msg.includes('already exists')) {
+          alert('อีเมลนี้เคยสมัครสมาชิกไปแล้ว กรุณาเข้าสู่ระบบ หรือใช้อีเมลอื่น');
+        } else {
+          alert('เกิดข้อผิดพลาดในการสมัคร: ' + msg);
+        }
         return;
       }
 
-      // เมื่อคำสั่ง signUp สำเร็จ:
-      // - ห้ามเรียก onLoginSuccess() หรือคำสั่งปิด Modal ทันที
-      // - จำค่า email ไว้ใน State (savedEmail)
-      // - สลับหน้าต่าง Modal ไปยัง step "verify_otp" ทันที เพื่อให้ผู้ใช้กรอกรหัสตัวเลข 6 หลัก
-      // - แสดงข้อความแจ้งเตือน "ระบบได้ส่งรหัส OTP 6 หลักไปยังอีเมลของคุณแล้ว กรุณากรอกรหัสเพื่อยืนยัน"
+      // เมื่อ supabase.auth.signUp() ทำงานสำเร็จ (ไม่มี error):
+      // * เก็บ email ที่ใช้สมัครไว้ใน State (savedEmail)
+      // * เปลี่ยนหน้าต่าง Modal ไปยัง step "verify_otp" ทันที
+      // * รีเซ็ตสถานะปุ่มกำลังสมัคร (setIsLoading(false))
       setSavedEmail(cleanEmail);
+      setIsLoading(false);
       setStep('verify_otp');
       setRateLimitCountdown(60);
       setErrors({});
+      alert('ระบบได้ส่งรหัส OTP 6 หลักไปยังอีเมลของคุณแล้ว กรุณากรอกรหัสเพื่อยืนยัน');
       triggerToast('ระบบได้ส่งรหัส OTP 6 หลักไปยังอีเมลของคุณแล้ว กรุณากรอกรหัสเพื่อยืนยัน');
     } catch (err: any) {
       setIsLoading(false);
-      alert(err?.message || 'เกิดข้อผิดพลาดในการสมัครสมาชิก');
+      const msg = err?.message || JSON.stringify(err);
+      if (msg && (msg.includes('already registered') || msg.includes('User already registered') || msg.includes('already exists'))) {
+        alert('อีเมลนี้เคยสมัครสมาชิกไปแล้ว กรุณาเข้าสู่ระบบ หรือใช้อีเมลอื่น');
+      } else {
+        alert('เกิดข้อผิดพลาดในการสมัคร: ' + msg);
+      }
     } finally {
       setIsLoading(false);
     }
@@ -748,7 +759,7 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
       setErrors({});
       setStep('form');
 
-      triggerToast('สมัครสมาชิกและยืนยันตัวตนสำเร็จ!');
+      triggerToast('ยืนยันตัวตนสำเร็จ');
       onRegisterSuccess(userData);
 
       // Dispatch events เพื่อให้ระบบอัปเดตข้อมูลผู้ใช้แบบเรียลไทม์
