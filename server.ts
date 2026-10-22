@@ -237,16 +237,36 @@ async function startServer() {
     }
   });
 
+  // Middleware to enforce POST method and JSON Content-Type
+  const enforcePostJson = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    res.setHeader('Content-Type', 'application/json');
+    if (req.method !== 'POST') {
+      return res.status(405).json({
+        success: false,
+        error: `Method ${req.method} not allowed. Please use POST method.`
+      });
+    }
+    next();
+  };
+
   // ============================================================================
-  // REQUIREMENT 2: API Route / Logic สำหรับขอ OTP (POST /api/otp/request & /api/send-otp)
+  // REQUIREMENT 1: API Route / Logic สำหรับขอ OTP (POST /api/auth/send-otp, etc.)
+  // Always returns Response in JSON format (success: 200, error: 400/500)
   // ============================================================================
   const handleRequestOtp = async (req: express.Request, res: express.Response) => {
+    res.setHeader('Content-Type', 'application/json');
+
+    if (req.method !== 'POST') {
+      return res.status(405).json({ success: false, error: 'Method not allowed. Please use POST.' });
+    }
+
     try {
-      const { email, to, toEmail, name, otpCode: clientOtp } = req.body;
+      const { email, to, toEmail, name, fullName, phone, otpCode: clientOtp } = req.body || {};
       const targetEmail = (email || to || toEmail || '').trim().toLowerCase();
+      const recipientName = (name || fullName || '').trim();
 
       if (!targetEmail) {
-        return res.status(400).json({ success: false, error: 'Email address is required' });
+        return res.status(400).json({ success: false, error: 'กรุณากรอกอีเมล (Email is required)' });
       }
 
       // Basic email regex validation
@@ -279,19 +299,34 @@ async function startServer() {
       let supabaseSaved = false;
       if (supabase) {
         try {
+          const insertPayload: any = {
+            email: targetEmail,
+            otp_code: otpCode,
+            otp: otpCode,
+            expires_at: expiresAtIso,
+            created_at: createdAtIso,
+            is_verified: false,
+          };
+          if (recipientName) insertPayload.name = recipientName;
+          if (phone) insertPayload.phone = phone;
+
           const { error: insertErr } = await supabase
             .from('otp_requests')
-            .insert([{
-              email: targetEmail,
-              otp_code: otpCode,
-              otp: otpCode,
-              expires_at: expiresAtIso,
-              created_at: createdAtIso,
-              is_verified: false,
-            }]);
+            .insert([insertPayload]);
 
           if (insertErr) {
             console.warn('[Supabase otp_requests insert warning]:', insertErr.message);
+            // Retry with base columns if table lacks extra columns
+            if (insertErr.message?.includes('column')) {
+              await supabase.from('otp_requests').insert([{
+                email: targetEmail,
+                otp_code: otpCode,
+                otp: otpCode,
+                expires_at: expiresAtIso,
+                created_at: createdAtIso,
+                is_verified: false,
+              }]);
+            }
           } else {
             supabaseSaved = true;
             console.log(`[Supabase] Successfully saved OTP for ${targetEmail} in 'otp_requests'`);
@@ -302,11 +337,11 @@ async function startServer() {
       }
 
       // 5. Send OTP Email using Nodemailer (Pornpong Plastic card)
-      const emailResult = await sendOTPEmail(targetEmail, otpCode, name);
+      const emailResult = await sendOTPEmail(targetEmail, otpCode, recipientName);
 
-      return res.json({
+      return res.status(200).json({
         success: true,
-        message: 'ส่งรหัส OTP เรียบร้อยแล้ว (รหัสมีอายุการใช้งาน 5 นาที)',
+        message: 'ส่ง OTP สำเร็จ (รหัสมีอายุการใช้งาน 5 นาที)',
         email: targetEmail,
         expiresIn: 300, // seconds
         expiresAt: expiresAtIso,
@@ -316,21 +351,31 @@ async function startServer() {
       });
     } catch (err: any) {
       console.error('[Request OTP Fatal Exception]:', err);
-      return res.status(500).json({ success: false, error: err.message || 'Failed to process OTP request' });
+      return res.status(500).json({
+        success: false,
+        error: err.message || 'เกิดข้อผิดพลาดในการส่ง OTP',
+      });
     }
   };
 
-  app.post('/api/auth/send-otp', handleRequestOtp);
-  app.post('/api/otp/request', handleRequestOtp);
-  app.post('/api/send-otp', handleRequestOtp);
-  app.post('/api/request-otp', handleRequestOtp);
+  app.all('/api/auth/send-otp', enforcePostJson, handleRequestOtp);
+  app.all('/api/otp/request', enforcePostJson, handleRequestOtp);
+  app.all('/api/send-otp', enforcePostJson, handleRequestOtp);
+  app.all('/api/request-otp', enforcePostJson, handleRequestOtp);
 
   // ============================================================================
-  // REQUIREMENT 3: API Route / Logic สำหรับยืนยัน OTP (POST /api/otp/verify & /api/verify-otp)
+  // REQUIREMENT 2: API Route / Logic สำหรับยืนยัน OTP (POST /api/auth/verify-otp, etc.)
+  // Always returns Response in JSON format (success: 200, error: 400/500)
   // ============================================================================
   const handleVerifyOtp = async (req: express.Request, res: express.Response) => {
+    res.setHeader('Content-Type', 'application/json');
+
+    if (req.method !== 'POST') {
+      return res.status(405).json({ success: false, error: 'Method not allowed. Please use POST.' });
+    }
+
     try {
-      const { email, to, toEmail, otpCode, otp, token } = req.body;
+      const { email, to, toEmail, otpCode, otp, token } = req.body || {};
       const targetEmail = (email || to || toEmail || '').trim().toLowerCase();
       const submittedCode = String(otpCode || otp || token || '').trim();
 
@@ -444,7 +489,7 @@ async function startServer() {
 
       console.log(`[OTP Verified] Email: ${targetEmail} verified successfully via ${matchedSource}`);
 
-      return res.json({
+      return res.status(200).json({
         success: true,
         message: 'ยืนยันรหัส OTP สำเร็จ (Verify Success)',
         email: targetEmail,
@@ -452,13 +497,16 @@ async function startServer() {
       });
     } catch (err: any) {
       console.error('[Verify OTP Fatal Exception]:', err);
-      return res.status(500).json({ success: false, error: err.message || 'Failed to verify OTP' });
+      return res.status(500).json({
+        success: false,
+        error: err.message || 'เกิดข้อผิดพลาดในการยืนยัน OTP',
+      });
     }
   };
 
-  app.post('/api/auth/verify-otp', handleVerifyOtp);
-  app.post('/api/otp/verify', handleVerifyOtp);
-  app.post('/api/verify-otp', handleVerifyOtp);
+  app.all('/api/auth/verify-otp', enforcePostJson, handleVerifyOtp);
+  app.all('/api/otp/verify', enforcePostJson, handleVerifyOtp);
+  app.all('/api/verify-otp', enforcePostJson, handleVerifyOtp);
 
   // General email sending endpoint (Order notifications, payment confirmation, etc.)
   app.post('/api/send-email', async (req, res) => {
