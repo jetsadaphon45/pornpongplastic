@@ -889,31 +889,32 @@ export const supabaseCustomers = {
     return true;
   },
 
-  async checkEmailExists(email: string): Promise<boolean> {
+  async checkEmailExists(email?: string | null): Promise<boolean> {
+    if (!email || typeof email !== 'string') return false;
     const cleanEmail = email.toLowerCase().trim();
     if (!cleanEmail) return false;
 
     if (isSupabaseConfigured && supabase) {
       try {
-        // 1. ตรวจสอบในตาราง customers
-        const { data: custData, error: custErr } = await supabase
-          .from('customers')
-          .select('id, email')
-          .ilike('email', cleanEmail)
-          .limit(1);
-        
-        if (!custErr && custData && custData.length > 0) {
-          return true;
-        }
-
-        // 2. ตรวจสอบในตาราง profiles
+        // 1. ตรวจสอบในตาราง profiles ตามคำแนะนำ (ป้องกันค่า undefined/null และแก้ Error 400)
         const { data: profData, error: profErr } = await supabase
           .from('profiles')
           .select('id, email')
-          .ilike('email', cleanEmail)
-          .limit(1);
+          .eq('email', cleanEmail)
+          .maybeSingle();
 
-        if (!profErr && profData && profData.length > 0) {
+        if (!profErr && profData && profData.email) {
+          return true;
+        }
+
+        // 2. ตรวจสอบในตาราง customers
+        const { data: custData, error: custErr } = await supabase
+          .from('customers')
+          .select('id, email')
+          .eq('email', cleanEmail)
+          .maybeSingle();
+
+        if (!custErr && custData && custData.email) {
           return true;
         }
       } catch (err) {

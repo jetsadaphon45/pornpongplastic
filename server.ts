@@ -38,6 +38,17 @@ async function startServer() {
 
   app.use(express.json());
 
+  // CORS & Preflight OPTIONS Handler (Prevents Error 405 on browser preflight requests)
+  app.use((req, res, next) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+    if (req.method === 'OPTIONS') {
+      return res.status(204).end();
+    }
+    next();
+  });
+
   // Email Transporter Configurations
   const gmailUser = process.env.GMAIL_USER?.trim() || '666051000345@mail.rmutk.ac.th';
   const gmailPass = process.env.GMAIL_APP_PASSWORD?.trim() || 'ppqyxuqfnrmlerzr';
@@ -90,59 +101,19 @@ async function startServer() {
   // 2. Helper: Send OTP Email HTML Card under "Pornpong Plastic" brand
   async function sendOTPEmail(toEmail: string, otpCode: string, name?: string) {
     const brandName = 'Pornpong Plastic';
-    const emailSubject = `รหัส OTP ยืนยันตัวตนของคุณคือ ${otpCode} - ${brandName}`;
+    const emailSubject = 'รหัส OTP สำหรับยืนยันตัวตน - พรพงศ์พลาสติก';
     const htmlContent = `
-      <!DOCTYPE html>
-      <html lang="th">
-      <head>
-        <meta charset="utf-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>รหัสยืนยัน OTP - ${brandName}</title>
-      </head>
-      <body style="margin: 0; padding: 24px; background-color: #f1f5f9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; -webkit-font-smoothing: antialiased;">
-        <div style="max-width: 520px; margin: 0 auto; background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1); border: 1px solid #e2e8f0;">
-          <!-- Card Header with Brand -->
-          <div style="background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%); padding: 30px 24px; text-align: center;">
-            <div style="display: inline-block; background-color: rgba(255, 255, 255, 0.15); border-radius: 9999px; padding: 6px 16px; margin-bottom: 8px;">
-              <span style="color: #ffffff; font-size: 11px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase;">Official Security Service</span>
-            </div>
-            <h1 style="color: #ffffff; margin: 0; font-size: 24px; font-weight: 800; letter-spacing: 0.5px;">${brandName}</h1>
-            <p style="color: #e0f2fe; margin: 6px 0 0 0; font-size: 13px;">ระบบยืนยันตัวตนความปลอดภัย (OTP Security Verification)</p>
-          </div>
-
-          <!-- Card Body -->
-          <div style="padding: 32px 28px; text-align: center;">
-            <p style="font-size: 15px; color: #334155; margin: 0 0 8px 0;">สวัสดีครับคุณ <strong>${name || 'ลูกค้าคนสำคัญ'}</strong></p>
-            <p style="font-size: 14px; color: #64748b; margin: 0 0 24px 0; line-height: 1.6;">
-              คุณได้ทำการขอรหัสผ่านแบบใช้ครั้งเดียว (OTP) เพื่อเข้าสู่ระบบหรือยืนยันตัวตนกับ ${brandName}<br>กรุณานำรหัส 6 หลักด้านล่างนี้ไปกรอกในระบบ:
-            </p>
-
-            <!-- OTP Big Highlight Box -->
-            <div style="background: linear-gradient(180deg, #f0f9ff 0%, #e0f2fe 100%); border: 2px dashed #0284c7; border-radius: 14px; padding: 18px 28px; margin: 0 auto 24px auto; display: inline-block; box-shadow: 0 4px 6px -1px rgba(2, 132, 199, 0.1);">
-              <span style="font-size: 36px; font-weight: 800; color: #0284c7; letter-spacing: 8px; font-family: 'Courier New', Courier, monospace; display: block;">${otpCode}</span>
-            </div>
-
-            <!-- Expiry & Security Notice (5 Minutes) -->
-            <div style="background-color: #fffbeb; border-left: 4px solid #f59e0b; padding: 14px 18px; border-radius: 8px; text-align: left; margin-bottom: 24px;">
-              <div style="display: flex; align-items: center; margin-bottom: 4px;">
-                <span style="color: #92400e; font-size: 13px; font-weight: 700;">⏱️ รหัสยืนยันนี้มีอายุการใช้งาน 5 นาที (Expires in 5 minutes)</span>
-              </div>
-              <p style="color: #b45309; font-size: 12px; margin: 0; line-height: 1.4;">
-                เพื่อความปลอดภัยสูงสุด กรุณาอย่าส่งต่อหรือเปิดเผยรหัส OTP นี้ให้แก่บุคคลอื่น ไม่ว่ากรณีใดๆ
-              </p>
-            </div>
-
-            <p style="font-size: 12px; color: #94a3b8; margin: 0;">หากคุณไม่ได้ทำรายการนี้ สามารถเพิกเฉยต่ออีเมลฉบับนี้ได้โดยไม่มีผลกระทบต่อบัญชีของคุณ</p>
-          </div>
-
-          <!-- Card Footer -->
-          <div style="background-color: #f8fafc; padding: 18px 24px; border-top: 1px solid #e2e8f0; text-align: center;">
-            <p style="font-size: 11px; color: #64748b; margin: 0 0 4px 0; font-weight: 600;">พรพงศ์เรือพลาสติก (${brandName})</p>
-            <p style="font-size: 11px; color: #94a3b8; margin: 0;">© ${new Date().getFullYear()} ${brandName}. All rights reserved.</p>
-          </div>
+      <div style="font-family: Arial, sans-serif; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px; max-width: 500px; margin: auto;">
+        <h2 style="color: #0088cc; text-align: center;">พรพงศ์พลาสติก</h2>
+        <hr style="border: none; border-top: 1px solid #eee;" />
+        <p>สวัสดีครับ${name ? `คุณ ${name}` : ''},</p>
+        <p>รหัสยืนยันตัวตน (OTP) สำหรับการทำรายการของคุณคือ:</p>
+        <div style="background-color: #f4f6f9; text-align: center; padding: 15px; border-radius: 8px; margin: 20px 0;">
+          <span style="font-size: 28px; font-weight: bold; letter-spacing: 5px; color: #0088cc;">${otpCode}</span>
         </div>
-      </body>
-      </html>
+        <p style="color: #666; font-size: 14px;">รหัสนี้มีอายุการใช้งาน 5 นาที</p>
+        <p style="color: #999; font-size: 12px; margin-top: 30px;">หากคุณไม่ได้ร้องขอรหัสนี้ สามารถเพิกเฉยต่ออีเมลนี้ได้ทันที</p>
+      </div>
     `;
 
     // Priority 1: Send via Gmail SMTP (Nodemailer)
@@ -240,6 +211,9 @@ async function startServer() {
   // Middleware to enforce POST method and JSON Content-Type
   const enforcePostJson = (req: express.Request, res: express.Response, next: express.NextFunction) => {
     res.setHeader('Content-Type', 'application/json');
+    if (req.method === 'OPTIONS') {
+      return res.status(204).end();
+    }
     if (req.method !== 'POST') {
       return res.status(405).json({
         success: false,
@@ -341,7 +315,7 @@ async function startServer() {
 
       return res.status(200).json({
         success: true,
-        message: 'ส่ง OTP สำเร็จ (รหัสมีอายุการใช้งาน 5 นาที)',
+        message: 'ส่ง OTP ไปยังอีเมลเรียบร้อยแล้ว',
         email: targetEmail,
         expiresIn: 300, // seconds
         expiresAt: expiresAtIso,

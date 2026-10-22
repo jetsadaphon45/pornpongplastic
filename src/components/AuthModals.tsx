@@ -593,10 +593,9 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
         }),
       });
 
-      // ป้องกัน crash: อ่าน JSON พร้อม fallback ป้องกันกรณีไม่ใช่ JSON
       const data = await res.json().catch(() => ({ error: 'ไม่สามารถอ่านข้อมูลจากเซิร์ฟเวอร์ได้' }));
       if (!res.ok || !data.success) {
-        throw new Error(data.error || 'เกิดข้อผิดพลาดในการส่ง OTP');
+        throw new Error(data.error || 'ไม่สามารถส่ง OTP ได้');
       }
 
       // 2. เมื่อส่ง OTP สำเร็จ ให้เปลี่ยน Modal Step ไปที่หน้า 'verify_otp' (กรอกรหัส 6 หลัก) ทันที
@@ -642,7 +641,7 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
 
       const data = await res.json().catch(() => ({ error: 'ไม่สามารถอ่านข้อมูลจากเซิร์ฟเวอร์ได้' }));
       if (!res.ok || !data.success) {
-        throw new Error(data.error || 'เกิดข้อผิดพลาดในการส่ง OTP');
+        throw new Error(data.error || 'ไม่สามารถส่ง OTP ได้');
       }
 
       // ส่งสำเร็จ ให้เริ่มนับถอยหลัง 60 วินาที
