@@ -897,24 +897,20 @@ export const supabaseCustomers = {
     if (isSupabaseConfigured && supabase) {
       try {
         // 1. ตรวจสอบในตาราง profiles ตามคำแนะนำ (ป้องกันค่า undefined/null และแก้ Error 400)
-        const { data: profData, error: profErr } = await supabase
-          .from('profiles')
-          .select('id, email')
-          .eq('email', cleanEmail)
-          .maybeSingle();
+        const { data } = await supabase.from('profiles').select('id').eq('email', cleanEmail).maybeSingle();
 
-        if (!profErr && profData && profData.email) {
+        if (data && data.id) {
           return true;
         }
 
         // 2. ตรวจสอบในตาราง customers
         const { data: custData, error: custErr } = await supabase
           .from('customers')
-          .select('id, email')
+          .select('id')
           .eq('email', cleanEmail)
           .maybeSingle();
 
-        if (!custErr && custData && custData.email) {
+        if (!custErr && custData && custData.id) {
           return true;
         }
       } catch (err) {

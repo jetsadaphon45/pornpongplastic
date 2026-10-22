@@ -585,18 +585,11 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
       const res = await fetch('/api/auth/send-otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: cleanEmail,
-          name: fullName.trim(),
-          fullName: fullName.trim(),
-          phone: cleanedPhone,
-        }),
+        body: JSON.stringify({ email: cleanEmail })
       });
 
-      const data = await res.json().catch(() => ({ error: 'ไม่สามารถอ่านข้อมูลจากเซิร์ฟเวอร์ได้' }));
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || 'ไม่สามารถส่ง OTP ได้');
-      }
+      const data = await res.json().catch(() => ({ error: 'เกิดข้อผิดพลาดในการส่ง OTP' }));
+      if (!res.ok) throw new Error(data.error || 'เกิดข้อผิดพลาดในการส่ง OTP');
 
       // 2. เมื่อส่ง OTP สำเร็จ ให้เปลี่ยน Modal Step ไปที่หน้า 'verify_otp' (กรอกรหัส 6 หลัก) ทันที
       setStep('verify_otp');
@@ -631,18 +624,11 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
       const res = await fetch('/api/auth/send-otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: cleanEmail,
-          name: fullName.trim(),
-          fullName: fullName.trim(),
-          phone: phone.trim(),
-        }),
+        body: JSON.stringify({ email: cleanEmail })
       });
 
-      const data = await res.json().catch(() => ({ error: 'ไม่สามารถอ่านข้อมูลจากเซิร์ฟเวอร์ได้' }));
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || 'ไม่สามารถส่ง OTP ได้');
-      }
+      const data = await res.json().catch(() => ({ error: 'เกิดข้อผิดพลาดในการส่ง OTP' }));
+      if (!res.ok) throw new Error(data.error || 'เกิดข้อผิดพลาดในการส่ง OTP');
 
       // ส่งสำเร็จ ให้เริ่มนับถอยหลัง 60 วินาที
       setRateLimitCountdown(60);

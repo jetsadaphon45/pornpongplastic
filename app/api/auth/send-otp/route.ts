@@ -67,6 +67,6 @@ export async function POST(req: Request) {
     );
   } catch (error: any) {
     console.error('Send OTP Error:', error);
-    return NextResponse.json({ success: false, error: error.message || 'ส่ง OTP ไม่สำเร็จ' }, { status: 500 });
+    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
   }
 }

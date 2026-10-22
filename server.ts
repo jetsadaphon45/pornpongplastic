@@ -315,7 +315,7 @@ async function startServer() {
 
       return res.status(200).json({
         success: true,
-        message: 'ส่ง OTP ไปยังอีเมลเรียบร้อยแล้ว',
+        message: 'ส่ง OTP สำเร็จ',
         email: targetEmail,
         expiresIn: 300, // seconds
         expiresAt: expiresAtIso,
