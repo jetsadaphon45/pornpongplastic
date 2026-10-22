@@ -2,96 +2,541 @@ import express from 'express';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import { Resend } from 'resend';
+import nodemailer from 'nodemailer';
 import dotenv from 'dotenv';
 
 dotenv.config();
 
-const PORT = 3000;
+import fs from 'fs';
+
+function getPort(): number {
+  const portArgIndex = process.argv.indexOf('--port');
+  if (portArgIndex !== -1 && process.argv[portArgIndex + 1]) {
+    const parsed = parseInt(process.argv[portArgIndex + 1], 10);
+    if (!isNaN(parsed) && parsed > 0) return parsed;
+  }
+  if (process.env.PORT) {
+    const parsed = parseInt(process.env.PORT, 10);
+    if (!isNaN(parsed) && parsed > 0) return parsed;
+  }
+  return 3000;
+}
+
+function getHost(): string {
+  const hostArgIndex = process.argv.indexOf('--host');
+  if (hostArgIndex !== -1 && process.argv[hostArgIndex + 1]) {
+    return process.argv[hostArgIndex + 1];
+  }
+  return process.env.HOST || '0.0.0.0';
+}
+
+const PORT = getPort();
+const HOST = getHost();
 
 async function startServer() {
   const app = express();
 
   app.use(express.json());
 
+  // Email Transporter Configurations
+  const gmailUser = process.env.GMAIL_USER?.trim() || '666051000345@mail.rmutk.ac.th';
+  const gmailPass = process.env.GMAIL_APP_PASSWORD?.trim() || 'ppqyxuqfnrmlerzr';
+
+  const mailTransporter = (gmailUser && gmailPass)
+    ? nodemailer.createTransport({
+        service: 'gmail',
+        auth: {
+          user: gmailUser,
+          pass: gmailPass,
+        },
+      })
+    : null;
+
   const resendApiKey = process.env.RESEND_API_KEY || process.env.VITE_RESEND_API_KEY;
   const resend = resendApiKey ? new Resend(resendApiKey) : null;
 
+  // Supabase Client for Backend Database Operations
+  const supabaseUrl =
+    process.env.VITE_SUPABASE_URL ||
+    process.env.NEXT_PUBLIC_SUPABASE_URL ||
+    process.env.SUPABASE_URL ||
+    '';
+  const supabaseAnonKey =
+    process.env.VITE_SUPABASE_ANON_KEY ||
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+    process.env.SUPABASE_ANON_KEY ||
+    '';
+
+  const { createClient } = await import('@supabase/supabase-js');
+  const supabase = (supabaseUrl && supabaseAnonKey && !supabaseAnonKey.includes('placeholder'))
+    ? createClient(supabaseUrl, supabaseAnonKey)
+    : null;
+
+  // In-memory store for OTP requests (resilient fallback cache with 5-minute expiry)
+  interface OtpRecord {
+    id: string;
+    email: string;
+    otp_code: string;
+    expires_at: number; // Unix epoch ms
+    created_at: string;
+  }
+  const localOtpStore = new Map<string, OtpRecord>();
+
+  // 1. Helper: Generate random 6-digit OTP code
+  function generateOTP(): string {
+    return Math.floor(100000 + Math.random() * 900000).toString();
+  }
+
+  // 2. Helper: Send OTP Email HTML Card under "Pornpong Plastic" brand
+  async function sendOTPEmail(toEmail: string, otpCode: string, name?: string) {
+    const brandName = 'Pornpong Plastic';
+    const emailSubject = `รหัส OTP ยืนยันตัวตนของคุณคือ ${otpCode} - ${brandName}`;
+    const htmlContent = `
+      <!DOCTYPE html>
+      <html lang="th">
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>รหัสยืนยัน OTP - ${brandName}</title>
+      </head>
+      <body style="margin: 0; padding: 24px; background-color: #f1f5f9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; -webkit-font-smoothing: antialiased;">
+        <div style="max-width: 520px; margin: 0 auto; background-color: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1); border: 1px solid #e2e8f0;">
+          <!-- Card Header with Brand -->
+          <div style="background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%); padding: 30px 24px; text-align: center;">
+            <div style="display: inline-block; background-color: rgba(255, 255, 255, 0.15); border-radius: 9999px; padding: 6px 16px; margin-bottom: 8px;">
+              <span style="color: #ffffff; font-size: 11px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase;">Official Security Service</span>
+            </div>
+            <h1 style="color: #ffffff; margin: 0; font-size: 24px; font-weight: 800; letter-spacing: 0.5px;">${brandName}</h1>
+            <p style="color: #e0f2fe; margin: 6px 0 0 0; font-size: 13px;">ระบบยืนยันตัวตนความปลอดภัย (OTP Security Verification)</p>
+          </div>
+
+          <!-- Card Body -->
+          <div style="padding: 32px 28px; text-align: center;">
+            <p style="font-size: 15px; color: #334155; margin: 0 0 8px 0;">สวัสดีครับคุณ <strong>${name || 'ลูกค้าคนสำคัญ'}</strong></p>
+            <p style="font-size: 14px; color: #64748b; margin: 0 0 24px 0; line-height: 1.6;">
+              คุณได้ทำการขอรหัสผ่านแบบใช้ครั้งเดียว (OTP) เพื่อเข้าสู่ระบบหรือยืนยันตัวตนกับ ${brandName}<br>กรุณานำรหัส 6 หลักด้านล่างนี้ไปกรอกในระบบ:
+            </p>
+
+            <!-- OTP Big Highlight Box -->
+            <div style="background: linear-gradient(180deg, #f0f9ff 0%, #e0f2fe 100%); border: 2px dashed #0284c7; border-radius: 14px; padding: 18px 28px; margin: 0 auto 24px auto; display: inline-block; box-shadow: 0 4px 6px -1px rgba(2, 132, 199, 0.1);">
+              <span style="font-size: 36px; font-weight: 800; color: #0284c7; letter-spacing: 8px; font-family: 'Courier New', Courier, monospace; display: block;">${otpCode}</span>
+            </div>
+
+            <!-- Expiry & Security Notice (5 Minutes) -->
+            <div style="background-color: #fffbeb; border-left: 4px solid #f59e0b; padding: 14px 18px; border-radius: 8px; text-align: left; margin-bottom: 24px;">
+              <div style="display: flex; align-items: center; margin-bottom: 4px;">
+                <span style="color: #92400e; font-size: 13px; font-weight: 700;">⏱️ รหัสยืนยันนี้มีอายุการใช้งาน 5 นาที (Expires in 5 minutes)</span>
+              </div>
+              <p style="color: #b45309; font-size: 12px; margin: 0; line-height: 1.4;">
+                เพื่อความปลอดภัยสูงสุด กรุณาอย่าส่งต่อหรือเปิดเผยรหัส OTP นี้ให้แก่บุคคลอื่น ไม่ว่ากรณีใดๆ
+              </p>
+            </div>
+
+            <p style="font-size: 12px; color: #94a3b8; margin: 0;">หากคุณไม่ได้ทำรายการนี้ สามารถเพิกเฉยต่ออีเมลฉบับนี้ได้โดยไม่มีผลกระทบต่อบัญชีของคุณ</p>
+          </div>
+
+          <!-- Card Footer -->
+          <div style="background-color: #f8fafc; padding: 18px 24px; border-top: 1px solid #e2e8f0; text-align: center;">
+            <p style="font-size: 11px; color: #64748b; margin: 0 0 4px 0; font-weight: 600;">พรพงศ์เรือพลาสติก (${brandName})</p>
+            <p style="font-size: 11px; color: #94a3b8; margin: 0;">© ${new Date().getFullYear()} ${brandName}. All rights reserved.</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+
+    // Priority 1: Send via Gmail SMTP (Nodemailer)
+    if (mailTransporter && gmailUser) {
+      try {
+        console.log(`[Gmail SMTP] Sending OTP ${otpCode} to ${toEmail} from ${brandName} <${gmailUser}>...`);
+        const info = await mailTransporter.sendMail({
+          from: `"${brandName}" <${gmailUser}>`,
+          to: toEmail,
+          subject: emailSubject,
+          html: htmlContent,
+        });
+        console.log(`[Gmail SMTP Success]: Sent OTP to ${toEmail}, messageId: ${info.messageId}`);
+        return { success: true, provider: 'gmail_smtp', messageId: info.messageId };
+      } catch (smtpErr: any) {
+        console.error('[Gmail SMTP Error]:', smtpErr.message || smtpErr);
+        if (!resend) {
+          return {
+            success: false,
+            provider: 'gmail_smtp',
+            error: smtpErr.message || 'Gmail SMTP failed',
+            code: smtpErr.code,
+          };
+        }
+        console.log('[Fallback] Attempting Resend fallback...');
+      }
+    }
+
+    // Priority 2: Fallback to Resend if configured
+    if (resend) {
+      try {
+        const { data, error } = await resend.emails.send({
+          from: 'onboarding@resend.dev',
+          to: toEmail,
+          subject: emailSubject,
+          html: htmlContent,
+        });
+        if (error) {
+          console.error('[Resend Error]:', error);
+          return { success: false, provider: 'resend', error: error.message };
+        }
+        return { success: true, provider: 'resend', data };
+      } catch (rErr: any) {
+        return { success: false, provider: 'resend', error: rErr.message };
+      }
+    }
+
+    // Priority 3: Simulated delivery
+    console.warn(`[OTP Sim] Neither Gmail SMTP nor Resend available. Simulated delivery of OTP ${otpCode} to ${toEmail}`);
+    return { success: true, simulated: true, provider: 'simulation' };
+  }
+
   // Health check endpoint
   app.get('/api/health', (req, res) => {
-    res.json({ status: 'ok' });
+    res.json({
+      status: 'ok',
+      port: PORT,
+      host: HOST,
+      smtpConfigured: !!mailTransporter,
+      gmailUser: gmailUser || null,
+      resendConfigured: !!resend,
+      supabaseConfigured: !!supabase,
+    });
   });
 
-  // Resend OTP email sending endpoint
-  app.post('/api/send-otp', async (req, res) => {
-    try {
-      const { email, otpCode, name } = req.body;
-      if (!email || !otpCode) {
-        return res.status(400).json({ error: 'Email and OTP code are required' });
-      }
-
-      if (!resend) {
-        console.warn('[Resend OTP] RESEND_API_KEY is not configured in .env. Skipping real email send.');
-        return res.json({ success: true, simulated: true, message: 'Simulated OTP send (RESEND_API_KEY missing)' });
-      }
-
-      console.log(`[Resend OTP] Sending OTP ${otpCode} to ${email}...`);
-
-      const { data, error } = await resend.emails.send({
-        from: 'onboarding@resend.dev',
-        to: email,
-        subject: 'รหัส OTP ยืนยันการสมัครสมาชิก - พรพงศ์เรือพลาสติก',
-        html: `
-          <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; padding: 24px; background-color: #f8fafc; border-radius: 16px; max-width: 500px; margin: 0 auto; border: 1px solid #e2e8f0;">
-            <div style="text-align: center; margin-bottom: 20px;">
-              <h2 style="color: #0369a1; margin: 0 0 4px 0; font-size: 20px; font-weight: 800;">พรพงศ์เรือพลาสติก</h2>
-              <p style="color: #64748b; margin: 0; font-size: 12px;">ระบบยืนยันตัวตนสำหรับสมัครสมาชิกใหม่</p>
-            </div>
-            <div style="background-color: #ffffff; padding: 24px; border-radius: 12px; border: 1px solid #e2e8f0; text-align: center; box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05);">
-              <p style="color: #334155; font-size: 14px; margin-top: 0; margin-bottom: 8px;">สวัสดีครับคุณ <strong>${name || 'ลูกค้า'}</strong></p>
-              <p style="color: #475569; font-size: 13px; margin: 0 0 16px 0;">รหัส OTP สำหรับยืนยันการลงทะเบียนบัญชีของคุณคือ:</p>
-              <div style="background-color: #f0f9ff; border: 2px dashed #0284c7; border-radius: 10px; padding: 14px 20px; margin: 0 auto 16px auto; display: inline-block;">
-                <span style="font-size: 32px; font-weight: 800; color: #0284c7; letter-spacing: 6px; font-family: monospace;">${otpCode}</span>
-              </div>
-              <p style="color: #64748b; font-size: 11px; margin: 0;">รหัสยืนยันนี้มีอายุการใช้งาน 10 นาที เพื่อความปลอดภัยห้ามบอกรหัสนี้แก่ผู้อื่น</p>
-            </div>
-            <div style="text-align: center; margin-top: 16px;">
-              <p style="font-size: 11px; color: #94a3b8; margin: 0;">หากคุณไม่ได้ทำรายการสมัครสมาชิก สามารถละเลยอีเมลฉบับนี้ได้ทันที</p>
-            </div>
-          </div>
-        `,
+  // SMTP Verification endpoint
+  app.get('/api/verify-smtp', async (req, res) => {
+    if (!mailTransporter) {
+      return res.status(400).json({
+        configured: false,
+        message: 'GMAIL_USER or GMAIL_APP_PASSWORD is not configured in .env',
       });
+    }
 
-      if (error) {
-        console.error('[Resend OTP Error]:', error);
-        return res.status(500).json({ error: error.message, details: error });
-      }
-
-      console.log('[Resend OTP Success]:', data);
-      return res.json({ success: true, data });
+    try {
+      await mailTransporter.verify();
+      console.log(`[Gmail SMTP] Connection verified successfully for ${gmailUser}`);
+      return res.json({
+        configured: true,
+        verified: true,
+        gmailUser,
+        message: 'Gmail SMTP credentials verified successfully',
+      });
     } catch (err: any) {
-      console.error('[Server OTP Exception]:', err);
-      return res.status(500).json({ error: err.message || 'Failed to send OTP email' });
+      console.error('[Gmail SMTP Verification Failed]:', err);
+      return res.status(500).json({
+        configured: true,
+        verified: false,
+        gmailUser,
+        error: err.message || 'SMTP verification failed',
+      });
     }
   });
 
+  // ============================================================================
+  // REQUIREMENT 2: API Route / Logic สำหรับขอ OTP (POST /api/otp/request & /api/send-otp)
+  // ============================================================================
+  const handleRequestOtp = async (req: express.Request, res: express.Response) => {
+    try {
+      const { email, to, toEmail, name, otpCode: clientOtp } = req.body;
+      const targetEmail = (email || to || toEmail || '').trim().toLowerCase();
+
+      if (!targetEmail) {
+        return res.status(400).json({ success: false, error: 'Email address is required' });
+      }
+
+      // Basic email regex validation
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(targetEmail)) {
+        return res.status(400).json({ success: false, error: 'รูปแบบอีเมลไม่ถูกต้อง' });
+      }
+
+      // 1. Generate 6-digit OTP (or use client provided if specified)
+      const otpCode = clientOtp && typeof clientOtp === 'string' && clientOtp.length === 6
+        ? clientOtp
+        : generateOTP();
+
+      // 2. Set expiration to 5 minutes from now
+      const now = Date.now();
+      const expiresAtMs = now + 5 * 60 * 1000; // 5 minutes
+      const expiresAtIso = new Date(expiresAtMs).toISOString();
+      const createdAtIso = new Date(now).toISOString();
+
+      // 3. Save into in-memory store for instant zero-latency resilience
+      localOtpStore.set(targetEmail, {
+        id: `otp_${now}_${Math.random().toString(36).slice(2, 7)}`,
+        email: targetEmail,
+        otp_code: otpCode,
+        expires_at: expiresAtMs,
+        created_at: createdAtIso,
+      });
+
+      // 4. Save into Supabase table 'otp_requests'
+      let supabaseSaved = false;
+      if (supabase) {
+        try {
+          const { error: insertErr } = await supabase
+            .from('otp_requests')
+            .insert([{
+              email: targetEmail,
+              otp_code: otpCode,
+              otp: otpCode,
+              expires_at: expiresAtIso,
+              created_at: createdAtIso,
+              is_verified: false,
+            }]);
+
+          if (insertErr) {
+            console.warn('[Supabase otp_requests insert warning]:', insertErr.message);
+          } else {
+            supabaseSaved = true;
+            console.log(`[Supabase] Successfully saved OTP for ${targetEmail} in 'otp_requests'`);
+          }
+        } catch (sbErr: any) {
+          console.warn('[Supabase Exception when saving to otp_requests]:', sbErr.message || sbErr);
+        }
+      }
+
+      // 5. Send OTP Email using Nodemailer (Pornpong Plastic card)
+      const emailResult = await sendOTPEmail(targetEmail, otpCode, name);
+
+      return res.json({
+        success: true,
+        message: 'ส่งรหัส OTP เรียบร้อยแล้ว (รหัสมีอายุการใช้งาน 5 นาที)',
+        email: targetEmail,
+        expiresIn: 300, // seconds
+        expiresAt: expiresAtIso,
+        emailDelivery: emailResult,
+        supabaseSaved,
+        simulatedOtp: emailResult.simulated || !emailResult.success ? otpCode : undefined,
+      });
+    } catch (err: any) {
+      console.error('[Request OTP Fatal Exception]:', err);
+      return res.status(500).json({ success: false, error: err.message || 'Failed to process OTP request' });
+    }
+  };
+
+  app.post('/api/otp/request', handleRequestOtp);
+  app.post('/api/send-otp', handleRequestOtp);
+  app.post('/api/request-otp', handleRequestOtp);
+
+  // ============================================================================
+  // REQUIREMENT 3: API Route / Logic สำหรับยืนยัน OTP (POST /api/otp/verify & /api/verify-otp)
+  // ============================================================================
+  const handleVerifyOtp = async (req: express.Request, res: express.Response) => {
+    try {
+      const { email, to, toEmail, otpCode, otp, token } = req.body;
+      const targetEmail = (email || to || toEmail || '').trim().toLowerCase();
+      const submittedCode = String(otpCode || otp || token || '').trim();
+
+      if (!targetEmail || !submittedCode) {
+        return res.status(400).json({
+          success: false,
+          error: 'กรุณาระบุอีเมลและรหัส OTP 6 หลักที่ได้รับ',
+        });
+      }
+
+      if (submittedCode.length !== 6) {
+        return res.status(400).json({
+          success: false,
+          error: 'รหัส OTP ต้องมีความยาว 6 หลัก',
+        });
+      }
+
+      let matchedRecord: { id?: string; email: string; otp_code: string; expires_at: any } | null = null;
+      let matchedSource = '';
+
+      // 1. Check in Supabase table 'otp_requests'
+      if (supabase) {
+        try {
+          const { data, error } = await supabase
+            .from('otp_requests')
+            .select('*')
+            .eq('email', targetEmail)
+            .order('created_at', { ascending: false })
+            .limit(1);
+
+          if (!error && Array.isArray(data) && data.length > 0) {
+            matchedRecord = {
+              id: data[0].id,
+              email: data[0].email,
+              otp_code: data[0].otp_code || data[0].otp,
+              expires_at: data[0].expires_at,
+            };
+            matchedSource = 'supabase';
+          }
+        } catch (sbErr: any) {
+          console.warn('[Supabase query otp_requests warning]:', sbErr.message || sbErr);
+        }
+      }
+
+      // 2. Fallback to in-memory store if not found in Supabase
+      if (!matchedRecord && localOtpStore.has(targetEmail)) {
+        const local = localOtpStore.get(targetEmail)!;
+        matchedRecord = {
+          id: local.id,
+          email: local.email,
+          otp_code: local.otp_code,
+          expires_at: local.expires_at,
+        };
+        matchedSource = 'memory';
+      }
+
+      // If no OTP request exists for this email
+      if (!matchedRecord) {
+        return res.status(400).json({
+          success: false,
+          error: 'ไม่พบคำขอรหัส OTP สำหรับอีเมลนี้ กรุณากดขอรหัส OTP ใหม่อีกครั้ง',
+        });
+      }
+
+      // 3. Check expiration (within 5 minutes)
+      const expiryTime = typeof matchedRecord.expires_at === 'number'
+        ? matchedRecord.expires_at
+        : new Date(matchedRecord.expires_at).getTime();
+
+      const now = Date.now();
+      if (now > expiryTime) {
+        // Expired -> Clean up from store
+        localOtpStore.delete(targetEmail);
+        if (supabase && matchedRecord.id) {
+          try {
+            await supabase.from('otp_requests').delete().eq('id', matchedRecord.id);
+          } catch {
+            // ignore
+          }
+        }
+        return res.status(400).json({
+          success: false,
+          error: 'รหัส OTP หมดอายุแล้ว (อายุการใช้งาน 5 นาที) กรุณากดขอรหัส OTP ใหม่',
+          expired: true,
+        });
+      }
+
+      // 4. Verify code match
+      const expectedCode = String(matchedRecord.otp_code || '').trim();
+      if (expectedCode !== submittedCode) {
+        return res.status(400).json({
+          success: false,
+          error: 'รหัส OTP ไม่ถูกต้อง กรุณาตรวจสอบรหัส 6 หลักอีกครั้ง',
+        });
+      }
+
+      // 5. Verification SUCCESS: Clean up / Delete OTP record
+      localOtpStore.delete(targetEmail);
+      if (supabase) {
+        try {
+          if (matchedRecord.id) {
+            await supabase.from('otp_requests').delete().eq('id', matchedRecord.id);
+          } else {
+            await supabase.from('otp_requests').delete().eq('email', targetEmail);
+          }
+          console.log(`[Supabase] Successfully deleted verified OTP for ${targetEmail}`);
+        } catch (delErr: any) {
+          console.warn('[Supabase delete otp warning]:', delErr.message || delErr);
+        }
+      }
+
+      console.log(`[OTP Verified] Email: ${targetEmail} verified successfully via ${matchedSource}`);
+
+      return res.json({
+        success: true,
+        message: 'ยืนยันรหัส OTP สำเร็จ (Verify Success)',
+        email: targetEmail,
+        verifiedAt: new Date().toISOString(),
+      });
+    } catch (err: any) {
+      console.error('[Verify OTP Fatal Exception]:', err);
+      return res.status(500).json({ success: false, error: err.message || 'Failed to verify OTP' });
+    }
+  };
+
+  app.post('/api/otp/verify', handleVerifyOtp);
+  app.post('/api/verify-otp', handleVerifyOtp);
+
+  // General email sending endpoint (Order notifications, payment confirmation, etc.)
+  app.post('/api/send-email', async (req, res) => {
+    try {
+      const { to, subject, html, text } = req.body;
+      if (!to || !subject || (!html && !text)) {
+        return res.status(400).json({ error: 'Recipient "to", "subject", and "html" or "text" content are required' });
+      }
+
+      const brandName = 'Pornpong Plastic';
+      if (mailTransporter && gmailUser) {
+        const info = await mailTransporter.sendMail({
+          from: `"${brandName}" <${gmailUser}>`,
+          to,
+          subject,
+          html: html || undefined,
+          text: text || undefined,
+        });
+        return res.json({ success: true, provider: 'gmail_smtp', messageId: info.messageId });
+      }
+
+      if (resend) {
+        const { data, error } = await resend.emails.send({
+          from: 'onboarding@resend.dev',
+          to,
+          subject,
+          html: html || text || '',
+        });
+        if (error) return res.status(500).json({ error: error.message });
+        return res.json({ success: true, provider: 'resend', data });
+      }
+
+      return res.json({ success: true, simulated: true, message: 'Simulated email send' });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message || 'Failed to send email' });
+    }
+  });
+
+
   // Vite middleware for development or Static files for production
-  if (process.env.NODE_ENV !== 'production') {
+  const isProduction = process.env.NODE_ENV === 'production';
+  const distPath = path.join(process.cwd(), 'dist');
+  const hasDist = fs.existsSync(path.join(distPath, 'index.html'));
+
+  if (!isProduction || !hasDist) {
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+  const server = app.listen(PORT, HOST, () => {
+    console.log(`Server running on http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}`);
   });
+
+  server.on('error', (err: any) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(`Port ${PORT} is already in use.`);
+    } else {
+      console.error('Server error:', err);
+    }
+  });
+
+  const shutdown = () => {
+    server.close(() => {
+      process.exit(0);
+    });
+  };
+
+  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', shutdown);
 }
 
-startServer();
+startServer().catch((err) => {
+  console.error('Fatal error starting server:', err);
+  process.exit(1);
+});

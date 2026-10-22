@@ -82,7 +82,8 @@ import {
   setActiveProductionQueue,
   QUEUE_STAGES,
   isSupabaseConfigured,
-  isOrderPreOrder
+  isOrderPreOrder,
+  getNextAvailableQueueNumber
 } from '../lib/supabase';
 import { AppNotification } from './NotificationDropdown';
 import { CustomerOrderHistoryModal } from './CustomerOrderHistoryModal';
@@ -179,6 +180,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
   const [productsStatusFilter, setProductsStatusFilter] = React.useState<string>('all');
   const [ordersSearch, setOrdersSearch] = React.useState('');
   const [ordersTabFilter, setOrdersTabFilter] = React.useState<'active' | 'completed' | 'trash'>('active');
+  const [queueStageFilter, setQueueStageFilter] = React.useState<string>('all');
   const [isRestoringOrder, setIsRestoringOrder] = React.useState<string | null>(null);
   const [preordersSearch, setPreordersSearch] = React.useState('');
   const [supabaseOrdersSearch, setSupabaseOrdersSearch] = React.useState('');
@@ -342,13 +344,20 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
 
   const reloadOrders = React.useCallback(async () => {
     try {
-      const [data, activeData] = await Promise.all([
+      const [data, activeData, queueWaitingData] = await Promise.all([
         supabaseOrders.list(),
-        supabaseOrders.listActiveInStock()
+        supabaseOrders.listActiveInStock(),
+        supabaseOrders.listQueueWaitingProduction()
       ]);
       const map = new Map<string, any>();
       (data || []).forEach(o => { if (o && o.id) map.set(String(o.id), o); });
       (activeData || []).forEach(o => {
+        if (o && o.id) {
+          const existing = map.get(String(o.id));
+          map.set(String(o.id), existing ? { ...existing, ...o } : o);
+        }
+      });
+      (queueWaitingData || []).forEach(o => {
         if (o && o.id) {
           const existing = map.get(String(o.id));
           map.set(String(o.id), existing ? { ...existing, ...o } : o);
@@ -428,7 +437,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
   React.useEffect(() => {
     reloadOrders();
     reloadWaitingVerifyOrders();
-  }, [activeMenu, ordersTabFilter, reloadOrders, reloadWaitingVerifyOrders]);
+  }, [activeMenu, ordersTabFilter, queueStageFilter, reloadOrders, reloadWaitingVerifyOrders]);
 
   // Real-time synchronization for orders & deliveries tables in Admin Dashboard
   React.useEffect(() => {
@@ -464,7 +473,9 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
     };
 
     window.addEventListener('orders-updated', handleSync);
+    window.addEventListener('orders_updated', handleSync);
     window.addEventListener('pornpong-order-approved', handleSync);
+    window.addEventListener('pornpong-queue-updated', handleSync);
     window.addEventListener('pornpong-delivery-updated', handleSync);
     window.addEventListener('pornpong-order-delivered', handleSync);
     window.addEventListener('focus', handleSync);
@@ -480,7 +491,9 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
         } catch {}
       }
       window.removeEventListener('orders-updated', handleSync);
+      window.removeEventListener('orders_updated', handleSync);
       window.removeEventListener('pornpong-order-approved', handleSync);
+      window.removeEventListener('pornpong-queue-updated', handleSync);
       window.removeEventListener('pornpong-delivery-updated', handleSync);
       window.removeEventListener('pornpong-order-delivered', handleSync);
       window.removeEventListener('focus', handleSync);
@@ -1276,7 +1289,6 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
     return getActiveProductionQueue();
   });
   const [queueSearch, setQueueSearch] = React.useState<string>('');
-  const [queueStageFilter, setQueueStageFilter] = React.useState<string>('all');
   const [queueShippingModalOrder, setQueueShippingModalOrder] = React.useState<any | null>(null);
   const [queueCarrier, setQueueCarrier] = React.useState<string>('รถโรงงานพรพงศ์พลาสติก (สายส่งด่วน)');
   const [queueDriverPhone, setQueueDriverPhone] = React.useState<string>('089-456-7890');
@@ -1335,26 +1347,33 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
 
   // Sorted Queue Orders (ordered by Q-YYMM-XXX) - Pre-Orders only, In-Stock items auto-bypass production queue
   const sortedQueueOrders = React.useMemo(() => {
-    const preOrderOrders = adminOrders.filter(ord => ord.is_deleted !== true && isOrderPreOrder(ord) && isOrderApproved(ord));
+    const preOrderOrders = adminOrders.filter(ord => {
+      if (ord.is_deleted === true || ord.is_deleted === 'true') return false;
+      const isPre = ord.product_type === 'pre_order' || ord.order_type === 'pre_order' || isOrderPreOrder(ord);
+      if (!isPre) return false;
+      return isOrderApproved(ord) || ord.status === 'producing' || ord.queue_status === 'waiting_production';
+    });
     const list = preOrderOrders.map((ord, idx) => {
       const qId = ord.queue_id || ord.queue_number || formatQueueId(ord, idx);
       const ordSt = (ord.order_status || ord.status || '').toLowerCase();
+      const qStatus = (ord.queue_status || '').toLowerCase();
       let defaultStage: 1 | 2 | 3 | 4 = 1;
-      if (ordSt === 'in_transit' || ordSt === 'shipped' || ordSt === 'shipping' || ordSt === 'delivered' || ordSt === 'completed') {
+      if (ordSt === 'in_transit' || ordSt === 'shipped' || ordSt === 'shipping' || ordSt === 'delivered' || ordSt === 'completed' || qStatus === 'in_transit') {
         defaultStage = 4;
-      } else if (ordSt === 'ready_for_shipping' || ordSt === 'ready' || ordSt === 'ready_to_ship') {
+      } else if (ordSt === 'ready_for_shipping' || ordSt === 'ready' || ordSt === 'ready_to_ship' || qStatus === 'ready_for_shipping') {
         defaultStage = 3;
-      } else if (ordSt === 'manufacturing' || ordSt === 'processing') {
+      } else if (ordSt === 'manufacturing' || ordSt === 'processing' || qStatus === 'manufacturing') {
         defaultStage = 2;
       } else {
         defaultStage = 1;
       }
-      const qStage = Number(ord.queue_stage || defaultStage) as 1 | 2 | 3 | 4;
+      const qStage = (ord.queue_stage ? Number(ord.queue_stage) : (qStatus === 'waiting_production' ? 1 : defaultStage)) as 1 | 2 | 3 | 4;
       return {
         ...ord,
         queue_id: qId,
         queue_number: qId,
-        queue_stage: qStage
+        queue_stage: qStage,
+        queue_status: qStatus || (qStage === 1 ? 'waiting_production' : (qStage === 2 ? 'manufacturing' : (qStage === 3 ? 'ready_for_shipping' : 'in_transit')))
       };
     });
 
@@ -1372,7 +1391,10 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
         (item.productName || item.product_name || '').toLowerCase().includes(term) ||
         (item.phone || item.customer_phone || '').includes(term);
 
-      const matchesStage = queueStageFilter === 'all' || String(item.queue_stage) === queueStageFilter;
+      const matchesStage = queueStageFilter === 'all' || 
+        (queueStageFilter === '1' 
+          ? (item.queue_stage === 1 || item.queue_status === 'waiting_production') 
+          : String(item.queue_stage) === queueStageFilter);
       return matchesSearch && matchesStage;
     });
   }, [sortedQueueOrders, queueSearch, queueStageFilter]);
@@ -1985,7 +2007,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
 
     // Allowed approved statuses per requirement: 'paid', 'ready_to_ship', 'producing', 'shipped', 'completed'
     const approved = ['paid', 'ready_to_ship', 'producing', 'manufacturing', 'shipped', 'shipping', 'in_transit', 'ready_for_shipping', 'completed', 'delivered'];
-    return approved.includes(s) || approved.includes(os) || ['verified', 'paid', 'approved'].includes(ps);
+    return approved.includes(s) || approved.includes(os) || ['verified', 'paid', 'approved', 'deposit_paid'].includes(ps);
   };
 
   const isOrderCompleted = (o: any) => {
@@ -2011,6 +2033,17 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
       const os = String(o.order_status || '').toLowerCase().trim();
       const ds = String(o.delivery_status || '').toLowerCase().trim();
       const ps = String(o.payment_status || '').toLowerCase().trim();
+      const prodType = String(o.product_type || o.order_type || o.orderType || '').toLowerCase().trim();
+
+      // CRITICAL: ***ห้ามนำออเดอร์ที่มี status === 'producing' หรือ product_type === 'pre_order' ไปแสดงในหน้า "คำสั่งซื้อสำเร็จ" เด็ดขาด***
+      if (s === 'producing' || os === 'producing' || prodType === 'pre_order' || prodType === 'preorder' || isOrderPreOrder(o)) {
+        return false;
+      }
+
+      // Must be in_stock product
+      if (o.product_type && o.product_type !== 'in_stock' && o.product_type !== 'instock') {
+        return false;
+      }
 
       // Rule: ห้ามแสดงออเดอร์ที่ยังมี status = 'pending_verification' หรือ 'pending' ในหน้านี้เด็ดขาด
       if (s === 'pending_verification' || s === 'pending' || s === 'waiting_payment' ||
@@ -2040,11 +2073,18 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
   }, [approvedAdminOrders]);
 
   // Requirement 2: Completed History Tab - แสดงเฉพาะออเดอร์ที่มี status เป็น 'delivered' หรือ 'completed' และยังไม่ถูกลบ (is_deleted = false)
+  // ห้ามนำ pre_order หรือ producing มาแสดงในหน้านี้
   const completedOrdersList = React.useMemo(() => {
     return adminOrders
       .filter(o => {
         if (!o) return false;
         if (o.is_deleted === true || o.is_deleted === 'true') return false;
+        const prodType = String(o.product_type || o.order_type || o.orderType || '').toLowerCase().trim();
+        const s = String(o.status || '').toLowerCase().trim();
+        const os = String(o.order_status || '').toLowerCase().trim();
+        if (prodType === 'pre_order' || prodType === 'preorder' || s === 'producing' || os === 'producing' || isOrderPreOrder(o)) {
+          return false;
+        }
         return isOrderCompleted(o);
       })
       .sort((a: any, b: any) => {
@@ -2951,25 +2991,25 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                   <div className="bg-white/5 rounded-xl p-2.5 border border-white/5">
                     <div className="text-[10px] text-slate-400 font-medium">1. รับคิวผลิต</div>
                     <div className="text-lg font-black text-violet-300 font-mono mt-0.5">
-                      {sortedQueueOrders.filter(o => o.queue_stage === 1).length} <span className="text-[11px] font-sans font-normal text-slate-400">ลำ</span>
+                      {sortedQueueOrders.filter(o => o.queue_stage === 1 || o.queue_status === 'waiting_production').length} <span className="text-[11px] font-sans font-normal text-slate-400">ลำ</span>
                     </div>
                   </div>
                   <div className="bg-white/5 rounded-xl p-2.5 border border-white/5">
                     <div className="text-[10px] text-slate-400 font-medium">2. กำลังหลอม/ผลิต</div>
                     <div className="text-lg font-black text-amber-300 font-mono mt-0.5">
-                      {sortedQueueOrders.filter(o => o.queue_stage === 2).length} <span className="text-[11px] font-sans font-normal text-slate-400">ลำ</span>
+                      {sortedQueueOrders.filter(o => o.queue_stage === 2 || o.queue_status === 'manufacturing').length} <span className="text-[11px] font-sans font-normal text-slate-400">ลำ</span>
                     </div>
                   </div>
                   <div className="bg-white/5 rounded-xl p-2.5 border border-white/5">
                     <div className="text-[10px] text-slate-400 font-medium">3. รอขนย้าย</div>
                     <div className="text-lg font-black text-sky-300 font-mono mt-0.5">
-                      {sortedQueueOrders.filter(o => o.queue_stage === 3).length} <span className="text-[11px] font-sans font-normal text-slate-400">ลำ</span>
+                      {sortedQueueOrders.filter(o => o.queue_stage === 3 || o.queue_status === 'ready_for_shipping').length} <span className="text-[11px] font-sans font-normal text-slate-400">ลำ</span>
                     </div>
                   </div>
                   <div className="bg-white/5 rounded-xl p-2.5 border border-white/5">
                     <div className="text-[10px] text-slate-400 font-medium">4. อยู่ระหว่างจัดส่ง</div>
                     <div className="text-lg font-black text-emerald-300 font-mono mt-0.5">
-                      {sortedQueueOrders.filter(o => o.queue_stage === 4).length} <span className="text-[11px] font-sans font-normal text-slate-400">ลำ</span>
+                      {sortedQueueOrders.filter(o => o.queue_stage === 4 || o.queue_status === 'in_transit').length} <span className="text-[11px] font-sans font-normal text-slate-400">ลำ</span>
                     </div>
                   </div>
                 </div>
@@ -3003,10 +3043,10 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                 <div className="flex items-center gap-1.5 flex-wrap">
                   {[
                     { id: 'all', label: 'ทั้งหมด', count: sortedQueueOrders.length },
-                    { id: '1', label: '1. รับคิวผลิต', count: sortedQueueOrders.filter(o => o.queue_stage === 1).length },
-                    { id: '2', label: '2. กำลังหลอม/ผลิต', count: sortedQueueOrders.filter(o => o.queue_stage === 2).length },
-                    { id: '3', label: '3. รอขนย้าย', count: sortedQueueOrders.filter(o => o.queue_stage === 3).length },
-                    { id: '4', label: '4. อยู่ระหว่างจัดส่ง', count: sortedQueueOrders.filter(o => o.queue_stage === 4).length }
+                    { id: '1', label: '1. รับคิวผลิต', count: sortedQueueOrders.filter(o => o.queue_stage === 1 || o.queue_status === 'waiting_production').length },
+                    { id: '2', label: '2. กำลังหลอม/ผลิต', count: sortedQueueOrders.filter(o => o.queue_stage === 2 || o.queue_status === 'manufacturing').length },
+                    { id: '3', label: '3. รอขนย้าย', count: sortedQueueOrders.filter(o => o.queue_stage === 3 || o.queue_status === 'ready_for_shipping').length },
+                    { id: '4', label: '4. อยู่ระหว่างจัดส่ง', count: sortedQueueOrders.filter(o => o.queue_stage === 4 || o.queue_status === 'in_transit').length }
                   ].map((tab) => (
                     <button
                       key={tab.id}
@@ -3897,27 +3937,72 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                                       localStorage.setItem('pornpong_rejected_order_ids', JSON.stringify(filteredRej));
                                     } catch {}
 
-                                    const isPre = isOrderPreOrder(ord);
-                                      const nextStatus = isPre ? 'producing' : 'ready_to_ship';
+                                    const prodType = ord.product_type || ord.order_type || ord.orderType;
+                                    const isPre = prodType === 'pre_order' || prodType === 'preorder' || (prodType !== 'in_stock' && prodType !== 'instock' && isOrderPreOrder(ord));
 
-                                      // Requirement 2: เมื่อกดอนุมัติ ให้ส่งค่า status = 'ready_to_ship' และ is_deleted = false ลง Supabase ให้ชัดเจน
-                                      if (isSupabaseConfigured && supabase) {
-                                        try {
+                                    let qNum = ord.queue_number || ord.queue_id;
+                                    if (isPre) {
+                                      if (!qNum || !/^Q-\d{4}-\d{3}$/i.test(String(qNum).trim())) {
+                                        qNum = await getNextAvailableQueueNumber();
+                                      } else {
+                                        qNum = String(qNum).trim().toUpperCase();
+                                      }
+                                    }
+
+                                    // Requirement 1:
+                                    // [กรณี A: สินค้าพร้อมส่ง (product_type === 'in_stock')]
+                                    // * status = 'ready_to_ship', payment_status = 'paid', is_deleted = false
+                                    // [กรณี B: สินค้าพรีออเดอร์ (product_type === 'pre_order')]
+                                    // * status = 'producing', queue_status = 'waiting_production', payment_status = 'deposit_paid', is_deleted = false
+                                    if (isSupabaseConfigured && supabase) {
+                                      try {
+                                        if (isPre) {
                                           await supabase
                                             .from('orders')
                                             .update({
-                                              status: nextStatus,
-                                              order_status: nextStatus,
-                                              payment_status: 'paid',
-                                              product_type: isPre ? 'pre_order' : 'in_stock',
+                                              status: 'producing',
+                                              order_status: 'producing',
+                                              queue_status: 'waiting_production',
+                                              queue_stage: 1,
+                                              payment_status: 'deposit_paid',
+                                              product_type: 'pre_order',
+                                              order_type: 'preorder',
+                                              queue_number: qNum,
+                                              queue_id: qNum,
                                               is_deleted: false,
                                               updated_at: new Date().toISOString()
                                             })
                                             .eq('id', targetOrderId);
-                                        } catch (updateErr) {
-                                          console.warn('Direct Supabase update error in approve handler:', updateErr);
+
+                                          await supabaseDeliveries.upsert({
+                                            order_id: targetOrderId,
+                                            delivery_status: 'waiting_production',
+                                            queue_number: qNum
+                                          });
+                                        } else {
+                                          await supabase
+                                            .from('orders')
+                                            .update({
+                                              status: 'ready_to_ship',
+                                              order_status: 'ready_to_ship',
+                                              payment_status: 'paid',
+                                              product_type: 'in_stock',
+                                              order_type: 'instock',
+                                              is_deleted: false,
+                                              delivery_status: 'ready_to_ship',
+                                              updated_at: new Date().toISOString()
+                                            })
+                                            .eq('id', targetOrderId);
+
+                                          await supabaseDeliveries.upsert({
+                                            order_id: targetOrderId,
+                                            delivery_status: 'ready_to_ship'
+                                          });
                                         }
+                                      } catch (updateErr) {
+                                        console.warn('Direct Supabase update error in approve handler:', updateErr);
                                       }
+                                    }
 
                                       const result: any = await supabaseOrders.approve(targetOrderId);
                                       if (result) {
@@ -3963,10 +4048,13 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                                           id: targetOrderId,
                                           status: isPre ? 'producing' : 'ready_to_ship',
                                           order_status: isPre ? 'producing' : 'ready_to_ship',
-                                          payment_status: 'paid',
+                                          queue_status: isPre ? 'waiting_production' : undefined,
+                                          queue_stage: isPre ? 1 : undefined,
+                                          payment_status: isPre ? 'deposit_paid' : 'paid',
                                           product_type: isPre ? 'pre_order' : 'in_stock',
+                                          order_type: isPre ? 'preorder' : 'instock',
                                           is_deleted: false,
-                                          delivery_status: isPre ? 'producing' : 'ready_to_ship',
+                                          delivery_status: isPre ? 'waiting_production' : 'ready_to_ship',
                                           ...(isPre ? { queue_number: qNum, queue_id: qNum, queue_stage: 1 } : {})
                                         };
                                         const exists = prev.some(o => String(o.id) === targetOrderId);
@@ -3988,6 +4076,9 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                                     await reloadOrders();
                                     window.dispatchEvent(new Event('orders-updated'));
                                     window.dispatchEvent(new Event('orders_updated'));
+                                    if (isPre) {
+                                      window.dispatchEvent(new CustomEvent('pornpong-queue-updated', { detail: { orderId: targetOrderId, queue_number: qNum } }));
+                                    }
                                     setWaitingVerifyOrders(prev => prev.filter(o => String(o.id) !== targetOrderId));
                                   } catch (err: any) {
                                     console.error('Approve payment error:', err);

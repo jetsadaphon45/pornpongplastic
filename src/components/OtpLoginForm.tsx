@@ -73,69 +73,97 @@ export default function OtpLoginForm() {
     return text
   }
 
-  // 1. ฟังก์ชันส่ง OTP ไปยังอีเมลผู้ใช้
+  // 1. ฟังก์ชันส่ง OTP ไปยังอีเมลผู้ใช้ (Pornpong Plastic - Gmail SMTP + Supabase otp_requests)
   const handleSendOtp = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setLoading(true)
-    setMessage(null)
+    e.preventDefault();
+    setLoading(true);
+    setMessage(null);
 
     try {
-      const { error } = await supabase.auth.signInWithOtp({
-        email,
-        options: {
-          shouldCreateUser: true, // สร้างบัญชีอัตโนมัติหากยังไม่มีในฐานข้อมูล
-        },
-      })
+      // 1. ส่งรหัส OTP และบันทึกใน otp_requests ผ่าน Gmail SMTP
+      const reqRes = await fetch('/api/otp/request', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      });
+      const reqData = await reqRes.json();
 
-      setLoading(false)
+      // ลองเรียก Supabase Auth เพิ่มเติมหากพร้อมใช้งาน
+      try {
+        await supabase.auth.signInWithOtp({
+          email,
+          options: { shouldCreateUser: true },
+        });
+      } catch {
+        // ignore Supabase auth error if custom OTP succeeds
+      }
 
-      if (error) {
-        const errorMsg = handleSupabaseError(error)
-        setMessage({ type: 'error', text: `ส่ง OTP ล้มเหลว: ${errorMsg}` })
-      } else {
-        setStep('verify')
+      setLoading(false);
+
+      if (reqRes.ok && reqData.success) {
+        setStep('verify');
         setMessage({
           type: 'success',
-          text: 'ส่งรหัส OTP เรียบร้อยแล้ว! สามารถเช็กรหัส 6 หลักได้ใน Mailtrap Inbox',
-        })
+          text: 'ส่งรหัส OTP 6 หลักไปยังอีเมลของคุณเรียบร้อยแล้ว (รหัสมีอายุการใช้งาน 5 นาที)',
+        });
+      } else {
+        const errorMsg = reqData.error || 'ส่ง OTP ล้มเหลว กรุณาตรวจสอบอีเมล';
+        setMessage({ type: 'error', text: `ส่ง OTP ล้มเหลว: ${errorMsg}` });
       }
     } catch (err: any) {
-      setLoading(false)
-      const errorMsg = handleSupabaseError(err)
-      setMessage({ type: 'error', text: `ส่ง OTP ล้มเหลว: ${errorMsg}` })
+      setLoading(false);
+      const errorMsg = handleSupabaseError(err);
+      setMessage({ type: 'error', text: `ส่ง OTP ล้มเหลว: ${errorMsg}` });
     }
-  }
+  };
 
-  // 2. ฟังก์ชันยืนยันรหัส OTP
+  // 2. ฟังก์ชันยืนยันรหัส OTP (ตรวจสอบใน otp_requests และเวลาหมดอายุ 5 นาที)
   const handleVerifyOtp = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setLoading(true)
-    setMessage(null)
+    e.preventDefault();
+    setLoading(true);
+    setMessage(null);
 
     try {
-      const { data, error } = await supabase.auth.verifyOtp({
-        email,
-        token: otp,
-        type: 'email',
-      })
+      // ตรวจสอบกับ Backend API /api/otp/verify
+      const verifyRes = await fetch('/api/otp/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, otpCode: otp }),
+      });
+      const verifyData = await verifyRes.json();
 
-      setLoading(false)
+      // ลองยืนยันกับ Supabase Auth ควบคู่กันหากมี session
+      let supabaseUserEmail = '';
+      try {
+        const { data } = await supabase.auth.verifyOtp({
+          email,
+          token: otp,
+          type: 'email',
+        });
+        if (data?.user?.email) supabaseUserEmail = data.user.email;
+      } catch {
+        // ignore
+      }
 
-      if (error) {
-        const errorMsg = handleSupabaseError(error)
-        setMessage({ type: 'error', text: `รหัส OTP ไม่ถูกต้อง: ${errorMsg}` })
-      } else {
+      setLoading(false);
+
+      if (verifyRes.ok && verifyData.success) {
         setMessage({
           type: 'success',
-          text: `เข้าสู่ระบบสำเร็จ! ยินดีต้อนรับ ${data.user?.email}`,
-        })
+          text: `เข้าสู่ระบบสำเร็จ! ยินดีต้อนรับ ${supabaseUserEmail || email} (ยืนยันตัวตนเรียบร้อย)`,
+        });
+      } else {
+        setMessage({
+          type: 'error',
+          text: `รหัส OTP ไม่ถูกต้องหรือหมดอายุ: ${verifyData.error || 'กรุณาตรวจสอบรหัส 6 หลักอีกครั้ง'}`,
+        });
       }
     } catch (err: any) {
-      setLoading(false)
-      const errorMsg = handleSupabaseError(err)
-      setMessage({ type: 'error', text: `รหัส OTP ไม่ถูกต้อง: ${errorMsg}` })
+      setLoading(false);
+      const errorMsg = handleSupabaseError(err);
+      setMessage({ type: 'error', text: `รหัส OTP ไม่ถูกต้อง: ${errorMsg}` });
     }
-  }
+  };
 
   return (
     <div className="w-full max-w-md mx-auto my-10 p-6 bg-white rounded-xl shadow-md border border-gray-100 font-sans">

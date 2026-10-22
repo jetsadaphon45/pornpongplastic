@@ -28,7 +28,9 @@ import {
   ZoomIn,
   Loader2,
   AlertTriangle,
-  Trash2
+  Trash2,
+  Hourglass,
+  Package
 } from 'lucide-react';
 import { Product, User } from '../types';
 import { 
@@ -51,6 +53,7 @@ interface PreorderSectionProps {
   currentUser?: User | null;
   onOpenLogin?: () => void;
   setActiveTab?: (tab: string) => void;
+  onOpenTracking?: (order?: any) => void;
 }
 
 // Color options (Dynamic from Admin Config)
@@ -236,7 +239,8 @@ export default function PreorderSection({
   onAddToCart,
   currentUser,
   onOpenLogin,
-  setActiveTab
+  setActiveTab,
+  onOpenTracking
 }: PreorderSectionProps) {
   // 1. Customizer State
   // Dynamic Pre-Order Settings from Admin Config
@@ -259,6 +263,18 @@ export default function PreorderSection({
 
     window.addEventListener('preorder_settings_changed', handleSettingsUpdated);
     return () => window.removeEventListener('preorder_settings_changed', handleSettingsUpdated);
+  }, []);
+
+  // Requirement 3: Auto State Detection on Re-open
+  React.useEffect(() => {
+    const handleOpenPreorderModal = (e: any) => {
+      if (e?.detail) {
+        setConfirmedOrder(e.detail);
+        setShowOrderModal(true);
+      }
+    };
+    window.addEventListener('pornpong-open-preorder-modal', handleOpenPreorderModal);
+    return () => window.removeEventListener('pornpong-open-preorder-modal', handleOpenPreorderModal);
   }, []);
 
   const [selectedSize, setSelectedSize] = React.useState<BoatSizeId>('2_seat');
@@ -587,7 +603,7 @@ export default function PreorderSection({
     if (!confirmedOrder) return;
 
     // Validation: Require slip upload
-    if (!slipFile && !slipPreview) {
+    if (!slipFile && !slipPreview && !confirmedOrder.slip_url && !confirmedOrder.payment_slip_url) {
       const err = 'กรุณาแนบสลิปหลักฐานการโอนเงินมัดจำก่อนดำเนินการต่อ';
       setSlipError(err);
       alert(err);
@@ -598,7 +614,7 @@ export default function PreorderSection({
     setSlipError(null);
 
     try {
-      let finalSlipUrl = slipPreview || '';
+      let finalSlipUrl = confirmedOrder.slip_url || confirmedOrder.payment_slip_url || slipPreview || '';
 
       // Upload file to Supabase Storage if file is present
       if (slipFile) {
@@ -627,18 +643,37 @@ export default function PreorderSection({
         }
       }
 
-      // Update orders table in Supabase
+      // Requirement 1: Update orders table in Supabase:
+      // {
+      //   status: 'pending_verification',
+      //   payment_status: 'pending_verification',
+      // Requirement 1: Update orders table in Supabase:
+      // {
+      //   status: 'pending_verification',
+      //   payment_status: 'pending_verification',
+      //   slip_url: uploadedSlipUrl
+      // }
       if (isSupabaseConfigured && supabase) {
         try {
-          await supabase.from('orders').update({
-            payment_slip_url: finalSlipUrl,
-            slip_url: finalSlipUrl,
+          const { error: updErr } = await supabase.from('orders').update({
             status: 'pending_verification',
             payment_status: 'pending_verification',
-            order_status: 'pending_verification'
+            slip_url: finalSlipUrl,
+            payment_slip_url: finalSlipUrl,
+            order_status: 'pending_verification',
+            updated_at: new Date().toISOString()
           }).eq('id', confirmedOrder.id);
+
+          if (updErr) {
+            console.warn('Orders update with extended columns failed, falling back to core columns:', updErr.message);
+            await supabase.from('orders').update({
+              status: 'pending_verification',
+              payment_status: 'pending_verification',
+              slip_url: finalSlipUrl
+            }).eq('id', confirmedOrder.id);
+          }
         } catch (errDb: any) {
-          console.warn('Could not update payment_slip_url in orders table:', errDb?.message);
+          console.warn('Could not update status in orders table:', errDb?.message);
         }
       }
 
@@ -678,15 +713,45 @@ export default function PreorderSection({
         window.dispatchEvent(new CustomEvent('pornpong-queue-updated'));
       } catch {}
 
+      // Add a notification for customer
+      try {
+        const currentNotis = JSON.parse(localStorage.getItem('pornpong_notifications') || '[]');
+        const newNoti = {
+          id: 'noti-' + Date.now(),
+          title: 'ได้รับหลักฐานการโอนเงินเรียบร้อยแล้ว',
+          message: `คำสั่งจองเรือ #${confirmedOrder.id} ได้รับสลิปมัดจำแล้ว ระบบกำลังอยู่ระหว่างการตรวจสอบเพื่อยืนยันคิวหลอม`,
+          type: 'preorder',
+          date: 'เมื่อครู่',
+          isRead: false
+        };
+        localStorage.setItem('pornpong_notifications', JSON.stringify([newNoti, ...currentNotis]));
+      } catch {}
+
+      // Requirement 2: Switch UI to "Pending Verification State" immediately (keep modal open)
+      const updatedOrder = {
+        ...confirmedOrder,
+        status: 'pending_verification',
+        payment_status: 'pending_verification',
+        order_status: 'pending_verification',
+        slip_url: finalSlipUrl,
+        payment_slip_url: finalSlipUrl
+      };
+      setConfirmedOrder(updatedOrder);
       setSlipUploaded(true);
-      setShowOrderModal(false);
-      if (setActiveTab) {
-        setActiveTab('home');
-        window.scrollTo({ top: 0, behavior: 'smooth' });
-      }
+      setShowOrderModal(true);
     } catch (err: any) {
       console.error('Failed to complete pre-order with slip:', err);
-      setShowOrderModal(false);
+      // Fallback switch to pending verification UI
+      setConfirmedOrder((prev: any) => ({
+        ...prev,
+        status: 'pending_verification',
+        payment_status: 'pending_verification',
+        order_status: 'pending_verification',
+        slip_url: slipPreview || '',
+        payment_slip_url: slipPreview || ''
+      }));
+      setSlipUploaded(true);
+      setShowOrderModal(true);
     } finally {
       setIsUploadingSlip(false);
     }
@@ -703,6 +768,16 @@ export default function PreorderSection({
   // Other catalog products for browsing below
   const preorderProducts = products.filter(
     (p) => p.status === 'preorder' || p.category === 'rowboat' || p.category === 'kayak' || p.price >= 5000
+  );
+
+  // Requirement 2 & 3: Auto State Detection on Re-open
+  const isPendingVerification = Boolean(
+    confirmedOrder && (
+      confirmedOrder.status === 'pending_verification' ||
+      confirmedOrder.payment_status === 'pending_verification' ||
+      confirmedOrder.order_status === 'pending_verification' ||
+      slipUploaded
+    )
   );
 
   return (
@@ -1920,16 +1995,18 @@ export default function PreorderSection({
               </button>
 
               <div className="flex items-center gap-2 mb-1">
-                <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                <span className="text-xs font-bold uppercase tracking-wider text-sky-200">
-                  Pre-Order Confirmed
+                <span className={`w-2.5 h-2.5 rounded-full ${isPendingVerification ? 'bg-amber-400' : 'bg-emerald-400'} animate-pulse`}></span>
+                <span className={`text-xs font-bold uppercase tracking-wider ${isPendingVerification ? 'text-amber-200' : 'text-sky-200'}`}>
+                  {isPendingVerification ? 'Pending Verification' : 'Pre-Order Confirmed'}
                 </span>
               </div>
               <h3 className="font-display text-xl font-bold text-white">
-                สรุปรายการสั่งซื้อพรีออเดอร์
+                {isPendingVerification ? 'สถานะการชำระเงินมัดจำ' : 'สรุปรายการสั่งซื้อพรีออเดอร์'}
               </h3>
               <p className="text-xs text-sky-100/90 mt-0.5">
-                บันทึกลงระบบเรียบร้อยแล้ว กรุณาชำระเงินมัดจำเพื่อล็อกคิวผลิต
+                {isPendingVerification 
+                  ? 'ได้รับหลักฐานการโอนเงินเรียบร้อยแล้ว ระบบกำลังตรวจสอบข้อมูล'
+                  : 'บันทึกลงระบบเรียบร้อยแล้ว กรุณาชำระเงินมัดจำเพื่อล็อกคิวผลิต'}
               </p>
             </div>
 
@@ -1953,9 +2030,16 @@ export default function PreorderSection({
                     {copiedOrderId ? <Check size={13} className="text-emerald-600" /> : <Copy size={13} />}
                     <span>{copiedOrderId ? 'คัดลอกแล้ว' : 'คัดลอก'}</span>
                   </button>
-                  <span className="text-[11px] font-bold px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 border border-amber-200">
-                    รอชำระมัดจำ
-                  </span>
+                  {isPendingVerification ? (
+                    <span className="text-[11px] font-bold px-3 py-1 rounded-full bg-amber-100 text-amber-900 border border-amber-300 flex items-center gap-1 shadow-2xs">
+                      <Clock size={11} className="text-amber-600 animate-pulse" />
+                      <span>รอการตรวจสอบ</span>
+                    </span>
+                  ) : (
+                    <span className="text-[11px] font-bold px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 border border-amber-200">
+                      รอชำระมัดจำ
+                    </span>
+                  )}
                 </div>
               </div>
 
@@ -2006,181 +2090,268 @@ export default function PreorderSection({
                 </div>
               </div>
 
-              {/* PAYMENT & DEPOSIT AMOUNT BOX */}
-              <div className="bg-gradient-to-br from-amber-500 to-amber-600 text-slate-950 p-5 rounded-2xl shadow-lg flex flex-col sm:flex-row items-center justify-between gap-4">
-                <div>
-                  <span className="text-xs font-extrabold uppercase tracking-wider text-amber-950/80 block">
-                    ยอดเงินมัดจำชำระเงิน (Deposit Due Now)
-                  </span>
-                  <div className="font-display text-3xl font-black text-slate-950 mt-0.5">
-                    ฿{Number(confirmedOrder.deposit_amount || 1000).toLocaleString()}
-                  </div>
-                  <span className="text-[11px] font-semibold text-amber-950 block mt-1">
-                    ยอดคงเหลือชำระวันรับเรือ: ฿{(Number(confirmedOrder.total_price) - Number(confirmedOrder.deposit_amount || 1000)).toLocaleString()}
-                  </span>
-                </div>
-
-                {/* PromptPay QR Simulation */}
-                <div className="bg-white p-2.5 rounded-2xl shadow-md flex flex-col items-center shrink-0 text-center">
-                  <div className="w-24 h-24 bg-slate-100 rounded-xl flex items-center justify-center p-1 border border-slate-200">
-                    <img 
-                      src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=PROMPTPAY-PORNPONG-DEPOSIT-${confirmedOrder.deposit_amount || 1000}`}
-                      alt="PromptPay QR Code"
-                      className="w-full h-full object-contain"
-                    />
-                  </div>
-                  <span className="text-[9px] font-extrabold text-slate-800 mt-1 block">
-                    สแกนจ่ายผ่านพร้อมเพย์
-                  </span>
-                </div>
-              </div>
-
-              {/* Bank Account Info */}
-              <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 text-xs text-slate-600 space-y-1">
-                <div className="font-bold text-slate-800">ข้อมูลบัญชีธนาคารสำหรับโอนมัดจำ:</div>
-                <div>ธนาคารกสิกรไทย (KBANK) • บัญชีกระแสรายวัน</div>
-                <div className="font-mono font-bold text-slate-900 text-sm">758-2-41982-0</div>
-                <div>ชื่อบัญชี: บจก. พรพงศ์พลาสติก (ประเทศไทย)</div>
-              </div>
-
-              {/* Upload Slip confirmation status & validation */}
-              {slipUploaded ? (
-                <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-800 flex items-center gap-2">
-                  <CheckCircle2 size={18} className="text-emerald-600 shrink-0" />
-                  <span>บันทึกหลักฐานการโอนเรียบร้อย เจ้าหน้าที่จะตรวจสอบและโทรยืนยันคิวหลอมในไม่ช้า</span>
-                </div>
-              ) : slipPreview ? (
-                <div className="border border-emerald-300 bg-emerald-50/50 rounded-2xl p-3.5 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-emerald-800 flex items-center gap-1.5">
-                      <CheckCircle2 size={16} className="text-emerald-600" />
-                      เลือกไฟล์สลิปเรียบร้อย (พร้อมบันทึก)
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSlipFile(null);
-                        setSlipPreview(null);
-                        setSlipError('กรุณาแนบสลิปหลักฐานการโอนเงินมัดจำก่อนดำเนินการต่อ');
-                      }}
-                      className="text-xs text-rose-600 hover:text-rose-700 font-bold inline-flex items-center gap-1 cursor-pointer"
-                    >
-                      <Trash2 size={13} />
-                      <span>เปลี่ยนรูป/ลบ</span>
-                    </button>
-                  </div>
-                  <div className="flex items-center gap-3 bg-white p-2.5 rounded-xl border border-emerald-200">
-                    <img 
-                      src={slipPreview} 
-                      alt="Slip preview" 
-                      className="w-14 h-14 object-cover rounded-lg border border-slate-200 shadow-2xs shrink-0"
-                    />
-                    <div className="flex-1 min-w-0 text-left">
-                      <p className="text-xs font-bold text-slate-800 truncate">
-                        {slipFile?.name || 'สลิปการโอนเงินมัดจำ'}
-                      </p>
-                      <p className="text-[10px] text-slate-400">
-                        {slipFile ? `${(slipFile.size / 1024).toFixed(1)} KB` : 'รูปภาพพร้อมอัปโหลด'}
-                      </p>
-                      <span className="inline-block mt-0.5 text-[9.5px] font-bold text-emerald-700 bg-emerald-100 px-1.5 py-0.2 rounded">
-                        ✓ แนบสลิปแล้ว (กดปุ่มสีฟ้าด้านล่างเพื่ออัปโหลด)
-                      </span>
+              {/* Requirement 2: Switch UI to "Pending Verification State" */}
+              {isPendingVerification ? (
+                <div className="bg-gradient-to-b from-amber-50/90 via-amber-50/40 to-white border-2 border-amber-200 rounded-3xl p-6 sm:p-7 text-center space-y-4 shadow-sm animate-fadeIn" id="pending-verification-state-box">
+                  {/* ⏳ Glowing Yellow/Amber Icon */}
+                  <div className="flex justify-center pt-1">
+                    <div className="relative inline-flex items-center justify-center">
+                      <div className="absolute -inset-3 rounded-full bg-amber-400/30 blur-lg animate-pulse"></div>
+                      <div className="relative h-20 w-20 rounded-3xl bg-gradient-to-tr from-amber-500 via-amber-400 to-yellow-400 text-slate-900 flex items-center justify-center shadow-xl shadow-amber-200/80 border-2 border-white">
+                        <span className="text-3xl select-none" role="img" aria-label="Hourglass">⏳</span>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ) : (
-                <div className="space-y-1.5">
-                  <label className={`border-2 border-dashed rounded-2xl p-4 text-center flex flex-col items-center justify-center gap-1.5 cursor-pointer transition-all ${
-                    slipError 
-                      ? 'border-rose-400 bg-rose-50/50 hover:bg-rose-50/70 ring-2 ring-rose-300/30' 
-                      : 'border-amber-300 hover:border-brand-blue bg-amber-50/30 hover:bg-sky-50/30'
-                  }`}>
-                    <Upload size={20} className={slipError ? 'text-rose-500 animate-bounce' : 'text-brand-blue'} />
-                    <span className="text-xs font-bold text-slate-800 flex items-center gap-1">
-                      <span>แนบสลิปหลักฐานการโอนเงินมัดจำ (จำเป็นต้องแนบ)</span>
-                      <span className="text-rose-500 font-black">*</span>
-                    </span>
-                    <span className="text-[10px] text-slate-400">
-                      รองรับไฟล์ JPG, PNG หรือ WEBP (ขนาดไม่เกิน 10MB)
-                    </span>
-                    <span className="text-[9.5px] font-bold text-amber-700 bg-amber-100/80 px-2 py-0.5 rounded-full mt-0.5">
-                      ⚠️ ต้องแนบสลิปมัดจำเพื่อยืนยันคิวผลิต
-                    </span>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      className="hidden"
-                      onChange={handleSlipFileSelect}
-                    />
-                  </label>
 
-                  {slipError && (
-                    <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-700 font-bold flex items-center gap-1.5">
-                      <AlertTriangle size={15} className="text-rose-600 shrink-0" />
-                      <span>{slipError}</span>
+                  <div className="space-y-2">
+                    <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-100 border border-amber-300 text-amber-900 text-[11px] font-bold">
+                      <span className="w-2 h-2 rounded-full bg-amber-600 animate-ping"></span>
+                      <span>สถานะ: รอการตรวจสอบ</span>
+                    </div>
+                    <h4 className="font-display text-lg sm:text-xl font-extrabold text-slate-900">
+                      ได้รับหลักฐานการโอนเงินเรียบร้อยแล้ว
+                    </h4>
+                    <p className="text-xs sm:text-sm text-slate-600 leading-relaxed max-w-sm mx-auto font-medium">
+                      ระบบกำลังอยู่ระหว่างตรวจสอบสลิปชำระเงินมัดจำ เจ้าหน้าที่จะดำเนินการยืนยันคิวให้ท่านโดยเร็วที่สุด
+                    </p>
+                  </div>
+
+                  {/* Uploaded Slip Card Preview */}
+                  {(confirmedOrder.slip_url || confirmedOrder.payment_slip_url || slipPreview) && (
+                    <div className="bg-white p-3.5 rounded-2xl border border-amber-200 inline-flex items-center gap-3.5 shadow-2xs max-w-sm mx-auto text-left w-full sm:w-auto">
+                      <img 
+                        src={confirmedOrder.slip_url || confirmedOrder.payment_slip_url || slipPreview} 
+                        alt="Uploaded Slip" 
+                        className="w-14 h-14 rounded-xl object-cover border border-slate-200 shadow-2xs shrink-0"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <span className="text-[10px] text-slate-400 block font-bold uppercase">หลักฐานการชำระเงิน</span>
+                        <span className="text-xs font-bold text-slate-800 truncate block">
+                          ยอดมัดจำ ฿{Number(confirmedOrder.deposit_amount || 1000).toLocaleString()}
+                        </span>
+                        <span className="text-[10px] text-emerald-600 font-semibold flex items-center gap-1 mt-0.5">
+                          <CheckCircle2 size={12} />
+                          <span>แนบไฟล์สลิปเรียบร้อยแล้ว</span>
+                        </span>
+                      </div>
                     </div>
                   )}
                 </div>
+              ) : (
+                <>
+                  {/* PAYMENT & DEPOSIT AMOUNT BOX */}
+                  <div className="bg-gradient-to-br from-amber-500 to-amber-600 text-slate-950 p-5 rounded-2xl shadow-lg flex flex-col sm:flex-row items-center justify-between gap-4">
+                    <div>
+                      <span className="text-xs font-extrabold uppercase tracking-wider text-amber-950/80 block">
+                        ยอดเงินมัดจำชำระเงิน (Deposit Due Now)
+                      </span>
+                      <div className="font-display text-3xl font-black text-slate-950 mt-0.5">
+                        ฿{Number(confirmedOrder.deposit_amount || 1000).toLocaleString()}
+                      </div>
+                      <span className="text-[11px] font-semibold text-amber-950 block mt-1">
+                        ยอดคงเหลือชำระวันรับเรือ: ฿{(Number(confirmedOrder.total_price) - Number(confirmedOrder.deposit_amount || 1000)).toLocaleString()}
+                      </span>
+                    </div>
+
+                    {/* PromptPay QR Simulation */}
+                    <div className="bg-white p-2.5 rounded-2xl shadow-md flex flex-col items-center shrink-0 text-center">
+                      <div className="w-24 h-24 bg-slate-100 rounded-xl flex items-center justify-center p-1 border border-slate-200">
+                        <img 
+                          src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=PROMPTPAY-PORNPONG-DEPOSIT-${confirmedOrder.deposit_amount || 1000}`}
+                          alt="PromptPay QR Code"
+                          className="w-full h-full object-contain"
+                        />
+                      </div>
+                      <span className="text-[9px] font-extrabold text-slate-800 mt-1 block">
+                        สแกนจ่ายผ่านพร้อมเพย์
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Bank Account Info */}
+                  <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 text-xs text-slate-600 space-y-1">
+                    <div className="font-bold text-slate-800">ข้อมูลบัญชีธนาคารสำหรับโอนมัดจำ:</div>
+                    <div>ธนาคารกสิกรไทย (KBANK) • บัญชีกระแสรายวัน</div>
+                    <div className="font-mono font-bold text-slate-900 text-sm">758-2-41982-0</div>
+                    <div>ชื่อบัญชี: บจก. พรพงศ์พลาสติก (ประเทศไทย)</div>
+                  </div>
+
+                  {/* Upload Slip confirmation status & validation */}
+                  {slipPreview ? (
+                    <div className="border border-emerald-300 bg-emerald-50/50 rounded-2xl p-3.5 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-emerald-800 flex items-center gap-1.5">
+                          <CheckCircle2 size={16} className="text-emerald-600" />
+                          เลือกไฟล์สลิปเรียบร้อย (พร้อมบันทึก)
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSlipFile(null);
+                            setSlipPreview(null);
+                            setSlipError('กรุณาแนบสลิปหลักฐานการโอนเงินมัดจำก่อนดำเนินการต่อ');
+                          }}
+                          className="text-xs text-rose-600 hover:text-rose-700 font-bold inline-flex items-center gap-1 cursor-pointer"
+                        >
+                          <Trash2 size={13} />
+                          <span>เปลี่ยนรูป/ลบ</span>
+                        </button>
+                      </div>
+                      <div className="flex items-center gap-3 bg-white p-2.5 rounded-xl border border-emerald-200">
+                        <img 
+                          src={slipPreview} 
+                          alt="Slip preview" 
+                          className="w-14 h-14 object-cover rounded-lg border border-slate-200 shadow-2xs shrink-0"
+                        />
+                        <div className="flex-1 min-w-0 text-left">
+                          <p className="text-xs font-bold text-slate-800 truncate">
+                            {slipFile?.name || 'สลิปการโอนเงินมัดจำ'}
+                          </p>
+                          <p className="text-[10px] text-slate-400">
+                            {slipFile ? `${(slipFile.size / 1024).toFixed(1)} KB` : 'รูปภาพพร้อมอัปโหลด'}
+                          </p>
+                          <span className="inline-block mt-0.5 text-[9.5px] font-bold text-emerald-700 bg-emerald-100 px-1.5 py-0.2 rounded">
+                            ✓ แนบสลิปแล้ว (กดปุ่มสีฟ้าด้านล่างเพื่ออัปโหลด)
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-1.5">
+                      <label className={`border-2 border-dashed rounded-2xl p-4 text-center flex flex-col items-center justify-center gap-1.5 cursor-pointer transition-all ${
+                        slipError 
+                          ? 'border-rose-400 bg-rose-50/50 hover:bg-rose-50/70 ring-2 ring-rose-300/30' 
+                          : 'border-amber-300 hover:border-brand-blue bg-amber-50/30 hover:bg-sky-50/30'
+                      }`}>
+                        <Upload size={20} className={slipError ? 'text-rose-500 animate-bounce' : 'text-brand-blue'} />
+                        <span className="text-xs font-bold text-slate-800 flex items-center gap-1">
+                          <span>แนบสลิปหลักฐานการโอนเงินมัดจำ (จำเป็นต้องแนบ)</span>
+                          <span className="text-rose-500 font-black">*</span>
+                        </span>
+                        <span className="text-[10px] text-slate-400">
+                          รองรับไฟล์ JPG, PNG หรือ WEBP (ขนาดไม่เกิน 10MB)
+                        </span>
+                        <span className="text-[9.5px] font-bold text-amber-700 bg-amber-100/80 px-2 py-0.5 rounded-full mt-0.5">
+                          ⚠️ ต้องแนบสลิปมัดจำเพื่อยืนยันคิวผลิต
+                        </span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={handleSlipFileSelect}
+                        />
+                      </label>
+
+                      {slipError && (
+                        <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-700 font-bold flex items-center gap-1.5">
+                          <AlertTriangle size={15} className="text-rose-600 shrink-0" />
+                          <span>{slipError}</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </>
               )}
 
             </div>
 
             {/* Modal Footer Actions */}
             <div className="p-5 bg-slate-50 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-3">
-              <div className="text-xs text-slate-500 text-center sm:text-left">
-                {!slipFile && !slipPreview ? (
-                  <span className="text-amber-700 font-medium flex items-center gap-1 justify-center sm:justify-start">
-                    <AlertTriangle size={13} className="text-amber-600 shrink-0" />
-                    <span>กรุณาแนบรูปสลิปเพื่อเปิดใช้งานปุ่มบันทึก</span>
-                  </span>
-                ) : (
-                  <span className="text-emerald-700 font-medium flex items-center gap-1 justify-center sm:justify-start">
-                    <CheckCircle2 size={13} className="text-emerald-600 shrink-0" />
-                    <span>แนบสลิปเรียบร้อย พร้อมกดยืนยัน</span>
-                  </span>
-                )}
-              </div>
+              {isPendingVerification ? (
+                <div className="flex flex-col sm:flex-row items-center justify-between gap-3 w-full">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowOrderModal(false);
+                      if (setActiveTab) {
+                        setActiveTab('home');
+                        window.scrollTo({ top: 0, behavior: 'smooth' });
+                      }
+                    }}
+                    className="w-full sm:w-auto px-5 py-2.5 rounded-xl border border-slate-300 hover:bg-slate-100 text-slate-700 font-bold text-xs transition-colors cursor-pointer text-center"
+                    id="btn-close-pending-modal"
+                  >
+                    ปิดหน้าต่าง
+                  </button>
 
-              <div className="flex items-center gap-2 w-full sm:w-auto">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowOrderModal(false);
-                    if (setActiveTab) {
-                      setActiveTab('home');
-                      window.scrollTo({ top: 0, behavior: 'smooth' });
-                    }
-                  }}
-                  className="w-full sm:w-auto px-4 py-2.5 rounded-xl border border-slate-300 hover:bg-slate-100 text-slate-700 font-semibold text-xs transition-colors cursor-pointer"
-                >
-                  ปิดหน้าต่าง
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowOrderModal(false);
+                      if (onOpenTracking) {
+                        onOpenTracking(confirmedOrder);
+                      } else {
+                        window.dispatchEvent(new CustomEvent('pornpong-open-tracking', { detail: confirmedOrder }));
+                        if (setActiveTab) {
+                          setActiveTab('profile');
+                        }
+                      }
+                    }}
+                    className="w-full sm:w-auto px-6 py-2.5 rounded-xl bg-brand-blue hover:bg-brand-blue-light text-white font-bold text-xs shadow-md shadow-brand-blue/20 transition-all cursor-pointer flex items-center justify-center gap-1.5 text-center active:scale-[0.98]"
+                    id="btn-goto-tracking"
+                  >
+                    <Package size={14} />
+                    <span>ไปที่หน้าติดตามสถานะ</span>
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <div className="text-xs text-slate-500 text-center sm:text-left">
+                    {!slipFile && !slipPreview ? (
+                      <span className="text-amber-700 font-medium flex items-center gap-1 justify-center sm:justify-start">
+                        <AlertTriangle size={13} className="text-amber-600 shrink-0" />
+                        <span>กรุณาแนบรูปสลิปเพื่อเปิดใช้งานปุ่มบันทึก</span>
+                      </span>
+                    ) : (
+                      <span className="text-emerald-700 font-medium flex items-center gap-1 justify-center sm:justify-start">
+                        <CheckCircle2 size={13} className="text-emerald-600 shrink-0" />
+                        <span>แนบสลิปเรียบร้อย พร้อมกดยืนยัน</span>
+                      </span>
+                    )}
+                  </div>
 
-                <button
-                  type="button"
-                  onClick={handleFinishPreOrderWithSlip}
-                  disabled={isUploadingSlip}
-                  className={`w-full sm:w-auto px-6 py-2.5 rounded-xl font-bold text-xs transition-all text-center flex items-center justify-center gap-2 ${
-                    !slipFile && !slipPreview
-                      ? 'bg-slate-200 text-slate-400 border border-slate-300 hover:bg-slate-250 cursor-not-allowed shadow-none'
-                      : 'bg-brand-blue hover:bg-brand-blue-light text-white shadow-md shadow-brand-blue/20 cursor-pointer active:scale-[0.98]'
-                  }`}
-                  id="btn-finish-preorder"
-                  title={!slipFile && !slipPreview ? 'กรุณาแนบสลิปหลักฐานการโอนเงินมัดจำก่อนดำเนินการต่อ' : 'รับทราบและเสร็จสิ้น'}
-                >
-                  {isUploadingSlip ? (
-                    <>
-                      <Loader2 size={14} className="animate-spin" />
-                      <span>กำลังบันทึกและอัปโหลดสลิป...</span>
-                    </>
-                  ) : (
-                    <>
-                      <CheckCircle2 size={14} />
-                      <span>รับทราบและเสร็จสิ้น</span>
-                    </>
-                  )}
-                </button>
-              </div>
+                  <div className="flex items-center gap-2 w-full sm:w-auto">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowOrderModal(false);
+                        if (setActiveTab) {
+                          setActiveTab('home');
+                          window.scrollTo({ top: 0, behavior: 'smooth' });
+                        }
+                      }}
+                      className="w-full sm:w-auto px-4 py-2.5 rounded-xl border border-slate-300 hover:bg-slate-100 text-slate-700 font-semibold text-xs transition-colors cursor-pointer"
+                    >
+                      ปิดหน้าต่าง
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleFinishPreOrderWithSlip}
+                      disabled={isUploadingSlip}
+                      className={`w-full sm:w-auto px-6 py-2.5 rounded-xl font-bold text-xs transition-all text-center flex items-center justify-center gap-2 ${
+                        !slipFile && !slipPreview
+                          ? 'bg-slate-200 text-slate-400 border border-slate-300 hover:bg-slate-250 cursor-not-allowed shadow-none'
+                          : 'bg-brand-blue hover:bg-brand-blue-light text-white shadow-md shadow-brand-blue/20 cursor-pointer active:scale-[0.98]'
+                      }`}
+                      id="btn-finish-preorder"
+                      title={!slipFile && !slipPreview ? 'กรุณาแนบสลิปหลักฐานการโอนเงินมัดจำก่อนดำเนินการต่อ' : 'รับทราบและเสร็จสิ้น'}
+                    >
+                      {isUploadingSlip ? (
+                        <>
+                          <Loader2 size={14} className="animate-spin" />
+                          <span>กำลังบันทึกและอัปโหลดสลิป...</span>
+                        </>
+                      ) : (
+                        <>
+                          <CheckCircle2 size={14} />
+                          <span>รับทราบและเสร็จสิ้น</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
 
           </div>

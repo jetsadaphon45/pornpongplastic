@@ -429,9 +429,24 @@ export function CustomerOrderHistoryModal({
                         </span>
                       </div>
 
-                      <span className="px-2.5 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 text-[10px] font-bold">
-                        {pre.status || 'รอยืนยันการผลิต'}
-                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          window.dispatchEvent(new CustomEvent('pornpong-open-preorder-modal', { detail: pre }));
+                          onClose();
+                        }}
+                        title="คลิกเพื่อดูรายละเอียดมัดจำและสถานะตรวจสอบสลิป"
+                        className="px-2.5 py-0.5 rounded-full bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 text-[10px] font-bold cursor-pointer transition-colors flex items-center gap-1"
+                      >
+                        {pre.status === 'pending_verification' || pre.payment_status === 'pending_verification' ? (
+                          <>
+                            <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
+                            <span>รอการตรวจสอบ</span>
+                          </>
+                        ) : (
+                          <span>{pre.status || 'รอยืนยันการผลิต'}</span>
+                        )}
+                      </button>
                     </div>
 
                     <div className="flex items-start justify-between gap-4 pt-2 border-t border-slate-100">

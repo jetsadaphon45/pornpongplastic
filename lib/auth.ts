@@ -48,6 +48,48 @@ export async function verifyOtp(email: string, token: string) {
   }
 
   // เมื่อสำเร็จ data จะมี session และข้อมูลผู้ใช้ (data.user)
-  return { success: true, user: data.user, session: data.session }
+  return { success: true, user: data.user, session: data.session };
+}
+
+export async function sendOtpViaEmail(email: string, otpCode: string, name?: string) {
+  try {
+    const res = await fetch('/api/send-otp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, otpCode, name }),
+    });
+    return await res.json();
+  } catch (err: any) {
+    console.error('Error invoking /api/send-otp:', err);
+    return { success: false, error: err.message || 'Failed to send OTP email' };
+  }
+}
+
+export async function requestOtp(email: string, name?: string) {
+  try {
+    const res = await fetch('/api/otp/request', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, name }),
+    });
+    return await res.json();
+  } catch (err: any) {
+    console.error('Error requesting OTP:', err);
+    return { success: false, error: err.message || 'Failed to request OTP' };
+  }
+}
+
+export async function verifyCustomOtp(email: string, otpCode: string) {
+  try {
+    const res = await fetch('/api/otp/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, otpCode }),
+    });
+    return await res.json();
+  } catch (err: any) {
+    console.error('Error verifying OTP:', err);
+    return { success: false, error: err.message || 'Failed to verify OTP' };
+  }
 }
 

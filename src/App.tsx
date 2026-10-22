@@ -422,15 +422,22 @@ export default function App() {
       }
     };
 
+    const handleOpenTrackingFromEvent = () => {
+      setProfileInitialTab('deliveries');
+      setIsProfileOpen(true);
+    };
+
     window.addEventListener('pornpong-order-approved', handleOrderApproved);
     window.addEventListener('pornpong-order-delivered', handleOrderDelivered);
     window.addEventListener('pornpong-order-status-updated', handleOrderStatusUpdated);
+    window.addEventListener('pornpong-open-tracking', handleOpenTrackingFromEvent);
     window.addEventListener('storage', handleStorageChange);
 
     return () => {
       window.removeEventListener('pornpong-order-approved', handleOrderApproved);
       window.removeEventListener('pornpong-order-delivered', handleOrderDelivered);
       window.removeEventListener('pornpong-order-status-updated', handleOrderStatusUpdated);
+      window.removeEventListener('pornpong-open-tracking', handleOpenTrackingFromEvent);
       window.removeEventListener('storage', handleStorageChange);
     };
   }, []);
@@ -1305,6 +1312,10 @@ export default function App() {
             onAddToCart={(prod, col) => handleAddToCart(prod, col, 1)}
             currentUser={currentUser}
             onOpenLogin={() => setIsLoginOpen(true)}
+            onOpenTracking={() => {
+              setProfileInitialTab('deliveries');
+              setIsProfileOpen(true);
+            }}
             setActiveTab={(tab) => {
               setActiveTab(tab);
               window.scrollTo({ top: 0, behavior: 'smooth' });

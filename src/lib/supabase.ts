@@ -122,10 +122,13 @@ export const IN_STOCK_STAGES: InStockStageInfo[] = [
 // Helper to determine whether an order is a Pre-Order / Made-to-Order or In-Stock / Ready to Ship
 export function isOrderPreOrder(order: any): boolean {
   if (!order) return false;
-  if (order.isPreOrder === true || order.is_preorder === true) return true;
-  if (order.isPreOrder === false || order.is_preorder === false) return false;
+  // Strict product_type / order_type evaluation per requirement
+  if (order.product_type === 'pre_order' || order.order_type === 'pre_order' || order.orderType === 'pre_order') return true;
+  if (order.product_type === 'in_stock' || order.order_type === 'in_stock' || order.orderType === 'in_stock') return false;
   if (order.orderType === 'preorder' || order.order_type === 'preorder') return true;
   if (order.orderType === 'instock' || order.order_type === 'instock') return false;
+  if (order.isPreOrder === true || order.is_preorder === true) return true;
+  if (order.isPreOrder === false || order.is_preorder === false) return false;
 
   const idStr = String(order.id || '').toUpperCase();
   if (idStr.startsWith('ORD-PRE-') || idStr.startsWith('PRE-')) return true;
@@ -1588,9 +1591,13 @@ export const supabaseOrders = {
         const local = JSON.parse(localStorage.getItem('admin_orders') || '[]');
         return (local || [])
           .filter((o: any) => {
+            if (o.is_deleted === true || o.is_deleted === 'true') return false;
+            const isPre = isOrderPreOrder(o) || o.product_type === 'pre_order' || o.order_type === 'pre_order';
+            if (isPre) return false;
             const s = String(o.status || '').toLowerCase().trim();
             const os = String(o.order_status || '').toLowerCase().trim();
-            return ['ready_to_ship', 'paid', 'producing', 'in_transit'].includes(s) || ['ready_to_ship', 'paid', 'producing', 'in_transit'].includes(os);
+            if (s === 'producing' || os === 'producing') return false;
+            return ['ready_to_ship', 'paid', 'in_transit'].includes(s) || ['ready_to_ship', 'paid', 'in_transit'].includes(os);
           })
           .sort((a: any, b: any) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime())
           .map(o => formatRow(o));
@@ -1600,7 +1607,8 @@ export const supabaseOrders = {
     }
 
     try {
-      // Query criteria per requirement:
+      // Requirement 2: Query table 'orders' for active in-stock approved orders
+      // .eq('product_type', 'in_stock')
       // .or('status.eq.ready_to_ship,status.eq.paid,status.eq.in_transit')
       // .or('is_deleted.is.null,is_deleted.eq.false')
       // .order('created_at', { ascending: false })
@@ -1608,6 +1616,7 @@ export const supabaseOrders = {
         supabase
           .from('orders')
           .select('*')
+          .eq('product_type', 'in_stock')
           .or('status.eq.ready_to_ship,status.eq.paid,status.eq.in_transit')
           .or('is_deleted.is.null,is_deleted.eq.false')
           .order('created_at', { ascending: false }),
@@ -1616,15 +1625,17 @@ export const supabaseOrders = {
 
       let data = ordersRes.data || [];
 
-      // Merge local storage approved orders
+      // Merge local storage approved in-stock orders
       try {
         const local = JSON.parse(localStorage.getItem('admin_orders') || '[]');
         for (const loc of local) {
           if (loc.is_deleted === true || loc.is_deleted === 'true') continue;
+          const isPre = isOrderPreOrder(loc) || loc.product_type === 'pre_order' || loc.order_type === 'pre_order';
+          if (isPre) continue;
           const s = String(loc.status || '').toLowerCase().trim();
           const os = String(loc.order_status || '').toLowerCase().trim();
           const ps = String(loc.payment_status || '').toLowerCase().trim();
-          if (s === 'pending_verification' || s === 'pending' || ps === 'pending_verification' || ps === 'pending') continue;
+          if (s === 'pending_verification' || s === 'pending' || ps === 'pending_verification' || ps === 'pending' || s === 'producing' || os === 'producing') continue;
           if (['ready_to_ship', 'paid', 'in_transit'].includes(s) || ['ready_to_ship', 'paid', 'in_transit'].includes(os) || ps === 'paid') {
             if (!data.some((r: any) => String(r.id) === String(loc.id))) {
               data.push(loc);
@@ -1633,13 +1644,23 @@ export const supabaseOrders = {
         }
       } catch {}
 
-      // Filter: status in ready_to_ship, paid, in_transit; strictly exclude pending_verification and pending
+      // Filter: status in ready_to_ship, paid, in_transit; strictly exclude pre_order, producing, and pending
       const filtered = data.filter((row: any) => {
         if (row.is_deleted === true || row.is_deleted === 'true') return false;
         const s = String(row.status || '').toLowerCase().trim();
         const os = String(row.order_status || '').toLowerCase().trim();
         const ps = String(row.payment_status || '').toLowerCase().trim();
+        const prodType = String(row.product_type || row.order_type || row.orderType || '').toLowerCase().trim();
         
+        // CRITICAL: ห้ามนำออเดอร์ที่มี status === 'producing' หรือ product_type === 'pre_order' ไปแสดงในหน้า "คำสั่งซื้อสำเร็จ" เด็ดขาด
+        if (s === 'producing' || os === 'producing' || prodType === 'pre_order' || prodType === 'preorder' || isOrderPreOrder(row)) {
+          return false;
+        }
+
+        if (row.product_type && row.product_type !== 'in_stock' && row.product_type !== 'instock') {
+          return false;
+        }
+
         // ห้ามดึงรายการที่มี status = 'pending_verification' หรือ 'pending' มาแสดงในหน้านี้เด็ดขาด
         if (s === 'pending_verification' || s === 'pending' || s === 'waiting_payment' ||
             os === 'pending_verification' || os === 'pending' ||
@@ -1665,6 +1686,64 @@ export const supabaseOrders = {
       });
     } catch (err: any) {
       console.warn('listActiveInStock error:', err?.message);
+      return [];
+    }
+  },
+
+  // Requirement 3: Update Query Filter หน้า "จัดการคิวผลิตและจัดส่ง" (แท็บ 1. รับคิวผลิต)
+  // .eq('product_type', 'pre_order')
+  // .eq('status', 'producing')
+  // .eq('queue_status', 'waiting_production')
+  // .or('is_deleted.is.null,is_deleted.eq.false')
+  async listQueueWaitingProduction(): Promise<any[]> {
+    if (!isSupabaseConfigured || !supabase) {
+      try {
+        const local = JSON.parse(localStorage.getItem('admin_orders') || '[]');
+        return (local || []).filter((o: any) => {
+          if (o.is_deleted === true || o.is_deleted === 'true') return false;
+          const isPre = o.product_type === 'pre_order' || o.order_type === 'pre_order' || isOrderPreOrder(o);
+          const s = String(o.status || '').toLowerCase().trim();
+          const qs = String(o.queue_status || '').toLowerCase().trim();
+          return isPre && s === 'producing' && (qs === 'waiting_production' || !qs || o.queue_stage === 1);
+        });
+      } catch {
+        return [];
+      }
+    }
+
+    try {
+      const [ordersRes, deliveriesMap] = await Promise.all([
+        supabase
+          .from('orders')
+          .select('*')
+          .eq('product_type', 'pre_order')
+          .eq('status', 'producing')
+          .eq('queue_status', 'waiting_production')
+          .or('is_deleted.is.null,is_deleted.eq.false')
+          .order('created_at', { ascending: true }),
+        supabaseDeliveries.getAll()
+      ]);
+
+      const data = ordersRes.data || [];
+      return data.map((row: any, idx: number) => {
+        const orderIdStr = String(row.id).trim();
+        const delivery = deliveriesMap[orderIdStr] || deliveriesMap[row.id];
+        const qNum = delivery?.queue_number || row.queue_number || row.queue_id || formatQueueId(row, idx);
+        return {
+          ...row,
+          queue_number: qNum,
+          queue_id: qNum,
+          queue_stage: 1,
+          queue_status: 'waiting_production',
+          status: 'producing',
+          order_status: 'producing',
+          product_type: 'pre_order',
+          order_type: 'preorder',
+          payment_status: row.payment_status || 'deposit_paid'
+        };
+      });
+    } catch (err: any) {
+      console.warn('listQueueWaitingProduction error:', err?.message);
       return [];
     }
   },
@@ -1845,7 +1924,7 @@ export const supabaseOrders = {
           'completed',
           'delivered'
         ];
-        return approvedStatuses.includes(s) || approvedStatuses.includes(os) || ['verified', 'paid', 'approved'].includes(ps);
+        return approvedStatuses.includes(s) || approvedStatuses.includes(os) || ['verified', 'paid', 'approved', 'deposit_paid'].includes(ps);
       });
 
       return data.map((row: any, idx: number) => {
@@ -2812,11 +2891,14 @@ export const supabaseOrders = {
         } catch {}
       }
 
-      // Per Requirement:
-      // If In-Stock item: status is 'ready_to_ship'
-      // If Pre-Order item: status is 'producing', calculate & assign queue number
-      const nextStatus = isPre ? 'producing' : 'ready_to_ship';
-      const nextOrderStatus = isPre ? 'producing' : 'ready_to_ship';
+      // Per Requirement 1:
+      // When approving, check product_type (or order_type):
+      // [กรณี A: สินค้าพร้อมส่ง (product_type === 'in_stock')]
+      // * status = 'ready_to_ship', payment_status = 'paid', is_deleted = false
+      // [กรณี B: สินค้าพรีออเดอร์ (product_type === 'pre_order')]
+      // * Q-YYMM-XXX queue number, status = 'producing', queue_status = 'waiting_production', payment_status = 'deposit_paid', is_deleted = false
+      const pType = orderData?.product_type || orderData?.order_type || orderData?.orderType;
+      isPre = pType === 'pre_order' || pType === 'preorder' || (pType !== 'in_stock' && pType !== 'instock' && isOrderPreOrder(orderData));
 
       let assignedQueueNumber: string | undefined = undefined;
       if (isPre) {
@@ -2828,24 +2910,38 @@ export const supabaseOrders = {
         }
       }
 
+      const nextStatus = isPre ? 'producing' : 'ready_to_ship';
+      const nextOrderStatus = isPre ? 'producing' : 'ready_to_ship';
+      const nextPaymentStatus = isPre ? 'deposit_paid' : 'paid';
+
       const nextStatusMessage = isPre 
         ? `การชำระเงินเสร็จสิ้น! คำสั่งซื้อเป็นสินค้าสั่งผลิต (Pre-Order) ออกหมายเลขคิวผลิต [${assignedQueueNumber}] เรียบร้อยแล้ว ลำดับคิวการผลิตเริ่มต้นแล้ว โรงงานเริ่มกระบวนการผลิตทันที`
         : 'การชำระเงินเสร็จสิ้น! คำสั่งซื้อเป็นสินค้าพร้อมส่ง (In-Stock) ชำระเงินเรียบร้อยแล้ว - ทางคลังสินค้ากำลังเตรียมบรรจุหีบห่อและส่งมอบให้ขนส่งโดยตรง';
 
       if (isSupabaseConfigured && supabase) {
-        // 1. UPDATE orders table: status = 'producing' (pre-order) or 'ready_to_ship' (in-stock), payment_status = 'paid', is_deleted = false
-        const updatePayload: any = {
-          payment_status: 'paid',
-          status: nextStatus,
-          order_status: nextOrderStatus,
-          product_type: isPre ? 'pre_order' : 'in_stock',
+        // 1. UPDATE orders table per Case A and Case B
+        const updatePayload: any = isPre ? {
+          status: 'producing',
+          order_status: 'producing',
+          queue_status: 'waiting_production',
+          queue_stage: 1,
+          payment_status: 'deposit_paid',
+          product_type: 'pre_order',
+          order_type: 'preorder',
           status_message: nextStatusMessage,
           is_deleted: false,
-          ...(isPre && assignedQueueNumber ? {
-            queue_number: assignedQueueNumber,
-            queue_id: assignedQueueNumber,
-            queue_stage: 1
-          } : {}),
+          queue_number: assignedQueueNumber,
+          queue_id: assignedQueueNumber,
+          updated_at: new Date().toISOString()
+        } : {
+          status: 'ready_to_ship',
+          order_status: 'ready_to_ship',
+          payment_status: 'paid',
+          product_type: 'in_stock',
+          order_type: 'instock',
+          status_message: nextStatusMessage,
+          is_deleted: false,
+          delivery_status: 'ready_to_ship',
           updated_at: new Date().toISOString()
         };
 
@@ -2863,9 +2959,10 @@ export const supabaseOrders = {
           await supabase
             .from('preorders')
             .update({
-              payment_status: 'paid',
+              payment_status: nextPaymentStatus,
               status: nextStatus,
               order_status: nextOrderStatus,
+              queue_status: isPre ? 'waiting_production' : undefined,
               is_deleted: false,
               ...(assignedQueueNumber ? {
                 queue_number: assignedQueueNumber,
@@ -2878,7 +2975,7 @@ export const supabaseOrders = {
 
         // 2. UPSERT deliveries table with { onConflict: 'order_id' } to prevent constraint errors
         try {
-          const deliveryStatus = isPre ? 'producing' : 'ready_to_ship';
+          const deliveryStatus = isPre ? 'waiting_production' : 'ready_to_ship';
           const { error: deliveryErr } = await supabase
             .from('deliveries')
             .upsert({
@@ -2902,17 +2999,19 @@ export const supabaseOrders = {
         const updated = local.map((o: any) => 
           String(o.id) === orderIdStr ? { 
             ...o, 
-            payment_status: 'paid', 
-            status: nextStatus, 
-            order_status: nextOrderStatus,
+            status: isPre ? 'producing' : 'ready_to_ship', 
+            order_status: isPre ? 'producing' : 'ready_to_ship',
+            queue_status: isPre ? 'waiting_production' : o.queue_status,
+            payment_status: nextPaymentStatus, 
             product_type: isPre ? 'pre_order' : 'in_stock',
+            order_type: isPre ? 'preorder' : 'instock',
             status_message: nextStatusMessage,
-            delivery_status: isPre ? 'producing' : 'ready_to_ship',
+            delivery_status: isPre ? 'waiting_production' : 'ready_to_ship',
             is_deleted: false,
             ...(isPre && assignedQueueNumber ? {
               queue_number: assignedQueueNumber,
               queue_id: assignedQueueNumber,
-              queue_stage: o.queue_stage || 1
+              queue_stage: 1
             } : {}),
             updated_at: new Date().toISOString()
           } : o
@@ -2923,7 +3022,7 @@ export const supabaseOrders = {
         const updatedPre = preLocal.map((p: any) =>
           String(p.id) === orderIdStr ? {
             ...p,
-            payment_status: 'paid',
+            payment_status: nextPaymentStatus,
             status: nextStatus,
             order_status: nextOrderStatus,
             status_message: nextStatusMessage,

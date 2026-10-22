@@ -93,6 +93,7 @@ interface PreOrderItem {
   fullPrice: string;
   estDelivery: string;
   status: string;
+  rawOrder?: any;
 }
 
 interface ItemToDelete {
@@ -566,7 +567,8 @@ export function ProfileModal({
         deposit: typeof p.deposit === 'number' ? `${p.deposit.toLocaleString()} บาท (มัดจำ)` : (p.deposit || 'มัดจำ'),
         fullPrice: typeof p.fullPrice === 'number' ? `${p.fullPrice.toLocaleString()} บาท` : (p.fullPrice || ''),
         estDelivery: p.estDelivery || 'ตามกำหนดรอบจัดส่ง',
-        status: p.status || 'ยืนยันเงินมัดจำ'
+        status: p.status || 'ยืนยันเงินมัดจำ',
+        rawOrder: p
       }));
 
       const combinedPreOrders: PreOrderItem[] = [...mappedRemotePreOrders];
@@ -1317,10 +1319,29 @@ export function ProfileModal({
                           <span className="text-[10px] font-semibold text-slate-400">จองเมื่อ {pre.date}</span>
                         </div>
                         <div className="flex items-center gap-2">
-                          <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2.5 py-0.5 text-[10px] font-bold text-amber-700 border border-amber-100">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              window.dispatchEvent(new CustomEvent('pornpong-open-preorder-modal', {
+                                detail: pre.rawOrder || {
+                                  id: pre.id,
+                                  customer_name: currentUser?.name || 'ลูกค้า',
+                                  customer_email: currentUser?.email || '',
+                                  customer_phone: currentUser?.phone || '',
+                                  status: pre.status.includes('รอการตรวจสอบ') ? 'pending_verification' : pre.status,
+                                  payment_status: pre.status.includes('รอการตรวจสอบ') ? 'pending_verification' : pre.status,
+                                  boat_size: pre.productName,
+                                  selected_color: pre.color
+                                }
+                              }));
+                              onClose();
+                            }}
+                            title="คลิกเพื่อดูรายละเอียดมัดจำและสถานะตรวจสอบสลิป"
+                            className="inline-flex items-center gap-1 rounded-full bg-amber-50 hover:bg-amber-100 px-2.5 py-0.5 text-[10px] font-bold text-amber-700 border border-amber-200 cursor-pointer transition-colors"
+                          >
                             <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
-                            {pre.status}
-                          </span>
+                            <span>{pre.status}</span>
+                          </button>
                           {/* Trash Icon Button for Deletion */}
                           <button
                             type="button"
