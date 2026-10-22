@@ -320,6 +320,7 @@ async function startServer() {
     }
   };
 
+  app.post('/api/auth/send-otp', handleRequestOtp);
   app.post('/api/otp/request', handleRequestOtp);
   app.post('/api/send-otp', handleRequestOtp);
   app.post('/api/request-otp', handleRequestOtp);
@@ -455,6 +456,7 @@ async function startServer() {
     }
   };
 
+  app.post('/api/auth/verify-otp', handleVerifyOtp);
   app.post('/api/otp/verify', handleVerifyOtp);
   app.post('/api/verify-otp', handleVerifyOtp);
 

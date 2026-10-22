@@ -580,72 +580,31 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
         return;
       }
 
-      if (!supabase) {
-        // กรณีไม่มี Supabase ให้จำลองส่ง OTP และเปลี่ยน step เป็น verify_otp ทันที
-        setStep('verify_otp');
-        setRateLimitCountdown(60);
-        setErrors({});
-        triggerToast(`ส่งรหัส OTP จำลองไปยัง ${email.trim()} เรียบร้อยแล้ว`);
-        return;
-      }
-
-      // Requirement 1: เรียกใช้ supabase.auth.signUp({ email, password }) สำหรับการสมัคร
-      const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
-        email: cleanEmail,
-        password: password,
-        options: {
-          data: {
-            full_name: fullName.trim(),
-            phone: cleanedPhone,
-          }
-        }
+      // 1. เรียกใช้ API Route ส่ง OTP ที่สร้างไว้ (/api/auth/send-otp)
+      // ไม่เรียกใช้ supabase.auth.signUp() โดยตรง เพื่อป้องกัน Error sending confirmation email
+      const otpResp = await fetch('/api/auth/send-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: cleanEmail,
+          name: fullName.trim(),
+        }),
       });
 
-      if (signUpError) {
+      const otpResult = await otpResp.json();
+
+      if (!otpResp.ok || !otpResult.success) {
         setIsLoading(false);
-        // ตรวจจับ Error หากพบ 'User already registered' หรือ 'User already exists'
-        if (isExistingUserError(signUpError)) {
-          setIsDuplicateEmail(true);
-          setShowExistingUserModal(true);
-          setErrors({
-            form: DUPLICATE_EMAIL_ERROR_MSG,
-            email: DUPLICATE_EMAIL_ERROR_MSG
-          });
-          return;
-        }
-
-        // ตรวจจับ Error กรณีติด Rate Limit (429 / 'over_email_send_rate_limit')
-        if (isRateLimitError(signUpError)) {
-          const waitSec = extractRateLimitSeconds(signUpError);
-          setRateLimitCountdown(waitSec);
-          const rateMsg = `คุณกดขอรหัสบ่อยเกินไป กรุณารอ ${waitSec} วินาที`;
-          setErrors({ form: rateMsg, rateLimit: rateMsg });
-          triggerToast(rateMsg);
-          return;
-        }
-
-        const errorMsg = handleSupabaseAuthError(signUpError);
-        setErrors({ form: errorMsg });
+        const errMsg = otpResult.error || 'ไม่สามารถส่งรหัส OTP ได้ กรุณาลองใหม่อีกครั้ง';
+        setErrors({ form: errMsg });
         return;
       }
 
-      // Supabase Auth อาจคืนค่า identities: [] หากอีเมลมีอยู่ในระบบแล้ว
-      if (signUpData?.user && Array.isArray(signUpData.user.identities) && signUpData.user.identities.length === 0) {
-        setIsLoading(false);
-        setIsDuplicateEmail(true);
-        setShowExistingUserModal(true);
-        setErrors({
-          form: DUPLICATE_EMAIL_ERROR_MSG,
-          email: DUPLICATE_EMAIL_ERROR_MSG
-        });
-        return;
-      }
-
-      // Requirement 1: เมื่อสมัครสำเร็จ เปลี่ยน step เป็น 'verify_otp' สลับหน้าต่างไปกรอก OTP ทันที
+      // 2. เมื่อ API ส่ง OTP สำเร็จ ให้สลับหน้า Modal ไปที่ step 'verify_otp' ทันที
       setStep('verify_otp');
       setRateLimitCountdown(60); // นับถอยหลัง 60s สำหรับปุ่มขอรหัสใหม่
       setErrors({});
-      triggerToast(`ส่งรหัสยืนยัน OTP ไปยัง ${email.trim()} เรียบร้อยแล้ว`);
+      triggerToast(`ส่งรหัสยืนยัน OTP ไปยัง ${cleanEmail} เรียบร้อยแล้ว (รหัสมีอายุ 5 นาที)`);
     } catch (err: any) {
       setIsLoading(false);
       if (isExistingUserError(err)) {
@@ -672,9 +631,9 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
     }
   };
 
-  // 2. ฟังก์ชันขอส่งรหัส OTP ใหม่อีกครั้ง (Resend OTP)
+  // 2. ฟังก์ชันขอส่งรหัส OTP ใหม่อีกครั้ง (Resend OTP ผ่าน API Route /api/auth/send-otp)
   const handleResendOtp = async () => {
-    // Requirement 3: ป้องกันการกดซ้ำ และเคารพเวลานับถอยหลัง 60s
+    // ป้องกันการกดซ้ำ และเคารพเวลานับถอยหลัง 60s
     if (isLoading || rateLimitCountdown > 0) {
       if (rateLimitCountdown > 0) {
         triggerToast(`คุณกดขอรหัสบ่อยเกินไป กรุณารอ ${rateLimitCountdown} วินาที`);
@@ -684,70 +643,36 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
 
     setIsLoading(true);
     try {
-      if (!supabase) {
-        setRateLimitCountdown(60);
-        triggerToast(`ส่งรหัส OTP จำลองใหม่ไปยัง ${email.trim()} เรียบร้อยแล้ว`);
-        return;
-      }
-
       const cleanEmail = email.trim().toLowerCase();
 
-      // สั่งส่ง OTP ใหม่อีกครั้งด้วย resend
-      let resendError: any = null;
-      try {
-        const { error } = await supabase.auth.resend({
-          type: 'signup',
-          email: cleanEmail
-        });
-        resendError = error;
-      } catch (err) {
-        resendError = err;
-      }
-
-      // หาก resend พบ error ให้ fallback ลองใช้ signInWithOtp
-      if (resendError) {
-        const { error: fallbackError } = await supabase.auth.signInWithOtp({
+      // สั่งส่ง OTP ใหม่อีกครั้งผ่าน Custom API Route
+      const res = await fetch('/api/auth/send-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
           email: cleanEmail,
-          options: {
-            shouldCreateUser: false
-          }
-        });
-        if (fallbackError) {
-          if (isRateLimitError(fallbackError) || isRateLimitError(resendError)) {
-            const waitSec = extractRateLimitSeconds(fallbackError || resendError);
-            setRateLimitCountdown(waitSec);
-            const rateMsg = `คุณกดขอรหัสบ่อยเกินไป กรุณารอ ${waitSec} วินาที`;
-            setErrors({ otp: rateMsg });
-            triggerToast(rateMsg);
-            return;
-          }
-          const msg = handleSupabaseAuthError(fallbackError || resendError);
-          setErrors({ otp: msg });
-          return;
-        }
+          name: fullName.trim(),
+        }),
+      });
+
+      const resData = await res.json();
+      if (!res.ok || !resData.success) {
+        setErrors({ otp: resData.error || 'ไม่สามารถส่งรหัส OTP ได้ กรุณาลองใหม่อีกครั้ง' });
+        return;
       }
 
       // ส่งสำเร็จ ให้เริ่มนับถอยหลัง 60 วินาที
       setRateLimitCountdown(60);
       setErrors({});
-      triggerToast(`ส่งรหัส OTP ใหม่ไปยัง ${cleanEmail} เรียบร้อยแล้ว`);
+      triggerToast(`ส่งรหัส OTP ใหม่ไปยัง ${cleanEmail} เรียบร้อยแล้ว (รหัสมีอายุ 5 นาที)`);
     } catch (err: any) {
-      if (isRateLimitError(err)) {
-        const waitSec = extractRateLimitSeconds(err);
-        setRateLimitCountdown(waitSec);
-        const rateMsg = `คุณกดขอรหัสบ่อยเกินไป กรุณารอ ${waitSec} วินาที`;
-        setErrors({ otp: rateMsg });
-        triggerToast(rateMsg);
-        return;
-      }
-      const errorMsg = handleSupabaseAuthError(err);
-      setErrors({ otp: errorMsg });
+      setErrors({ otp: err?.message || 'เกิดข้อผิดพลาดในการขอรหัส OTP' });
     } finally {
       setIsLoading(false);
     }
   };
 
-  // 3. ฟังก์ชันยืนยัน OTP ผ่าน supabase.auth.verifyOtp({ email, token, type: 'signup' })
+  // 3. ฟังก์ชันยืนยัน OTP ผ่าน API Route (/api/auth/verify-otp) และบันทึกลงตาราง users/profiles
   const handleVerifyOtpAndCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isLoading) return;
@@ -768,51 +693,24 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
       const cleanEmail = email.trim().toLowerCase();
       let registeredUserId = '';
 
-      if (supabase) {
-        // Requirement 2: เมื่อกดปุ่มยืนยัน ให้เรียกใช้ supabase.auth.verifyOtp({ email, token, type: 'signup' })
-        let verifyResult = await supabase.auth.verifyOtp({
+      // ยืนยันรหัส OTP ผ่าน Custom API Route (/api/auth/verify-otp)
+      // ตรวจสอบในตาราง 'otp_requests' และเช็คเวลาหมดอายุ 5 นาที
+      const verifyResp = await fetch('/api/auth/verify-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
           email: cleanEmail,
-          token: cleanedOtp,
-          type: 'signup'
+          otpCode: cleanedOtp,
+        }),
+      });
+
+      const verifyData = await verifyResp.json();
+
+      if (!verifyResp.ok || !verifyData.success) {
+        setErrors({
+          otp: verifyData.error || 'รหัส OTP ไม่ถูกต้องหรือหมดอายุ กรุณาตรวจสอบอีกครั้ง',
         });
-
-        // Fallback กรณี Supabase Project ตั้งค่า OTP เป็นแบบ email
-        if (verifyResult.error) {
-          const fallbackResult = await supabase.auth.verifyOtp({
-            email: cleanEmail,
-            token: cleanedOtp,
-            type: 'email'
-          });
-          if (!fallbackResult.error) {
-            verifyResult = fallbackResult;
-          }
-        }
-
-        if (verifyResult.error) {
-          if (isDuplicateEmailError(verifyResult.error)) {
-            setStep('form');
-            setIsDuplicateEmail(true);
-            setShowExistingUserModal(true);
-            setErrors({
-              form: DUPLICATE_EMAIL_ERROR_MSG,
-              email: DUPLICATE_EMAIL_ERROR_MSG
-            });
-            return;
-          }
-          if (isRateLimitError(verifyResult.error)) {
-            const waitSec = extractRateLimitSeconds(verifyResult.error);
-            setRateLimitCountdown(waitSec);
-            const rateMsg = `คุณกดขอรหัสบ่อยเกินไป กรุณารอ ${waitSec} วินาที`;
-            setErrors({ otp: rateMsg });
-            triggerToast(rateMsg);
-            return;
-          }
-          const errorMsg = handleSupabaseAuthError(verifyResult.error);
-          setErrors({ otp: errorMsg });
-          return;
-        }
-
-        registeredUserId = (verifyResult as any)?.data?.user?.id || '';
+        return;
       }
 
       // บันทึกโปรไฟล์สมาชิกลงในฐานข้อมูล (Supabase Customers & Profiles)
