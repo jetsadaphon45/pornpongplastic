@@ -591,23 +591,35 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
         }
       });
 
-      // หาก error ให้ alert(error.message)
       if (error) {
         setIsLoading(false);
-        alert(error.message);
+        const msg = error.message || JSON.stringify(error);
+        if (msg.includes('already registered')) {
+          alert('อีเมลนี้เคยสมัครสมาชิกไปแล้ว กรุณาเข้าสู่ระบบ หรือใช้อีเมลอื่น');
+        } else {
+          alert('เกิดข้อผิดพลาดในการสมัคร: ' + msg);
+        }
         return;
       }
 
-      // หากสำเร็จ ให้สลับ Modal ไป step 'verify_otp' และเก็บ email ไว้ใน state
+      // เมื่อ supabase.auth.signUp() ทำงานสำเร็จ (ไม่มี error):
+      // * เก็บ email ที่ใช้สมัครไว้ใน State
+      // * เปลี่ยนหน้าต่าง Modal ไปยัง step "verify_otp" ทันที
+      // * รีเซ็ตสถานะปุ่มกำลังสมัคร (setIsLoading(false))
       setSavedEmail(cleanEmail);
-      setIsLoading(false);
       setStep('verify_otp');
+      setIsLoading(false);
       setRateLimitCountdown(60);
       setErrors({});
-      triggerToast(`ระบบได้ส่งรหัส OTP ไปยัง ${cleanEmail} เรียบร้อยแล้ว`);
+      triggerToast('ระบบได้ส่งรหัส OTP 6 หลักไปยังอีเมลของคุณแล้ว กรุณากรอกรหัสเพื่อยืนยัน');
     } catch (err: any) {
       setIsLoading(false);
-      alert(err?.message || 'เกิดข้อผิดพลาดในการสมัครสมาชิก');
+      const msg = err?.message || JSON.stringify(err);
+      if (msg && msg.includes('already registered')) {
+        alert('อีเมลนี้เคยสมัครสมาชิกไปแล้ว กรุณาเข้าสู่ระบบ หรือใช้อีเมลอื่น');
+      } else {
+        alert('เกิดข้อผิดพลาดในการสมัคร: ' + msg);
+      }
     } finally {
       setIsLoading(false);
     }
@@ -673,22 +685,17 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
 
     setIsLoading(true);
     try {
-      // เมื่อกรอกรหัส 6 หลักและกดยืนยัน OTP:
-      // เรียก const { data, error } = await supabase.auth.verifyOtp({
-      //   email: savedEmail.trim().toLowerCase(),
-      //   token: otpCode.trim(),
-      //   type: 'signup'
-      // })
+      // เมื่อผู้ใช้กดปุ่มยืนยัน ให้ตรวจสอบด้วยคำสั่ง:
       const { data, error } = await supabase.auth.verifyOtp({
         email: savedEmail.trim().toLowerCase(),
         token: otpCode.trim(),
         type: 'signup'
       });
 
-      // หาก error ให้ alert('รหัส OTP ไม่ถูกต้องหรือหมดอายุ: ' + error.message)
+      // หาก error: ให้แจ้งเตือนว่า "รหัส OTP ไม่ถูกต้องหรือหมดอายุ"
       if (error) {
-        alert('รหัส OTP ไม่ถูกต้องหรือหมดอายุ: ' + error.message);
-        setErrors({ otp: 'รหัส OTP ไม่ถูกต้องหรือหมดอายุ: ' + error.message });
+        alert('รหัส OTP ไม่ถูกต้องหรือหมดอายุ');
+        setErrors({ otp: 'รหัส OTP ไม่ถูกต้องหรือหมดอายุ' });
         return;
       }
 
@@ -800,7 +807,7 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
                 <KeyRound size={15} />
               </div>
               <div className="flex-1">
-                <span className="font-bold text-brand-blue block text-[11px]">ระบบได้ส่งรหัส OTP 6 หลักไปยังอีเมลของคุณแล้ว</span>
+                <span className="font-bold text-brand-blue block text-[11px]">ระบบได้ส่งรหัส OTP 6 หลักไปยังอีเมลของคุณแล้ว กรุณากรอกรหัสเพื่อยืนยัน</span>
                 <span className="text-[10px] text-slate-500">
                   กรุณาตรวจสอบกล่องข้อความหรือ Junk/Spam ในอีเมล <span className="font-semibold text-slate-700">{savedEmail || email}</span> เพื่อนำรหัส 6 หลักมายืนยัน
                 </span>
