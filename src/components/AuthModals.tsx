@@ -584,7 +584,7 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
         return;
       }
 
-      // 2. ใช้ supabase.auth.signUp() ยิงส่ง OTP ตรงผ่าน Custom SMTP
+      // 2. เรียก supabase.auth.signUp
       const { data, error } = await supabase.auth.signUp({
         email: email.trim().toLowerCase(),
         password: password,
@@ -598,11 +598,70 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
 
       if (error) {
         setIsLoading(false);
-        alert('เกิดข้อผิดพลาด: ' + error.message);
+        alert(error.message);
         return;
       }
 
-      // 3. เมื่อสมัครและส่งอีเมลสำเร็จ ให้เปลี่ยน modal step ไปที่ 'verify_otp' ทันที
+      // หากสำเร็จ (data.user มีค่า) ให้ปิด Modal สมัครสมาชิก และแจ้งเตือน "สมัครสมาชิกและเข้าสู่ระบบสำเร็จเรียบร้อย" พร้อมรีเฟรชหน้าเว็บหรืออัปเดตสถานะล็อกอินทันที
+      if (data?.user) {
+        const cleanEmail = email.trim().toLowerCase();
+        const finalPhone = normalizeThaiPhone(phone) || phone.trim();
+        const registeredUserId = data.user.id || `user_${Date.now()}`;
+
+        // บันทึก/อัปเดตข้อมูลลูกค้าและโปรไฟล์ใน Supabase
+        try {
+          await supabaseCustomers.create({
+            name: fullName.trim(),
+            email: cleanEmail,
+            phone: finalPhone,
+            membership_level: 'Standard',
+            points: 0
+          });
+        } catch {
+          // ignore
+        }
+
+        try {
+          await supabaseProfiles.upsertProfile({
+            id: registeredUserId,
+            fullName: fullName.trim(),
+            phone: finalPhone,
+            email: cleanEmail,
+            address: ''
+          });
+        } catch {
+          // ignore
+        }
+
+        const userData: UserData = {
+          id: registeredUserId,
+          name: fullName.trim(),
+          email: cleanEmail,
+          phone: finalPhone
+        };
+
+        // Reset state
+        setFullName('');
+        setPhone('');
+        setEmail('');
+        setPassword('');
+        setConfirmPassword('');
+        setOtpCode('');
+        setErrors({});
+        setStep('form');
+
+        alert('สมัครสมาชิกและเข้าสู่ระบบสำเร็จเรียบร้อย');
+        triggerToast('สมัครสมาชิกและเข้าสู่ระบบสำเร็จเรียบร้อย');
+
+        onRegisterSuccess(userData);
+        window.dispatchEvent(new Event('customer-registered'));
+        window.dispatchEvent(new Event('customers-updated'));
+
+        onClose();
+        return;
+      }
+
+      // กรณีต้องยืนยัน OTP เพิ่มเติม
       setStep('verify_otp');
       setRateLimitCountdown(60);
       setErrors({});
