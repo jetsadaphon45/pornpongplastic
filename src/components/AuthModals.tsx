@@ -446,6 +446,7 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
   const [fullName, setFullName] = React.useState('');
   const [phone, setPhone] = React.useState('');
   const [email, setEmail] = React.useState('');
+  const [savedEmail, setSavedEmail] = React.useState('');
   const [password, setPassword] = React.useState('');
   const [confirmPassword, setConfirmPassword] = React.useState('');
   const [otpCode, setOtpCode] = React.useState('');
@@ -478,19 +479,20 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
   React.useEffect(() => {
     if (!showExistingUserModal) return;
     const timer = setTimeout(() => {
-      const targetEmail = email.trim();
+      const targetEmail = (savedEmail || email).trim();
       setShowExistingUserModal(false);
       onClose();
       onOpenLogin(targetEmail);
     }, 1500);
     return () => clearTimeout(timer);
-  }, [showExistingUserModal, email, onClose, onOpenLogin]);
+  }, [showExistingUserModal, savedEmail, email, onClose, onOpenLogin]);
 
   // Reset step on modal open/close
   React.useEffect(() => {
     if (isOpen) {
       setStep('form');
       setOtpCode('');
+      setSavedEmail('');
       setErrors({});
       setIsDuplicateEmail(false);
       setShowExistingUserModal(false);
@@ -571,11 +573,13 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
         return;
       }
 
+      const cleanEmail = email.trim().toLowerCase();
+
       // 1. ตรวจสอบและดัก Error 400 จาก profiles query
       const { data: existingUser } = await supabase
         .from('profiles')
         .select('id')
-        .eq('email', email.trim().toLowerCase())
+        .eq('email', cleanEmail)
         .maybeSingle();
 
       if (existingUser) {
@@ -586,7 +590,7 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
 
       // 2. เรียกใช้ supabase.auth.signUp() เพื่อให้ Supabase ส่งอีเมล OTP
       const { data, error } = await supabase.auth.signUp({
-        email: email.trim().toLowerCase(),
+        email: cleanEmail,
         password: password,
         options: {
           data: {
@@ -603,13 +607,15 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
       }
 
       // เมื่อคำสั่ง signUp สำเร็จ:
-      // - จำค่า email และ password ไว้ใน State ชั่วคราว (เก็บใน email, password state)
-      // - สลับหน้าต่าง Modal ไปยัง step: 'verify_otp' ทันที
-      // - แสดงข้อความ "ระบบได้ส่งรหัส OTP 6 หลักไปยังอีเมลของคุณแล้ว กรุณากรอกเพื่อยืนยัน"
+      // - ห้ามเรียก onLoginSuccess() หรือคำสั่งปิด Modal ทันที
+      // - จำค่า email ไว้ใน State (savedEmail)
+      // - สลับหน้าต่าง Modal ไปยัง step "verify_otp" ทันที เพื่อให้ผู้ใช้กรอกรหัสตัวเลข 6 หลัก
+      // - แสดงข้อความแจ้งเตือน "ระบบได้ส่งรหัส OTP 6 หลักไปยังอีเมลของคุณแล้ว กรุณากรอกรหัสเพื่อยืนยัน"
+      setSavedEmail(cleanEmail);
       setStep('verify_otp');
       setRateLimitCountdown(60);
       setErrors({});
-      triggerToast('ระบบได้ส่งรหัส OTP 6 หลักไปยังอีเมลของคุณแล้ว กรุณากรอกเพื่อยืนยัน');
+      triggerToast('ระบบได้ส่งรหัส OTP 6 หลักไปยังอีเมลของคุณแล้ว กรุณากรอกรหัสเพื่อยืนยัน');
     } catch (err: any) {
       setIsLoading(false);
       alert(err?.message || 'เกิดข้อผิดพลาดในการสมัครสมาชิก');
@@ -634,7 +640,7 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
 
     setIsLoading(true);
     try {
-      const cleanEmail = email.trim().toLowerCase();
+      const cleanEmail = (savedEmail || email).trim().toLowerCase();
       const { error } = await supabase.auth.resend({
         type: 'signup',
         email: cleanEmail,
@@ -678,22 +684,24 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
 
     setIsLoading(true);
     try {
-      const cleanEmail = email.trim().toLowerCase();
+      const cleanEmail = (savedEmail || email).trim().toLowerCase();
 
-      // ตรวจสอบด้วยคำสั่ง supabase.auth.verifyOtp
+      // เมื่อกดปุ่มยืนยัน ให้ตรวจสอบด้วยคำสั่ง supabase.auth.verifyOtp
       const { data, error } = await supabase.auth.verifyOtp({
         email: cleanEmail,
         token: cleanedOtp,
         type: 'signup'
       });
 
+      // หาก error: ให้แจ้งเตือนว่า "รหัส OTP ไม่ถูกต้องหรือหมดอายุ"
       if (error) {
-        alert('รหัส OTP ไม่ถูกต้องหรือหมดอายุ: ' + error.message);
+        alert('รหัส OTP ไม่ถูกต้องหรือหมดอายุ');
+        setErrors({ otp: 'รหัส OTP ไม่ถูกต้องหรือหมดอายุ' });
         return;
       }
 
-      // ยืนยันสำเร็จ ปิด modal และรีเฟรชสถานะเข้าสู่ระบบ
-      alert('ยืนยันตัวตนสำเร็จ!');
+      // หากสำเร็จ: แจ้งเตือนว่า "ยืนยันตัวตนสำเร็จ", บันทึกข้อมูลลง profiles/customers, ปิด Modal และเข้าสู่ระบบ
+      alert('ยืนยันตัวตนสำเร็จ');
 
       const finalPhone = normalizeThaiPhone(phone) || phone.trim();
       const registeredUserId = data?.user?.id || `user_${Date.now()}`;
@@ -799,9 +807,9 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
                 <KeyRound size={15} />
               </div>
               <div className="flex-1">
-                <span className="font-bold text-brand-blue block text-[11px]">ระบบได้ส่งรหัส OTP 6 หลักไปยังอีเมลของคุณแล้ว กรุณากรอกเพื่อยืนยัน</span>
+                <span className="font-bold text-brand-blue block text-[11px]">ระบบได้ส่งรหัส OTP 6 หลักไปยังอีเมลของคุณแล้ว กรุณากรอกรหัสเพื่อยืนยัน</span>
                 <span className="text-[10px] text-slate-500">
-                  กรุณาตรวจสอบกล่องข้อความหรือ Junk/Spam ในอีเมล <span className="font-semibold text-slate-700">{email}</span> เพื่อนำรหัส 6 หลักมายืนยัน
+                  กรุณาตรวจสอบกล่องข้อความหรือ Junk/Spam ในอีเมล <span className="font-semibold text-slate-700">{savedEmail || email}</span> เพื่อนำรหัส 6 หลักมายืนยัน
                 </span>
               </div>
             </div>
