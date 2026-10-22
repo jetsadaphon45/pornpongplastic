@@ -29,7 +29,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   try {
     const { email } = req.body || {};
     if (!email) {
-      return res.status(400).json({ success: false, error: 'กรุณากรอกอีเมล' });
+      return res.status(400).json({ success: false, error: 'กรุณาระบุอีเมล' });
     }
 
     const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
@@ -42,14 +42,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (dbError) throw dbError;
 
     await transporter.sendMail({
-      from: `"Pornpong Plastic" <${process.env.GMAIL_USER || '666051000345@mail.rmutk.ac.th'}>`,
+      from: `"พรพงศ์พลาสติก" <${process.env.GMAIL_USER || '666051000345@mail.rmutk.ac.th'}>`,
       to: email,
-      subject: 'รหัส OTP สำหรับยืนยันตัวตน',
-      html: `<h1>รหัส OTP ของคุณคือ: ${otpCode}</h1>`,
+      subject: 'รหัส OTP ยืนยันตัวตน - พรพงศ์พลาสติก',
+      html: `<h2>รหัส OTP ของคุณคือ: <span style="color:#0088cc;">${otpCode}</span></h2><p>รหัสมีอายุ 5 นาที</p>`,
     });
 
-    return res.status(200).json({ success: true, message: 'ส่ง OTP สำเร็จ' });
+    return res.status(200).json({ success: true, message: 'ส่ง OTP เรียบร้อย' });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err.message || 'เกิดข้อผิดพลาดในการส่ง OTP' });
   }
 }
+

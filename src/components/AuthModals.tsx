@@ -565,50 +565,58 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
     setShowExistingUserModal(false);
 
     try {
-      const cleanEmail = email.trim().toLowerCase();
-
-      // ตรวจสอบอีเมลซ้ำในระบบ (ตาราง customers, profiles และ local cache)
-      const isTaken = await supabaseCustomers.checkEmailExists(cleanEmail);
-      if (isTaken) {
+      if (!supabase) {
+        alert('ระบบฐานข้อมูลยังไม่พร้อมใช้งาน');
         setIsLoading(false);
-        setIsDuplicateEmail(true);
-        setShowExistingUserModal(true);
-        setErrors({
-          form: DUPLICATE_EMAIL_ERROR_MSG,
-          email: DUPLICATE_EMAIL_ERROR_MSG
-        });
         return;
       }
 
-      // 1. เรียกใช้ API Route ส่ง OTP ที่สร้างไว้ (/api/auth/send-otp)
-      // ไม่เรียกใช้ supabase.auth.signUp() โดยตรง เพื่อป้องกัน Error sending confirmation email
-      const res = await fetch('/api/auth/send-otp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: cleanEmail })
+      // 1. ปรับการเช็กอีเมลซ้ำจากตาราง profiles (แก้ Error 400 Bad Request)
+      const { data: existingUser } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('email', email.trim().toLowerCase())
+        .maybeSingle();
+
+      if (existingUser) {
+        setIsLoading(false);
+        alert('อีเมลนี้มีในระบบแล้ว กรุณาเข้าสู่ระบบ');
+        return;
+      }
+
+      // 2. ใช้ supabase.auth.signUp() ยิงส่ง OTP ตรงผ่าน Custom SMTP
+      const { data, error } = await supabase.auth.signUp({
+        email: email.trim().toLowerCase(),
+        password: password,
+        options: {
+          data: {
+            full_name: fullName,
+            phone: phone,
+          }
+        }
       });
 
-      const data = await res.json().catch(() => ({ error: 'เกิดข้อผิดพลาดในการส่ง OTP' }));
-      if (!res.ok) throw new Error(data.error || 'เกิดข้อผิดพลาดในการส่ง OTP');
+      if (error) {
+        setIsLoading(false);
+        alert('เกิดข้อผิดพลาด: ' + error.message);
+        return;
+      }
 
-      // 2. เมื่อส่ง OTP สำเร็จ ให้เปลี่ยน Modal Step ไปที่หน้า 'verify_otp' (กรอกรหัส 6 หลัก) ทันที
+      // 3. เมื่อสมัครและส่งอีเมลสำเร็จ ให้เปลี่ยน modal step ไปที่ 'verify_otp' ทันที
       setStep('verify_otp');
-      setRateLimitCountdown(60); // นับถอยหลัง 60s สำหรับปุ่มขอรหัสใหม่
+      setRateLimitCountdown(60);
       setErrors({});
-      triggerToast(`ส่งรหัสยืนยัน OTP ไปยัง ${cleanEmail} เรียบร้อยแล้ว (รหัสมีอายุ 5 นาที)`);
+      triggerToast(`ส่งรหัส OTP ไปยัง ${email.trim().toLowerCase()} เรียบร้อยแล้ว`);
     } catch (err: any) {
       setIsLoading(false);
-      const errorMsg = err?.message || 'เกิดข้อผิดพลาดในการส่ง OTP';
-      setErrors({ form: errorMsg, email: errorMsg });
-      triggerToast(errorMsg);
+      alert(err?.message || 'เกิดข้อผิดพลาดในการสมัครสมาชิก');
     } finally {
       setIsLoading(false);
     }
   };
 
-  // 2. ฟังก์ชันขอส่งรหัส OTP ใหม่อีกครั้ง (Resend OTP ผ่าน API Route /api/auth/send-otp)
+  // 2. ฟังก์ชันขอส่งรหัส OTP ใหม่อีกครั้งผ่าน Supabase Auth Resend
   const handleResendOtp = async () => {
-    // ป้องกันการกดซ้ำ และเคารพเวลานับถอยหลัง 60s
     if (isLoading || rateLimitCountdown > 0) {
       if (rateLimitCountdown > 0) {
         triggerToast(`คุณกดขอรหัสบ่อยเกินไป กรุณารอ ${rateLimitCountdown} วินาที`);
@@ -616,34 +624,35 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
       return;
     }
 
+    if (!supabase) {
+      alert('ระบบฐานข้อมูลยังไม่พร้อมใช้งาน');
+      return;
+    }
+
     setIsLoading(true);
     try {
       const cleanEmail = email.trim().toLowerCase();
-
-      // สั่งส่ง OTP ใหม่อีกครั้งผ่าน Custom API Route
-      const res = await fetch('/api/auth/send-otp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: cleanEmail })
+      const { error } = await supabase.auth.resend({
+        type: 'signup',
+        email: cleanEmail,
       });
 
-      const data = await res.json().catch(() => ({ error: 'เกิดข้อผิดพลาดในการส่ง OTP' }));
-      if (!res.ok) throw new Error(data.error || 'เกิดข้อผิดพลาดในการส่ง OTP');
+      if (error) {
+        alert('ไม่สามารถส่งรหัส OTP ใหม่ได้: ' + error.message);
+        return;
+      }
 
-      // ส่งสำเร็จ ให้เริ่มนับถอยหลัง 60 วินาที
       setRateLimitCountdown(60);
       setErrors({});
-      triggerToast(`ส่งรหัส OTP ใหม่ไปยัง ${cleanEmail} เรียบร้อยแล้ว (รหัสมีอายุ 5 นาที)`);
+      triggerToast(`ส่งรหัส OTP ใหม่ไปยัง ${cleanEmail} เรียบร้อยแล้ว`);
     } catch (err: any) {
-      const errMsg = err?.message || 'เกิดข้อผิดพลาดในการขอรหัส OTP';
-      setErrors({ otp: errMsg });
-      triggerToast(errMsg);
+      alert(err?.message || 'เกิดข้อผิดพลาดในการขอรหัส OTP');
     } finally {
       setIsLoading(false);
     }
   };
 
-  // 3. ฟังก์ชันยืนยัน OTP ผ่าน API Route (/api/auth/verify-otp) และบันทึกลงตาราง users/profiles
+  // 3. ในหน้าต่างกรอกรหัสยืนยัน OTP (Modal verify_otp step)
   const handleVerifyOtpAndCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isLoading) return;
@@ -659,62 +668,63 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
       return;
     }
 
-    try {
-      setIsLoading(true);
-      const cleanEmail = email.trim().toLowerCase();
-      let registeredUserId = '';
+    if (!supabase) {
+      alert('ระบบฐานข้อมูลยังไม่พร้อมใช้งาน');
+      return;
+    }
 
-      // ยืนยันรหัส OTP ผ่าน Custom API Route (/api/auth/verify-otp)
-      // ตรวจสอบในตาราง 'otp_requests' และเช็คเวลาหมดอายุ 5 นาที
-      const res = await fetch('/api/auth/verify-otp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: cleanEmail,
-          otpCode: cleanedOtp,
-        }),
+    setIsLoading(true);
+    try {
+      const cleanEmail = email.trim().toLowerCase();
+
+      // ตรวจสอบด้วยคำสั่ง supabase.auth.verifyOtp
+      const { data, error } = await supabase.auth.verifyOtp({
+        email: cleanEmail,
+        token: cleanedOtp,
+        type: 'signup'
       });
 
-      const data = await res.json().catch(() => ({ error: 'ไม่สามารถอ่านข้อมูลจากเซิร์ฟเวอร์ได้' }));
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || 'รหัส OTP ไม่ถูกต้องหรือหมดอายุ กรุณาตรวจสอบอีกครั้ง');
+      if (error) {
+        alert('รหัส OTP ไม่ถูกต้องหรือหมดอายุ: ' + error.message);
+        return;
       }
 
-      // บันทึกโปรไฟล์สมาชิกลงในฐานข้อมูล (Supabase Customers & Profiles)
+      // ยืนยันสำเร็จ ปิด modal และรีเฟรชสถานะเข้าสู่ระบบ
+      alert('ยืนยันตัวตนและสมัครสมาชิกสำเร็จ!');
+
       const finalPhone = normalizeThaiPhone(phone) || phone.trim();
-      const newAccount = {
-        name: fullName.trim(),
-        email: cleanEmail,
-        phone: finalPhone,
-        password: password,
-        membership_level: 'Standard',
-        points: 0
-      };
+      const registeredUserId = data?.user?.id || `user_${Date.now()}`;
 
-      const createdCustomer = await supabaseCustomers.create(newAccount);
-      if (!registeredUserId) {
-        registeredUserId = createdCustomer?.id || `customer_${cleanEmail.replace(/[^a-zA-Z0-9]/g, '_')}`;
+      // บันทึก/อัปเดตข้อมูลลูกค้าและโปรไฟล์ใน Supabase
+      try {
+        await supabaseCustomers.create({
+          name: fullName.trim(),
+          email: cleanEmail,
+          phone: finalPhone,
+          membership_level: 'Standard',
+          points: 0
+        });
+      } catch {
+        // ignore
       }
 
-      if (registeredUserId) {
-        try {
-          await supabaseProfiles.upsertProfile({
-            id: registeredUserId,
-            fullName: fullName.trim(),
-            phone: finalPhone,
-            email: cleanEmail,
-            address: ''
-          });
-        } catch {
-          // ignore
-        }
+      try {
+        await supabaseProfiles.upsertProfile({
+          id: registeredUserId,
+          fullName: fullName.trim(),
+          phone: finalPhone,
+          email: cleanEmail,
+          address: ''
+        });
+      } catch {
+        // ignore
       }
 
       const userData: UserData = {
         id: registeredUserId,
-        name: newAccount.name,
-        email: newAccount.email,
-        phone: newAccount.phone
+        name: fullName.trim(),
+        email: cleanEmail,
+        phone: finalPhone
       };
 
       // Reset state
@@ -727,9 +737,7 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
       setErrors({});
       setStep('form');
 
-      triggerToast('ยืนยันรหัส OTP และสมัครสมาชิกสำเร็จ!');
-      
-      // Requirement 2: หากยืนยันสำเร็จ ให้พาผู้ใช้เข้าสู่ระบบ/เปิดหน้าโปรไฟล์ทันที
+      triggerToast('สมัครสมาชิกและยืนยันตัวตนสำเร็จ!');
       onRegisterSuccess(userData);
 
       // Dispatch events เพื่อให้ระบบอัปเดตข้อมูลผู้ใช้แบบเรียลไทม์
@@ -738,26 +746,7 @@ export function RegisterModal({ isOpen, onClose, onOpenLogin, onOpenForgotPasswo
 
       onClose();
     } catch (err: any) {
-      if (isDuplicateEmailError(err)) {
-        setStep('form');
-        setIsDuplicateEmail(true);
-        setShowExistingUserModal(true);
-        setErrors({
-          form: DUPLICATE_EMAIL_ERROR_MSG,
-          email: DUPLICATE_EMAIL_ERROR_MSG
-        });
-        return;
-      }
-      if (isRateLimitError(err)) {
-        const waitSec = extractRateLimitSeconds(err);
-        setRateLimitCountdown(waitSec);
-        const rateMsg = `คุณกดขอรหัสบ่อยเกินไป กรุณารอ ${waitSec} วินาที`;
-        setErrors({ otp: rateMsg });
-        triggerToast(rateMsg);
-        return;
-      }
-      const errorMsg = handleSupabaseAuthError(err);
-      setErrors({ otp: errorMsg });
+      alert(err?.message || 'เกิดข้อผิดพลาดในการยืนยัน OTP');
     } finally {
       setIsLoading(false);
     }

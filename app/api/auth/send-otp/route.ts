@@ -31,41 +31,27 @@ export async function POST(req: Request) {
   try {
     const { email } = await req.json();
     if (!email) {
-      return NextResponse.json({ success: false, error: 'กรุณากรอกอีเมล' }, { status: 400 });
+      return NextResponse.json({ success: false, error: 'กรุณาระบุอีเมล' }, { status: 400 });
     }
 
-    // สุ่ม OTP 6 หลัก และบันทึกลงตาราง otp_requests
+    // 1. สุ่ม OTP 6 หลัก
     const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
     const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
 
-    const { error: dbError } = await supabase
-      .from('otp_requests')
-      .insert([{ email, otp_code: otpCode, expires_at: expiresAt }]);
+    // 2. บันทึกลงตาราง 'otp_requests' ใน Supabase
+    await supabase.from('otp_requests').insert([{ email, otp_code: otpCode, expires_at: expiresAt }]);
 
-    if (dbError) throw dbError;
-
-    // ส่งอีเมลผ่าน Nodemailer
+    // 3. ส่งอีเมลด้วย Nodemailer
     await transporter.sendMail({
-      from: `"Pornpong Plastic" <${process.env.GMAIL_USER || '666051000345@mail.rmutk.ac.th'}>`,
+      from: `"พรพงศ์พลาสติก" <${process.env.GMAIL_USER || '666051000345@mail.rmutk.ac.th'}>`,
       to: email,
-      subject: 'รหัส OTP สำหรับยืนยันตัวตน',
-      html: `
-        <div style="font-family: Arial, sans-serif; padding: 20px; border: 1px solid #e0e0e0; border-radius: 10px; max-width: 500px; margin: auto;">
-          <h2 style="color: #0088cc; text-align: center;">พรพงศ์พลาสติก</h2>
-          <hr style="border: none; border-top: 1px solid #eee;" />
-          <p>สวัสดีครับ,</p>
-          <p>รหัสยืนยันตัวตน (OTP) สำหรับการทำรายการของคุณคือ:</p>
-          <div style="background-color: #f4f6f9; text-align: center; padding: 15px; border-radius: 8px; margin: 20px 0;">
-            <span style="font-size: 28px; font-weight: bold; letter-spacing: 5px; color: #0088cc;">${otpCode}</span>
-          </div>
-          <p style="color: #666; font-size: 14px;">รหัสนี้มีอายุการใช้งาน 5 นาที</p>
-          <p style="color: #999; font-size: 12px; margin-top: 30px;">หากคุณไม่ได้ร้องขอรหัสนี้ สามารถเพิกเฉยต่ออีเมลนี้ได้ทันที</p>
-        </div>
-      `,
+      subject: 'รหัส OTP ยืนยันตัวตน - พรพงศ์พลาสติก',
+      html: `<h2>รหัส OTP ของคุณคือ: <span style="color:#0088cc;">${otpCode}</span></h2><p>รหัสมีอายุ 5 นาที</p>`,
     });
 
-    return NextResponse.json({ success: true, message: 'ส่ง OTP สำเร็จ' }, { status: 200 });
-  } catch (err: any) {
-    return NextResponse.json({ success: false, error: err.message || 'เกิดข้อผิดพลาดในการส่ง OTP' }, { status: 500 });
+    return NextResponse.json({ success: true, message: 'ส่ง OTP เรียบร้อย' }, { status: 200 });
+  } catch (error: any) {
+    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
   }
 }
+
