@@ -1189,8 +1189,9 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
       }
       window.dispatchEvent(new CustomEvent('orders-updated'));
       await reloadOrders();
-
-      triggerToast(`อัปเดตออเดอร์ #${orderId} เป็น [${statusLabel}] สำเร็จ`);
+      if (!isDeliv) {
+        triggerToast(`อัปเดตออเดอร์ #${orderId} เป็น [${statusLabel}] สำเร็จ`);
+      }
     } catch (err: any) {
       console.error('Failed to change order status:', err);
       triggerToast('เกิดข้อผิดพลาดในการอัปเดตสถานะ');
@@ -1447,7 +1448,17 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
     const orderId = order.id;
     const msg = `รายการสั่งซื้อหมายเลข #${orderId} จัดส่งสำเร็จเรียบร้อยแล้ว - ขอบคุณที่ไว้วางใจใช้บริการพรพงศ์พลาสติก`;
     
-    // Direct update to Supabase orders table with delivery_step: 4 and status: 'completed'
+    // 1. Optimistically update local state so order is immediately removed from the active orders table
+    setAdminOrders(prev => prev.map(o => o.id === orderId ? {
+      ...o,
+      status: 'completed',
+      order_status: 'completed',
+      delivery_status: 'delivered',
+      delivery_step: 4,
+      status_message: msg
+    } : o));
+
+    // 2. Direct update to Supabase orders table with delivery_step: 4 and status: 'completed'
     if (isSupabaseConfigured && supabase) {
       try {
         await supabase.from('orders').update({
@@ -1463,21 +1474,26 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
       }
     }
 
-    // 1. UPSERT delivery_status = 'delivered' in separate deliveries table
-    await supabaseDeliveries.upsert({
-      order_id: String(orderId),
-      delivery_status: 'delivered'
-    });
+    // 3. UPSERT delivery_status = 'delivered' in separate deliveries table
+    try {
+      await supabaseDeliveries.upsert({
+        order_id: String(orderId),
+        delivery_status: 'delivered'
+      });
+    } catch (e) {
+      console.warn('supabaseDeliveries.upsert delivered warning:', e);
+    }
 
-    // 2. Update status = 'completed' in orders table
+    // 4. Update status = 'completed' in orders table
     await executeOrderStatusChange(orderId, 'completed', {
       status_message: msg,
-      delivery_status: 'delivered'
+      delivery_status: 'delivered',
+      delivery_step: 4
     }, 'จัดส่งสำเร็จ', msg);
 
-    // Switch tab to completed history to view the completed order immediately
-    setOrdersTabFilter('completed');
-    triggerToast(`คำสั่งซื้อ #${orderId} จัดส่งสำเร็จ! ย้ายไปแท็บ "ประวัติคำสั่งซื้อสำเร็จ (Completed History)" เรียบร้อยแล้ว`);
+    // 5. Ensure orders are fresh and remain on the active orders tab (do NOT switch to completed history)
+    await reloadOrders();
+    triggerToast('อัปเดตสถานะจัดส่งสำเร็จเรียบร้อยแล้ว');
   };
 
   const changeOrderStatus = (orderId: string, nextStatus: string) => {
@@ -3763,7 +3779,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                                     type="button"
                                     onClick={() => handleSelectDelivered(order)}
                                     className="px-2.5 py-1.5 rounded-xl text-[10.5px] font-black transition-all cursor-pointer flex items-center gap-1 bg-emerald-700 hover:bg-emerald-800 text-white shadow-xs"
-                                    title="ขั้นตอนสำเร็จ: จัดส่งสำเร็จ (อัปเดต delivery_status เป็น delivered และย้ายไปแท็บประวัติคำสั่งซื้อสำเร็จ)"
+                                    title="ขั้นตอนสำเร็จ: จัดส่งสำเร็จ (อัปเดต delivery_status เป็น delivered)"
                                   >
                                     <CheckCircle2 size={11} />
                                     <span>✓ ส่งสำเร็จ</span>
@@ -4137,7 +4153,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                                                 ? 'bg-emerald-700 text-white shadow-xs ring-1 ring-emerald-700/20'
                                                 : 'bg-slate-100 hover:bg-emerald-50 text-slate-600 hover:text-emerald-700'
                                             }`}
-                                            title="ขั้นตอนที่ 4: จัดส่งสำเร็จ (คลิกเพื่อส่งมอบสำเร็จและย้ายไปประวัติคำสั่งซื้อสำเร็จ)"
+                                            title="ขั้นตอนที่ 4: จัดส่งสำเร็จ (คลิกเพื่อบันทึกสถานะจัดส่งสำเร็จ)"
                                           >
                                             ✓ 4. ส่งสำเร็จ
                                           </button>
