@@ -348,7 +348,14 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
       if (!isSupabaseConfigured || !supabase) {
         try {
           const local = JSON.parse(localStorage.getItem('pornpong_orders') || '[]');
-          setAdminOrders(local);
+          const local2 = JSON.parse(localStorage.getItem('admin_orders') || '[]');
+          const combined = [...local];
+          for (const it of local2) {
+            if (it && it.id && !combined.some((c: any) => String(c.id) === String(it.id))) {
+              combined.push(it);
+            }
+          }
+          setAdminOrders(combined);
         } catch {}
         return;
       }
@@ -364,7 +371,43 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
       }
 
       if (data) {
-        setAdminOrders(data);
+        let mergedList = [...data];
+        try {
+          const { data: delivData } = await supabase.from('deliveries').select('*');
+          if (delivData && delivData.length > 0) {
+            const delivMap: Record<string, any> = {};
+            for (const d of delivData) {
+              if (d.order_id) delivMap[String(d.order_id)] = d;
+            }
+            mergedList = mergedList.map((ord: any) => {
+              const d = delivMap[String(ord.id)];
+              if (!d) return ord;
+              return {
+                ...ord,
+                tracking_number: ord.tracking_number || d.tracking_number || ord.shipment_no || ord.shipmentNo || d.shipment_no || '',
+                shipping_carrier: ord.shipping_carrier || d.shipping_carrier || d.carrier_name || ord.carrier_name || '',
+                carrier_name: ord.carrier_name || d.carrier_name || d.shipping_carrier || ord.shipping_carrier || '',
+                driver_phone: ord.driver_phone || d.driver_phone || '',
+                delivery_status: ord.delivery_status || d.delivery_status || '',
+                delivery_step: ord.delivery_step || (d.delivery_status === 'delivered' ? 4 : d.delivery_status === 'in_transit' ? 3 : d.delivery_status === 'ready_to_ship' ? 2 : undefined)
+              };
+            });
+          }
+        } catch (delivErr) {
+          console.warn('Could not merge deliveries table in fetchOrders:', delivErr);
+        }
+
+        try {
+          const local = JSON.parse(localStorage.getItem('admin_orders') || '[]');
+          const local2 = JSON.parse(localStorage.getItem('pornpong_orders') || '[]');
+          for (const loc of [...local, ...local2]) {
+            if (loc && loc.id && !mergedList.some((o: any) => String(o.id) === String(loc.id))) {
+              mergedList.push(loc);
+            }
+          }
+        } catch {}
+
+        setAdminOrders(mergedList);
       }
     } catch (err) {
       console.error("Error fetching orders:", err);
@@ -1024,6 +1067,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
       tracking_number?: string;
       status_message?: string;
       delivery_status?: string;
+      delivery_step?: number;
       queue_number?: string;
     } = {},
     statusLabel: string,
@@ -1033,26 +1077,52 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
       const sLower = nextStatus.toLowerCase();
       const isDeliv = sLower === 'delivered' || sLower === 'completed';
       const isShip = sLower === 'in_transit' || sLower === 'shipped' || sLower === 'shipping';
-      const isReady = sLower === 'ready_for_shipping' || sLower === 'ready';
-      const mappedOrderStatus = isDeliv ? 'completed' : isShip ? 'in_transit' : isReady ? 'ready_for_shipping' : 'manufacturing';
-      const trackingNo = meta.shipment_no || `TH-EX-${String(orderId).replace(/[^0-9]/g, '').slice(-6) || '291823'}`;
+      const isReady = sLower === 'ready_for_shipping' || sLower === 'ready' || sLower === 'ready_to_ship';
+      const isPaid = sLower === 'paid' || sLower === 'processing';
+      const mappedOrderStatus = isDeliv ? 'completed' : isShip ? 'in_transit' : isReady ? 'ready_to_ship' : isPaid ? 'paid' : 'manufacturing';
+      const targetStatus = isDeliv ? 'completed' : isShip ? 'shipped' : isReady ? 'ready_to_ship' : 'paid';
+      const stepNum = isDeliv ? 4 : isShip ? 3 : isReady ? 2 : 1;
+      const trackingNo = meta.shipment_no || meta.tracking_number || `TH-EX-${String(orderId).replace(/[^0-9]/g, '').slice(-6) || '291823'}`;
 
       // Optimistically update React state immediately
       setAdminOrders(prev => prev.map(o => o.id === orderId ? {
         ...o,
-        status: nextStatus,
+        status: targetStatus,
         order_status: mappedOrderStatus,
+        delivery_step: stepNum,
         shipmentNo: trackingNo,
         shipment_no: trackingNo,
+        tracking_number: trackingNo,
         ...(meta.estimated_delivery_date ? { estimated_delivery_date: meta.estimated_delivery_date } : {}),
-        ...(meta.carrier_name ? { carrier_name: meta.carrier_name } : {}),
+        ...(meta.carrier_name || meta.shipping_carrier ? { carrier_name: meta.carrier_name || meta.shipping_carrier, shipping_carrier: meta.shipping_carrier || meta.carrier_name } : {}),
         ...(meta.driver_phone ? { driver_phone: meta.driver_phone } : {}),
         ...(meta.status_message ? { status_message: meta.status_message } : {})
       } : o));
 
-      await supabaseOrders.updateStatus(orderId, nextStatus, {
+      // Direct Realtime update to Supabase orders table
+      if (isSupabaseConfigured && supabase) {
+        try {
+          await supabase.from('orders').update({
+            delivery_step: stepNum,
+            status: targetStatus,
+            order_status: mappedOrderStatus,
+            delivery_status: isDeliv ? 'delivered' : isShip ? 'in_transit' : isReady ? 'ready_to_ship' : 'paid',
+            ...(trackingNo ? { tracking_number: trackingNo, shipment_no: trackingNo } : {}),
+            ...(meta.estimated_delivery_date ? { estimated_delivery_date: meta.estimated_delivery_date } : {}),
+            ...(meta.carrier_name || meta.shipping_carrier ? { shipping_carrier: meta.shipping_carrier || meta.carrier_name, carrier_name: meta.carrier_name || meta.shipping_carrier } : {}),
+            ...(meta.driver_phone ? { driver_phone: meta.driver_phone } : {}),
+            ...(meta.status_message ? { status_message: meta.status_message } : {}),
+            updated_at: new Date().toISOString()
+          }).eq('id', orderId);
+        } catch (err) {
+          console.warn('Direct update orders in executeOrderStatusChange failed:', err);
+        }
+      }
+
+      await supabaseOrders.updateStatus(orderId, targetStatus, {
         ...meta,
-        shipment_no: trackingNo
+        shipment_no: trackingNo,
+        tracking_number: trackingNo
       });
       await reloadOrders();
 
@@ -1127,12 +1197,94 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
     }
   };
 
+  const handleSelectStep1 = async (order: any) => {
+    const orderId = order.id;
+    const msg = `คำสั่งซื้อหมายเลข #${orderId} ชำระเงินเรียบร้อยแล้ว อยู่ระหว่างจัดเตรียมสินค้า`;
+    if (isSupabaseConfigured && supabase) {
+      try {
+        await supabase.from('orders').update({
+          delivery_step: 1,
+          status: 'paid',
+          order_status: 'paid',
+          delivery_status: 'paid',
+          status_message: msg,
+          updated_at: new Date().toISOString()
+        }).eq('id', orderId);
+      } catch (err) {
+        console.warn('Error updating step 1 in Supabase:', err);
+      }
+    }
+    await executeOrderStatusChange(orderId, 'paid', {
+      delivery_status: 'paid',
+      status_message: msg
+    }, 'ชำระแล้ว', msg);
+    triggerToast(`ปรับสถานะคำสั่งซื้อ #${orderId} เป็นขั้นตอนที่ 1 (ชำระแล้ว) เรียบร้อย`);
+  };
+
   const handleSelectManufacturing = (order: any) => {
     const orderId = order.id;
     const msg = `คำสั่งซื้อหมายเลข #${orderId} กำลังหลอมเรือตามสเปกที่คุณออกแบบ ทางโรงงานกำลังดำเนินการผลิตอย่างประณีต`;
     executeOrderStatusChange(orderId, 'manufacturing', {
       status_message: 'กำลังหลอมเรือตามสเปกที่คุณออกแบบ'
     }, 'กำลังผลิต', msg);
+  };
+
+  const handleSelectStep2 = async (order: any) => {
+    const orderId = order.id;
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const dateStr = order.estimated_delivery_date || `${tomorrow.toLocaleDateString('th-TH', { day: 'numeric', month: 'short', year: 'numeric' })} เวลา 14:00 น.`;
+    const msg = `คำสั่งซื้อหมายเลข #${orderId} เรือจัดเตรียมเสร็จแล้ว - คาดว่าจะจัดส่ง: ${dateStr}`;
+
+    // Optimistically update local state
+    setAdminOrders(prev => prev.map(o => o.id === orderId ? {
+      ...o,
+      status: 'ready_to_ship',
+      order_status: 'ready_to_ship',
+      delivery_status: 'ready_to_ship',
+      delivery_step: 2,
+      estimated_delivery_date: dateStr,
+      status_message: msg
+    } : o));
+
+    if (isSupabaseConfigured && supabase) {
+      try {
+        await supabase.from('orders').update({
+          delivery_step: 2,
+          status: 'ready_to_ship',
+          order_status: 'ready_to_ship',
+          delivery_status: 'ready_to_ship',
+          estimated_delivery_date: dateStr,
+          status_message: msg,
+          updated_at: new Date().toISOString()
+        }).eq('id', orderId);
+      } catch (err) {
+        console.warn('Direct update ready_to_ship in Supabase failed:', err);
+      }
+    }
+
+    await executeOrderStatusChange(orderId, 'ready_to_ship', {
+      estimated_delivery_date: dateStr,
+      delivery_step: 2,
+      delivery_status: 'ready_to_ship',
+      status_message: msg
+    }, 'รอจัดส่ง', msg);
+
+    triggerToast(`ปรับสถานะคำสั่งซื้อ #${orderId} เป็นขั้นตอนที่ 2 (รอจัดส่ง) เรียบร้อย`);
+  };
+
+  const handleSelectStep3 = async (order: any) => {
+    const tracking = order.tracking_number || order.shipmentNo || order.shipment_no;
+    if (tracking && tracking !== '-') {
+      await handleSelectInTransit(order, {
+        carrier_name: order.shipping_carrier || order.carrier_name || 'รถโรงงานพรพงศ์ (สายส่งตรง)',
+        driver_phone: order.driver_phone || '089-456-7890',
+        tracking_number: tracking,
+        shipment_no: tracking
+      });
+    } else {
+      handleOpenInTransitModal(order);
+    }
   };
 
   const handleOpenReadyShippingModal = (order: any) => {
@@ -1143,12 +1295,29 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
     setReadyShippingDate(defaultDateStr);
   };
 
-  const handleConfirmReadyShipping = () => {
+  const handleConfirmReadyShipping = async () => {
     if (!readyShippingOrder) return;
     const orderId = readyShippingOrder.id;
     const dateStr = readyShippingDate.trim() || 'ภายใน 1-2 วันทำการ';
     const msg = `คำสั่งซื้อหมายเลข #${orderId} เรือผลิตเสร็จแล้ว - คาดว่าจะจัดส่งวันที่: ${dateStr}`;
-    executeOrderStatusChange(orderId, 'ready_for_shipping', {
+    
+    if (isSupabaseConfigured && supabase) {
+      try {
+        await supabase.from('orders').update({
+          delivery_step: 2,
+          status: 'ready_to_ship',
+          order_status: 'ready_to_ship',
+          delivery_status: 'ready_to_ship',
+          estimated_delivery_date: dateStr,
+          status_message: msg,
+          updated_at: new Date().toISOString()
+        }).eq('id', orderId);
+      } catch (err) {
+        console.warn('Direct update ready_to_ship in Supabase failed:', err);
+      }
+    }
+
+    await executeOrderStatusChange(orderId, 'ready_for_shipping', {
       estimated_delivery_date: dateStr,
       status_message: `เรือผลิตเสร็จแล้ว - คาดว่าจะจัดส่งวันที่: ${dateStr}`
     }, 'รอขนย้าย', msg);
@@ -1165,9 +1334,10 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
     // 1. Optimistically update local React state so UI turns Active Green immediately
     setAdminOrders(prev => prev.map(o => o.id === orderId ? {
       ...o,
-      status: 'in_transit',
+      status: 'shipped',
       order_status: 'in_transit',
       delivery_status: 'in_transit',
+      delivery_step: 3,
       stageLabel: 'อยู่ระหว่างจัดส่ง',
       carrier_name: carrier,
       shipping_carrier: carrier,
@@ -1201,7 +1371,28 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
       console.warn('supabaseDeliveries.upsert in_transit warning:', e);
     }
 
-    // 3. Update orders table in Supabase (status = 'in_transit', order_status = 'in_transit')
+    // 3. Direct update orders table in Supabase (delivery_step = 3, status = 'shipped')
+    if (isSupabaseConfigured && supabase) {
+      try {
+        await supabase.from('orders').update({
+          delivery_step: 3,
+          status: 'shipped',
+          order_status: 'in_transit',
+          delivery_status: 'in_transit',
+          shipping_carrier: carrier,
+          carrier_name: carrier,
+          driver_phone: driver,
+          tracking_number: tracking,
+          shipment_no: tracking,
+          status_message: msg,
+          updated_at: new Date().toISOString()
+        }).eq('id', orderId);
+      } catch (err) {
+        console.warn('Direct update orders in handleSelectInTransit failed:', err);
+      }
+    }
+
+    // 4. Update orders table in Supabase via helper
     await executeOrderStatusChange(orderId, 'in_transit', {
       carrier_name: carrier,
       shipping_carrier: carrier,
@@ -1212,7 +1403,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
       status_message: msg
     }, 'อยู่ระหว่างจัดส่ง', msg);
 
-    // 4. Dispatch Realtime signals to client header and tracking card
+    // 5. Dispatch Realtime signals to client header and tracking card
     window.dispatchEvent(new CustomEvent('pornpong-shipping-in-transit', {
       detail: { orderId, status: 'in_transit', carrier, driver, tracking, message: msg }
     }));
@@ -1256,14 +1447,30 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
     const orderId = order.id;
     const msg = `รายการสั่งซื้อหมายเลข #${orderId} จัดส่งสำเร็จเรียบร้อยแล้ว - ขอบคุณที่ไว้วางใจใช้บริการพรพงศ์พลาสติก`;
     
+    // Direct update to Supabase orders table with delivery_step: 4 and status: 'completed'
+    if (isSupabaseConfigured && supabase) {
+      try {
+        await supabase.from('orders').update({
+          delivery_step: 4,
+          status: 'completed',
+          order_status: 'completed',
+          delivery_status: 'delivered',
+          status_message: msg,
+          updated_at: new Date().toISOString()
+        }).eq('id', orderId);
+      } catch (err) {
+        console.warn('Direct update orders in handleSelectDelivered failed:', err);
+      }
+    }
+
     // 1. UPSERT delivery_status = 'delivered' in separate deliveries table
     await supabaseDeliveries.upsert({
       order_id: String(orderId),
       delivery_status: 'delivered'
     });
 
-    // 2. Update status = 'delivered' and order_status = 'completed' in orders table
-    await executeOrderStatusChange(orderId, 'delivered', {
+    // 2. Update status = 'completed' in orders table
+    await executeOrderStatusChange(orderId, 'completed', {
       status_message: msg,
       delivery_status: 'delivered'
     }, 'จัดส่งสำเร็จ', msg);
@@ -2223,30 +2430,33 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
     return s === 'delivered' || s === 'completed' || os === 'delivered' || os === 'completed' || ds === 'delivered' || ds === 'completed';
   };
 
-  // Requirement 2:
+  // Requirement:
   // Tab 1: รายการคำสั่งซื้อกำลังดำเนินการ (Active Orders)
-  // แสดงรายการจากตาราง 'orders' ที่มีสถานะ status อยู่ในกลุ่ม ['paid', 'processing', 'ready_to_ship'] และ is_preorder !== true
+  // ปลดล็อกตัวกรองให้ดึงทุกคำสั่งซื้อที่มีในระบบซึ่ง "ยังจัดส่งไม่สำเร็จ" มาแสดงผลทั้งหมด 100%
+  // เงื่อนไข: order.status !== 'completed' && order.status !== 'cancelled'
+  // ครอบคลุมทุกสถานะที่กำลังดำเนินการ เช่น: 'paid', 'pending', 'pending_verification', 'processing', 'ready_to_ship', 'shipped', 'delivering', 'in_queue'
+  // หากคำสั่งซื้อนั้นปรากฏในหน้าติดตามสถานะของลูกค้า (Tracking) ออเดอร์นั้นต้องถูกนำมาแสดงในตารางนี้ด้วยเสมอ
   const activeOrdersList = React.useMemo(() => {
     return adminOrders.filter(order => {
       if (!order) return false;
       if (order.is_deleted === true || order.is_deleted === 'true') return false;
 
       const s = String(order.status || '').toLowerCase().trim();
-      const isPreorder = Boolean(
-        order.is_preorder === true ||
-        order.is_preorder === 'true' ||
-        order.order_type === 'preorder' ||
-        order.type === 'preorder' ||
-        order.product_type === 'pre_order' ||
-        order.orderType === 'preorder' ||
-        (typeof isOrderPreOrder === 'function' && isOrderPreOrder(order))
-      );
+      const os = String(order.order_status || '').toLowerCase().trim();
+      const ds = String(order.delivery_status || '').toLowerCase().trim();
+      const step = Number(order.delivery_step || 0);
 
-      if (isPreorder || order.is_preorder === true) return false;
+      // Exclude cancelled / rejected orders
+      if (s === 'cancelled' || os === 'cancelled' || s === 'rejected') return false;
 
-      // สถานะ status อยู่ในกลุ่ม ['paid', 'processing', 'ready_to_ship'] (รวมถึงขั้นตอนจัดส่งที่กำลังดำเนินการ)
-      const activeStatuses = ['paid', 'processing', 'ready_to_ship', 'in_transit', 'shipping', 'ready_for_shipping'];
-      return activeStatuses.includes(s) && order.is_preorder !== true;
+      // Exclude completed orders - only moved to completed history when step is 4 or status is completed/delivered
+      const isCompleted = s === 'completed' || s === 'delivered' || os === 'completed' || os === 'delivered' || ds === 'completed' || ds === 'delivered' || step === 4;
+      if (isCompleted) return false;
+
+      // ปลดล็อกตัวกรอง: แสดงทุกคำสั่งซื้อที่ยังจัดส่งไม่สำเร็จ (status !== 'completed' && status !== 'cancelled')
+      // ครอบคลุมทุกสถานะที่กำลังดำเนินการ: 'paid', 'pending', 'pending_verification', 'processing', 'ready_to_ship', 'shipped', 'delivering', 'in_queue' ฯลฯ
+      // ไม่ตัด preorder ออก และไม่ตัดสถานะใดๆ ออก เพื่อให้แสดงครบ 100%
+      return true;
     }).sort((a: any, b: any) => {
       const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
       const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
@@ -2257,7 +2467,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
   const approvedAdminOrders = activeOrdersList;
 
   // Tab 2: ประวัติคำสั่งซื้อสำเร็จ (Completed History)
-  // orders.filter(order => order.status === 'completed' || order.status === 'delivered')
+  // orders.filter(order => order.status === 'completed' || order.status === 'delivered' || order.delivery_step === 4)
   const completedOrdersList = React.useMemo(() => {
     return adminOrders
       .filter(order => {
@@ -2266,10 +2476,16 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
         const s = String(order.status || '').toLowerCase().trim();
         const os = String(order.order_status || '').toLowerCase().trim();
         const ds = String(order.delivery_status || '').toLowerCase().trim();
+        const step = Number(order.delivery_step || 0);
+
+        if (s === 'cancelled' || os === 'cancelled' || s === 'rejected') return false;
+
+        // When status is marked 'completed', 'delivered', or final step 4 reached
         return (
           s === 'completed' || s === 'delivered' ||
           os === 'completed' || os === 'delivered' ||
-          ds === 'completed' || ds === 'delivered'
+          ds === 'completed' || ds === 'delivered' ||
+          step === 4
         );
       })
       .sort((a: any, b: any) => {
@@ -3706,13 +3922,13 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                       ) : (
                         filteredAdminOrders.map((ord) => {
                           // ตรวจสอบการแมปฟิลด์ในแต่ละคอลัมน์ของตาราง:
-                          const paymentId = ord.id ? ord.id.slice(0, 8).toUpperCase() : '-';
-                          const customerName = ord.customer_name || '-';
-                          const productName = ord.product_name || '-';
-                          const boatColor = ord.color || '-';
-                          const totalAmountFormatted = Number(ord.total_amount || 0).toLocaleString() + ' บาท';
-                          const trackingNumber = ord.tracking_number || '-';
-                          const deliveryStep = ord.delivery_step || 1;
+                          const paymentId = ord.id ? String(ord.id).slice(0, 8).toUpperCase() : '-';
+                          const customerName = ord.customer_name || ord.shipping_name || ord.name || ord.customerName || ord.profiles?.full_name || 'ลูกค้าทั่วไป';
+                          const productName = ord.product_name || ord.item_name || ord.details || ord.productName || 'เรือพลาสติก';
+                          const boatColor = ord.color || ord.selected_color || ord.boatColor || ord.selectedColor || '-';
+                          const totalAmountFormatted = Number(ord.total_amount || ord.price || ord.totalAmount || ord.totalPrice || ord.amount || 0).toLocaleString() + ' บาท';
+                          const trackingNumber = ord.tracking_number || ord.shipment_no || ord.shipmentNo || ord.trackingNumber || '-';
+                          const deliveryStep = Number(ord.delivery_step || ord.deliveryStep || 1);
 
                           return (
                             <tr key={ord.id} className="hover:bg-slate-50/70 text-[11px] group/row">
@@ -3757,13 +3973,25 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
 
                               {/* 6. รหัสสิ่งส่งของขนส่ง */}
                               <td className="py-3.5 px-3 text-center">
-                                {trackingNumber !== '-' ? (
-                                  <code className="bg-sky-50 border border-sky-200 rounded-md px-2 py-0.5 text-sky-700 font-mono text-[10px] font-bold inline-flex items-center gap-1">
-                                    <Truck size={10} /> {trackingNumber}
-                                  </code>
-                                ) : (
-                                  <span className="text-slate-400 italic">-</span>
-                                )}
+                                <div className="flex items-center justify-center gap-1">
+                                  {trackingNumber !== '-' ? (
+                                    <code className="bg-sky-50 border border-sky-200 rounded-md px-2 py-0.5 text-sky-700 font-mono text-[10px] font-bold inline-flex items-center gap-1">
+                                      <Truck size={10} /> {trackingNumber}
+                                    </code>
+                                  ) : (
+                                    <span className="text-slate-400 italic">-</span>
+                                  )}
+                                  {ordersTabFilter === 'active' && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenInTransitModal(ord)}
+                                      className="p-1 rounded text-slate-400 hover:text-sky-600 hover:bg-sky-50 transition-colors cursor-pointer"
+                                      title="เพิ่ม / แก้ไขเลขพัสดุและขนส่ง"
+                                    >
+                                      <Edit size={10} />
+                                    </button>
+                                  )}
+                                </div>
                               </td>
 
                               {/* 7. ขั้นตอนจัดส่ง (4 ขั้นตอน) / การจัดการ */}
@@ -3828,35 +4056,51 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                                           {/* ขั้นตอน 1: ชำระแล้ว */}
                                           <button
                                             type="button"
-                                            className={`px-2 py-1 rounded-md text-[9px] font-black transition-all ${
+                                            onClick={() => handleSelectStep1(ord)}
+                                            className={`px-2 py-1 rounded-md text-[9px] font-black cursor-pointer transition-all ${
                                               isStep1Active
-                                                ? 'bg-emerald-600 text-white shadow-xs'
-                                                : 'bg-slate-100 text-slate-600'
+                                                ? 'bg-emerald-600 text-white shadow-xs ring-1 ring-emerald-600/30'
+                                                : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
                                             }`}
-                                            title="ขั้นตอนที่ 1: ชำระเงินเรียบร้อยแล้ว (พร้อมจัดเตรียมสินค้า)"
+                                            title="ขั้นตอนที่ 1: ชำระเงินเรียบร้อยแล้ว (คลิกเพื่อตั้งสถานะเป็นชำระแล้ว)"
                                           >
                                             1. ชำระแล้ว
                                           </button>
 
                                           {/* ขั้นตอน 2: รอจัดส่ง */}
-                                          <button
-                                            type="button"
-                                            onClick={() => handleOpenReadyShippingModal(ord)}
-                                            className={`px-2 py-1 rounded-md text-[9px] font-black cursor-pointer transition-all ${
-                                              isStep2Active
-                                                ? 'bg-amber-500 hover:bg-amber-600 text-white shadow-xs ring-1 ring-amber-600/20'
-                                                : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
-                                            }`}
-                                            title="ขั้นตอนที่ 2: รอขนย้าย / รอจัดส่ง (คลิกเพื่อระบุวันคาดส่ง)"
-                                          >
-                                            2. รอจัดส่ง
-                                          </button>
+                                          <div className="inline-flex items-center">
+                                            <button
+                                              type="button"
+                                              onClick={() => handleSelectStep2(ord)}
+                                              className={`px-2 py-1 rounded-md text-[9px] font-black cursor-pointer transition-all ${
+                                                isStep2Active
+                                                  ? 'bg-amber-500 hover:bg-amber-600 text-white shadow-xs ring-1 ring-amber-600/20'
+                                                  : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
+                                              }`}
+                                              title="ขั้นตอนที่ 2: รอจัดส่ง (คลิกเพื่อเปลี่ยนเป็นรอจัดส่งทันที)"
+                                            >
+                                              2. รอจัดส่ง
+                                            </button>
+                                            <button
+                                              type="button"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleOpenReadyShippingModal(ord);
+                                              }}
+                                              className={`p-1 ml-0.5 rounded text-[8.5px] transition-colors cursor-pointer ${
+                                                isStep2Active ? 'text-amber-800 hover:bg-amber-100' : 'text-slate-400 hover:bg-slate-200'
+                                              }`}
+                                              title="ระบุวันคาดส่ง"
+                                            >
+                                              <Edit size={8.5} />
+                                            </button>
+                                          </div>
 
                                           {/* ขั้นตอน 3: อยู่ระหว่างจัดส่ง */}
                                           <div className="inline-flex items-center">
                                             <button
                                               type="button"
-                                              onClick={() => handleOpenInTransitModal(ord)}
+                                              onClick={() => handleSelectStep3(ord)}
                                               className={`px-2.5 py-1 rounded-md text-[9px] font-black cursor-pointer transition-all flex items-center gap-1 ${
                                                 isStep3Active
                                                   ? 'bg-sky-600 hover:bg-sky-700 text-white shadow-xs ring-2 ring-sky-500/40'
