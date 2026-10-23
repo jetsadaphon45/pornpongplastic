@@ -342,32 +342,37 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
     }
   }, []);
 
-  const reloadOrders = React.useCallback(async () => {
+  // 1. ฟังก์ชันโหลดข้อมูลออเดอร์ (fetchOrders / loadOrders / reloadOrders)
+  const fetchOrders = React.useCallback(async () => {
     try {
-      const [data, activeData, queueWaitingData] = await Promise.all([
-        supabaseOrders.list(),
-        supabaseOrders.listActiveInStock(),
-        supabaseOrders.listQueueWaitingProduction()
-      ]);
-      const map = new Map<string, any>();
-      (data || []).forEach(o => { if (o && o.id) map.set(String(o.id), o); });
-      (activeData || []).forEach(o => {
-        if (o && o.id) {
-          const existing = map.get(String(o.id));
-          map.set(String(o.id), existing ? { ...existing, ...o } : o);
-        }
-      });
-      (queueWaitingData || []).forEach(o => {
-        if (o && o.id) {
-          const existing = map.get(String(o.id));
-          map.set(String(o.id), existing ? { ...existing, ...o } : o);
-        }
-      });
-      setAdminOrders(Array.from(map.values()));
+      if (!isSupabaseConfigured || !supabase) {
+        try {
+          const local = JSON.parse(localStorage.getItem('pornpong_orders') || '[]');
+          setAdminOrders(local);
+        } catch {}
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from('orders')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error("Error fetching orders:", error);
+        return;
+      }
+
+      if (data) {
+        setAdminOrders(data);
+      }
     } catch (err) {
-      console.error('Failed to reload orders from Supabase:', err);
+      console.error("Error fetching orders:", err);
     }
   }, []);
+
+  const loadOrders = fetchOrders;
+  const reloadOrders = fetchOrders;
 
   const reloadPreOrders = React.useCallback(async () => {
     try {
@@ -1330,6 +1335,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
       // ให้อัปเดต status เป็น 'in_queue' เพื่อส่งเข้าเมนู "จัดการคิวผลิตและจัดส่ง"
       // หากเป็นสินค้าพร้อมส่ง/มีในสต็อก (isPreorder === false หรืออื่นๆ):
       // ให้อัปเดต status เป็น 'paid' เพื่อส่งเข้าเมนู "คำสั่งซื้อสำเร็จ" (แท็บ "รายการคำสั่งซื้อกำลังดำเนินการ") ทันที
+      const selectedOrderId = targetOrderId;
       if (isSupabaseConfigured && supabase) {
         try {
           if (isPreorder) {
@@ -1349,14 +1355,20 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                 is_deleted: false,
                 updated_at: new Date().toISOString()
               })
-              .eq('id', targetOrderId);
+              .eq('id', selectedOrderId);
 
             await supabaseDeliveries.upsert({
-              order_id: targetOrderId,
+              order_id: selectedOrderId,
               delivery_status: 'waiting_production',
               queue_number: qNum
             });
           } else {
+            // Requirement 3: อัปเดตสถานะ status: 'paid' ลงตาราง 'orders'
+            await supabase
+              .from('orders')
+              .update({ status: 'paid' })
+              .eq('id', selectedOrderId);
+
             await supabase
               .from('orders')
               .update({
@@ -1368,12 +1380,13 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                 is_preorder: false,
                 is_deleted: false,
                 delivery_status: 'ready_to_ship',
+                delivery_step: 1,
                 updated_at: new Date().toISOString()
               })
-              .eq('id', targetOrderId);
+              .eq('id', selectedOrderId);
 
             await supabaseDeliveries.upsert({
-              order_id: targetOrderId,
+              order_id: selectedOrderId,
               delivery_status: 'ready_to_ship'
             });
           }
@@ -1445,6 +1458,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
 
       setWaitingVerifyOrders(prev => prev.filter(o => String(o.id) !== targetOrderId));
       await reloadWaitingVerifyOrders();
+      await fetchOrders();
       await reloadOrders();
       window.dispatchEvent(new Event('orders-updated'));
       window.dispatchEvent(new Event('orders_updated'));
@@ -2211,15 +2225,16 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
 
   // Requirement 2:
   // Tab 1: รายการคำสั่งซื้อกำลังดำเนินการ (Active Orders)
-  // แสดงเฉพาะออเดอร์ที่ 'ไม่ใช่พรีออเดอร์' และมี status เป็น:
-  // ['paid', 'processing', 'ready_to_ship', 'shipped', 'confirmed', 'pending_shipment']
+  // แสดงรายการจากตาราง 'orders' ที่มีสถานะ status อยู่ในกลุ่ม ['paid', 'processing', 'ready_to_ship'] และ is_preorder !== true
   const activeOrdersList = React.useMemo(() => {
     return adminOrders.filter(order => {
       if (!order) return false;
       if (order.is_deleted === true || order.is_deleted === 'true') return false;
 
-      const isPre = Boolean(
+      const s = String(order.status || '').toLowerCase().trim();
+      const isPreorder = Boolean(
         order.is_preorder === true ||
+        order.is_preorder === 'true' ||
         order.order_type === 'preorder' ||
         order.type === 'preorder' ||
         order.product_type === 'pre_order' ||
@@ -2227,27 +2242,11 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
         (typeof isOrderPreOrder === 'function' && isOrderPreOrder(order))
       );
 
-      const activeStatuses = [
-        'paid',
-        'processing',
-        'ready_to_ship',
-        'shipped',
-        'confirmed',
-        'pending_shipment',
-        'in_transit',
-        'shipping',
-        'ready_for_shipping'
-      ];
+      if (isPreorder || order.is_preorder === true) return false;
 
-      const s = String(order.status || '').toLowerCase().trim();
-      const os = String(order.order_status || '').toLowerCase().trim();
-      const ds = String(order.delivery_status || '').toLowerCase().trim();
-
-      if (s === 'delivered' || s === 'completed' || os === 'delivered' || os === 'completed' || ds === 'delivered' || ds === 'completed') {
-        return false;
-      }
-
-      return !isPre && (activeStatuses.includes(s) || activeStatuses.includes(os) || activeStatuses.includes(ds));
+      // สถานะ status อยู่ในกลุ่ม ['paid', 'processing', 'ready_to_ship'] (รวมถึงขั้นตอนจัดส่งที่กำลังดำเนินการ)
+      const activeStatuses = ['paid', 'processing', 'ready_to_ship', 'in_transit', 'shipping', 'ready_for_shipping'];
+      return activeStatuses.includes(s) && order.is_preorder !== true;
     }).sort((a: any, b: any) => {
       const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
       const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
@@ -3706,13 +3705,14 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                         </tr>
                       ) : (
                         filteredAdminOrders.map((ord) => {
-                          // Requirement 3: ป้องกันปัญหาการแปลงข้อมูลผิดพลาดในตาราง (Safe Navigation ?.)
-                          const paymentId = ord.payment_id || (ord.id ? (String(ord.id).startsWith('ORD-') ? ord.id : String(ord.id).slice(0, 8)) : '-') || '-';
-                          const customerName = ord.customer_name || ord.profiles?.full_name || ord.shipping_name || ord.customerName || '-';
-                          const productName = ord.product_name || ord.order_items?.[0]?.product_name || ord.details || ord.productName || '-';
-                          const boatColor = ord.color || ord.order_items?.[0]?.color || ord.selected_color || '-';
-                          const totalAmountFormatted = Number(ord.total_amount || ord.price || ord.amount || 0).toLocaleString() + ' บาท';
-                          const trackingNumber = ord.tracking_number || ord.shipmentNo || ord.shipment_no || '-';
+                          // ตรวจสอบการแมปฟิลด์ในแต่ละคอลัมน์ของตาราง:
+                          const paymentId = ord.id ? ord.id.slice(0, 8).toUpperCase() : '-';
+                          const customerName = ord.customer_name || '-';
+                          const productName = ord.product_name || '-';
+                          const boatColor = ord.color || '-';
+                          const totalAmountFormatted = Number(ord.total_amount || 0).toLocaleString() + ' บาท';
+                          const trackingNumber = ord.tracking_number || '-';
+                          const deliveryStep = ord.delivery_step || 1;
 
                           return (
                             <tr key={ord.id} className="hover:bg-slate-50/70 text-[11px] group/row">
