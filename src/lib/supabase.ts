@@ -1915,6 +1915,7 @@ export const supabaseOrders = {
         // Must match approved statuses per requirement
         const approvedStatuses = [
           'paid',
+          'in_queue',
           'ready_to_ship',
           'producing',
           'manufacturing',
@@ -2899,7 +2900,15 @@ export const supabaseOrders = {
       // [กรณี B: สินค้าพรีออเดอร์ (product_type === 'pre_order')]
       // * Q-YYMM-XXX queue number, status = 'producing', queue_status = 'waiting_production', payment_status = 'deposit_paid', is_deleted = false
       const pType = orderData?.product_type || orderData?.order_type || orderData?.orderType;
-      isPre = pType === 'pre_order' || pType === 'preorder' || (pType !== 'in_stock' && pType !== 'instock' && isOrderPreOrder(orderData));
+      const isPreorder = Boolean(
+        orderData?.is_preorder === true || 
+        orderData?.order_type === 'preorder' || 
+        orderData?.type === 'preorder' ||
+        pType === 'pre_order' || 
+        pType === 'preorder' || 
+        (pType !== 'in_stock' && pType !== 'instock' && isOrderPreOrder(orderData))
+      );
+      isPre = isPreorder;
 
       let assignedQueueNumber: string | undefined = undefined;
       if (isPre) {
@@ -2911,8 +2920,8 @@ export const supabaseOrders = {
         }
       }
 
-      const nextStatus = isPre ? 'producing' : 'ready_to_ship';
-      const nextOrderStatus = isPre ? 'producing' : 'ready_to_ship';
+      const nextStatus = isPre ? 'in_queue' : 'paid';
+      const nextOrderStatus = isPre ? 'in_queue' : 'paid';
       const nextPaymentStatus = isPre ? 'deposit_paid' : 'paid';
 
       const nextStatusMessage = isPre 
@@ -2922,24 +2931,26 @@ export const supabaseOrders = {
       if (isSupabaseConfigured && supabase) {
         // 1. UPDATE orders table per Case A and Case B
         const updatePayload: any = isPre ? {
-          status: 'producing',
-          order_status: 'producing',
+          status: 'in_queue',
+          order_status: 'in_queue',
           queue_status: 'waiting_production',
           queue_stage: 1,
           payment_status: 'deposit_paid',
           product_type: 'pre_order',
           order_type: 'preorder',
+          is_preorder: true,
           status_message: nextStatusMessage,
           is_deleted: false,
           queue_number: assignedQueueNumber,
           queue_id: assignedQueueNumber,
           updated_at: new Date().toISOString()
         } : {
-          status: 'ready_to_ship',
-          order_status: 'ready_to_ship',
+          status: 'paid',
+          order_status: 'paid',
           payment_status: 'paid',
           product_type: 'in_stock',
           order_type: 'instock',
+          is_preorder: false,
           status_message: nextStatusMessage,
           is_deleted: false,
           delivery_status: 'ready_to_ship',
@@ -3000,12 +3011,13 @@ export const supabaseOrders = {
         const updated = local.map((o: any) => 
           String(o.id) === orderIdStr ? { 
             ...o, 
-            status: isPre ? 'producing' : 'ready_to_ship', 
-            order_status: isPre ? 'producing' : 'ready_to_ship',
+            status: isPre ? 'in_queue' : 'paid', 
+            order_status: isPre ? 'in_queue' : 'paid',
             queue_status: isPre ? 'waiting_production' : o.queue_status,
             payment_status: nextPaymentStatus, 
             product_type: isPre ? 'pre_order' : 'in_stock',
             order_type: isPre ? 'preorder' : 'instock',
+            is_preorder: isPre,
             status_message: nextStatusMessage,
             delivery_status: isPre ? 'waiting_production' : 'ready_to_ship',
             is_deleted: false,

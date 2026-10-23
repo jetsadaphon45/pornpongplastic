@@ -1283,6 +1283,187 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
   };
 
   // -------------------------------------------------------------
+  // PAYMENT APPROVAL & VERIFICATION LOGIC (Requirements 1 & 4)
+  // -------------------------------------------------------------
+  const handleApprovePayment = async (ord: any) => {
+    if (!confirm('คุณแน่ใจหรือไม่ว่าต้องการ "อนุมัติสลิปการโอนเงิน" นี้?')) return;
+    const targetOrderId = String(ord.id);
+    setIsVerifying(targetOrderId);
+    try {
+      // 1. Instant card removal & badge decrement
+      setWaitingVerifyOrders(prev => prev.filter(o => String(o.id) !== targetOrderId));
+
+      // Persist in approved IDs set immediately
+      try {
+        const approvedList = JSON.parse(localStorage.getItem('pornpong_approved_order_ids') || '[]');
+        if (!approvedList.map(String).includes(targetOrderId)) {
+          approvedList.push(targetOrderId);
+          localStorage.setItem('pornpong_approved_order_ids', JSON.stringify(approvedList));
+        }
+        // Remove from rejected if present
+        const rejectedList = JSON.parse(localStorage.getItem('pornpong_rejected_order_ids') || '[]');
+        const filteredRej = rejectedList.filter((x: any) => String(x) !== targetOrderId);
+        localStorage.setItem('pornpong_rejected_order_ids', JSON.stringify(filteredRej));
+      } catch {}
+
+      // Requirement 1: ตรวจสอบประเภทสินค้าของคำสั่งซื้อ
+      const isPreorder = Boolean(
+        ord.is_preorder === true ||
+        ord.order_type === 'preorder' ||
+        ord.type === 'preorder' ||
+        ord.product_type === 'pre_order' ||
+        ord.order_type === 'pre_order' ||
+        ord.orderType === 'preorder' ||
+        (typeof isOrderPreOrder === 'function' && isOrderPreOrder(ord))
+      );
+
+      let qNum = ord.queue_number || ord.queue_id;
+      if (isPreorder) {
+        if (!qNum || !/^Q-\d{4}-\d{3}$/i.test(String(qNum).trim())) {
+          qNum = await getNextAvailableQueueNumber();
+        } else {
+          qNum = String(qNum).trim().toUpperCase();
+        }
+      }
+
+      // หากเป็นพรีออเดอร์ (isPreorder === true):
+      // ให้อัปเดต status เป็น 'in_queue' เพื่อส่งเข้าเมนู "จัดการคิวผลิตและจัดส่ง"
+      // หากเป็นสินค้าพร้อมส่ง/มีในสต็อก (isPreorder === false หรืออื่นๆ):
+      // ให้อัปเดต status เป็น 'paid' เพื่อส่งเข้าเมนู "คำสั่งซื้อสำเร็จ" (แท็บ "รายการคำสั่งซื้อกำลังดำเนินการ") ทันที
+      if (isSupabaseConfigured && supabase) {
+        try {
+          if (isPreorder) {
+            await supabase
+              .from('orders')
+              .update({
+                status: 'in_queue',
+                order_status: 'in_queue',
+                queue_status: 'waiting_production',
+                queue_stage: 1,
+                payment_status: 'deposit_paid',
+                product_type: 'pre_order',
+                order_type: 'preorder',
+                is_preorder: true,
+                queue_number: qNum,
+                queue_id: qNum,
+                is_deleted: false,
+                updated_at: new Date().toISOString()
+              })
+              .eq('id', targetOrderId);
+
+            await supabaseDeliveries.upsert({
+              order_id: targetOrderId,
+              delivery_status: 'waiting_production',
+              queue_number: qNum
+            });
+          } else {
+            await supabase
+              .from('orders')
+              .update({
+                status: 'paid',
+                order_status: 'paid',
+                payment_status: 'paid',
+                product_type: 'in_stock',
+                order_type: 'instock',
+                is_preorder: false,
+                is_deleted: false,
+                delivery_status: 'ready_to_ship',
+                updated_at: new Date().toISOString()
+              })
+              .eq('id', targetOrderId);
+
+            await supabaseDeliveries.upsert({
+              order_id: targetOrderId,
+              delivery_status: 'ready_to_ship'
+            });
+          }
+        } catch (updateErr) {
+          console.warn('Direct Supabase update error in approve handler:', updateErr);
+        }
+      }
+
+      const result: any = await supabaseOrders.approve(targetOrderId);
+      const assignedQ = (typeof result === 'object' && result?.queueNumber) || qNum || ord.queue_number || ord.queue_id || formatQueueId(ord);
+      const approvalMsg = isPreorder
+        ? `การชำระเงินเสร็จสิ้น! คำสั่งซื้อ #${targetOrderId} เป็นสินค้าสั่งผลิต ลำดับคิวการผลิตเริ่มต้นแล้ว [${assignedQ}] โรงงานเริ่มกระบวนการผลิตทันที`
+        : `การชำระเงินเสร็จสิ้น! คำสั่งซื้อ #${targetOrderId} เป็นสินค้าพร้อมส่ง คลังสินค้ากำลังเตรียมจัดส่งตรงถึงคุณ`;
+
+      const newNoti = {
+        id: 'noti-appr-' + Date.now(),
+        title: 'การชำระเงินเสร็จสิ้น!',
+        message: approvalMsg,
+        type: 'order' as const,
+        date: 'เมื่อครู่',
+        isRead: false
+      };
+
+      setNotifications(prev => [newNoti, ...prev]);
+
+      try {
+        const saved = JSON.parse(localStorage.getItem('pornpong_notifications') || '[]');
+        localStorage.setItem('pornpong_notifications', JSON.stringify([newNoti, ...saved]));
+      } catch {}
+
+      try {
+        const unshown = JSON.parse(localStorage.getItem('pornpong_unshown_approvals') || '[]');
+        unshown.push({ orderId: targetOrderId, message: approvalMsg, timestamp: Date.now() });
+        localStorage.setItem('pornpong_unshown_approvals', JSON.stringify(unshown));
+      } catch {}
+
+      window.dispatchEvent(new CustomEvent('pornpong-order-approved', {
+        detail: { orderId: targetOrderId, notification: newNoti }
+      }));
+
+      // Immediately update adminOrders state so the destination tab reflects it instantly
+      setAdminOrders(prev => {
+        const updatedOrder = {
+          ...ord,
+          id: targetOrderId,
+          status: isPreorder ? 'in_queue' : 'paid',
+          order_status: isPreorder ? 'in_queue' : 'paid',
+          queue_status: isPreorder ? 'waiting_production' : undefined,
+          queue_stage: isPreorder ? 1 : undefined,
+          payment_status: isPreorder ? 'deposit_paid' : 'paid',
+          product_type: isPreorder ? 'pre_order' : 'in_stock',
+          order_type: isPreorder ? 'preorder' : 'instock',
+          is_preorder: isPreorder,
+          is_deleted: false,
+          delivery_status: isPreorder ? 'waiting_production' : 'ready_to_ship',
+          ...(isPreorder ? { queue_number: assignedQ, queue_id: assignedQ, queue_stage: 1 } : {})
+        };
+        const exists = prev.some(o => String(o.id) === targetOrderId);
+        return exists
+          ? prev.map(o => String(o.id) === targetOrderId ? updatedOrder : o)
+          : [updatedOrder, ...prev];
+      });
+
+      if (isPreorder) {
+        triggerToast(`อนุมัติการชำระเงิน #${targetOrderId} (สินค้าสั่งผลิต) สำเร็จ! ออกเลขคิว [${assignedQ}] และส่งเข้าเมนู "จัดการคิวผลิตและจัดส่ง" เรียบร้อยแล้ว`);
+      } else {
+        triggerToast(`อนุมัติการชำระเงิน #${targetOrderId} (สินค้าพร้อมส่ง) สำเร็จ! ส่งเข้าเมนู "คำสั่งซื้อสำเร็จ" (แท็บ รายการคำสั่งซื้อกำลังดำเนินการ) เรียบร้อยแล้ว`);
+      }
+
+      setWaitingVerifyOrders(prev => prev.filter(o => String(o.id) !== targetOrderId));
+      await reloadWaitingVerifyOrders();
+      await reloadOrders();
+      window.dispatchEvent(new Event('orders-updated'));
+      window.dispatchEvent(new Event('orders_updated'));
+      if (isPreorder) {
+        window.dispatchEvent(new CustomEvent('pornpong-queue-updated', { detail: { orderId: targetOrderId, queue_number: assignedQ } }));
+      }
+    } catch (err: any) {
+      console.error('Approve payment error:', err);
+      triggerToast('ข้อผิดพลาด: ' + (err?.message || 'ไม่สามารถอนุมัติได้'));
+      setWaitingVerifyOrders(prev => prev.filter(o => String(o.id) !== targetOrderId));
+      await reloadWaitingVerifyOrders();
+    } finally {
+      setIsVerifying(null);
+    }
+  };
+
+  const verifyPayment = handleApprovePayment;
+
+  // -------------------------------------------------------------
   // QUEUE MANAGEMENT STATE & HANDLERS (4-STAGE END-TO-END)
   // -------------------------------------------------------------
   const [activeProductionQueueId, setActiveProductionQueueId] = React.useState<string>(() => {
@@ -1348,10 +1529,21 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
   // Sorted Queue Orders (ordered by Q-YYMM-XXX) - Pre-Orders only, In-Stock items auto-bypass production queue
   const sortedQueueOrders = React.useMemo(() => {
     const preOrderOrders = adminOrders.filter(ord => {
+      if (!ord) return false;
       if (ord.is_deleted === true || ord.is_deleted === 'true') return false;
-      const isPre = ord.product_type === 'pre_order' || ord.order_type === 'pre_order' || isOrderPreOrder(ord);
+      const isPre = Boolean(
+        ord.is_preorder === true ||
+        ord.order_type === 'preorder' ||
+        ord.type === 'preorder' ||
+        ord.product_type === 'pre_order' ||
+        ord.order_type === 'pre_order' ||
+        (typeof isOrderPreOrder === 'function' && isOrderPreOrder(ord))
+      );
       if (!isPre) return false;
-      return isOrderApproved(ord) || ord.status === 'producing' || ord.queue_status === 'waiting_production';
+      const s = String(ord.status || '').toLowerCase().trim();
+      const os = String(ord.order_status || '').toLowerCase().trim();
+      const qs = String(ord.queue_status || '').toLowerCase().trim();
+      return isOrderApproved(ord) || s === 'in_queue' || s === 'producing' || os === 'in_queue' || os === 'producing' || qs === 'waiting_production';
     });
     const list = preOrderOrders.map((ord, idx) => {
       const qId = ord.queue_id || ord.queue_number || formatQueueId(ord, idx);
@@ -2005,87 +2197,81 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
     if (['cancelled', 'payment_rejected', 'rejected'].includes(s) || ['cancelled', 'payment_rejected', 'rejected'].includes(ps)) return false;
     if (s === 'pending' && ps !== 'verified' && ps !== 'paid') return false;
 
-    // Allowed approved statuses per requirement: 'paid', 'ready_to_ship', 'producing', 'shipped', 'completed'
-    const approved = ['paid', 'ready_to_ship', 'producing', 'manufacturing', 'shipped', 'shipping', 'in_transit', 'ready_for_shipping', 'completed', 'delivered'];
+    // Allowed approved statuses per requirement
+    const approved = ['paid', 'in_queue', 'ready_to_ship', 'producing', 'manufacturing', 'shipped', 'shipping', 'in_transit', 'ready_for_shipping', 'completed', 'delivered', 'confirmed', 'processing', 'pending_shipment'];
     return approved.includes(s) || approved.includes(os) || ['verified', 'paid', 'approved', 'deposit_paid'].includes(ps);
   };
 
   const isOrderCompleted = (o: any) => {
-    const s = (o.status || '').toLowerCase();
-    const os = (o.order_status || '').toLowerCase();
-    const ds = (o.delivery_status || '').toLowerCase();
+    const s = String(o.status || '').toLowerCase().trim();
+    const os = String(o.order_status || '').toLowerCase().trim();
+    const ds = String(o.delivery_status || '').toLowerCase().trim();
     return s === 'delivered' || s === 'completed' || os === 'delivered' || os === 'completed' || ds === 'delivered' || ds === 'completed';
   };
 
-  const approvedAdminOrders = React.useMemo(() => {
-    return adminOrders.filter(o => isOrderApproved(o));
-  }, [adminOrders]);
-
+  // Requirement 2:
+  // Tab 1: รายการคำสั่งซื้อกำลังดำเนินการ (Active Orders)
+  // แสดงเฉพาะออเดอร์ที่ 'ไม่ใช่พรีออเดอร์' และมี status เป็น:
+  // ['paid', 'processing', 'ready_to_ship', 'shipped', 'confirmed', 'pending_shipment']
   const activeOrdersList = React.useMemo(() => {
-    return approvedAdminOrders.filter(o => {
-      // Must not be deleted (is_deleted === true)
-      if (o.is_deleted === true || o.is_deleted === 'true') return false;
+    return adminOrders.filter(order => {
+      if (!order) return false;
+      if (order.is_deleted === true || order.is_deleted === 'true') return false;
 
-      // Must not be completed
-      if (isOrderCompleted(o)) return false;
+      const isPre = Boolean(
+        order.is_preorder === true ||
+        order.order_type === 'preorder' ||
+        order.type === 'preorder' ||
+        order.product_type === 'pre_order' ||
+        order.orderType === 'preorder' ||
+        (typeof isOrderPreOrder === 'function' && isOrderPreOrder(order))
+      );
 
-      const s = String(o.status || '').toLowerCase().trim();
-      const os = String(o.order_status || '').toLowerCase().trim();
-      const ds = String(o.delivery_status || '').toLowerCase().trim();
-      const ps = String(o.payment_status || '').toLowerCase().trim();
-      const prodType = String(o.product_type || o.order_type || o.orderType || '').toLowerCase().trim();
-
-      // CRITICAL: ***ห้ามนำออเดอร์ที่มี status === 'producing' หรือ product_type === 'pre_order' ไปแสดงในหน้า "คำสั่งซื้อสำเร็จ" เด็ดขาด***
-      if (s === 'producing' || os === 'producing' || prodType === 'pre_order' || prodType === 'preorder' || isOrderPreOrder(o)) {
-        return false;
-      }
-
-      // Must be in_stock product
-      if (o.product_type && o.product_type !== 'in_stock' && o.product_type !== 'instock') {
-        return false;
-      }
-
-      // Rule: ห้ามแสดงออเดอร์ที่ยังมี status = 'pending_verification' หรือ 'pending' ในหน้านี้เด็ดขาด
-      if (s === 'pending_verification' || s === 'pending' || s === 'waiting_payment' ||
-          os === 'pending_verification' || os === 'pending' ||
-          ps === 'pending_verification' || ps === 'pending') {
-        return false;
-      }
-
-      // Query criteria: .or('status.eq.ready_to_ship,status.eq.paid,status.eq.in_transit')
-      const allowedActiveStatuses = [
-        'ready_to_ship',
+      const activeStatuses = [
         'paid',
-        'in_transit',
-        'ready_for_shipping',
+        'processing',
+        'ready_to_ship',
         'shipped',
-        'shipping'
+        'confirmed',
+        'pending_shipment',
+        'in_transit',
+        'shipping',
+        'ready_for_shipping'
       ];
-      return allowedActiveStatuses.includes(s) || 
-             allowedActiveStatuses.includes(os) || 
-             allowedActiveStatuses.includes(ds) ||
-             ps === 'paid';
+
+      const s = String(order.status || '').toLowerCase().trim();
+      const os = String(order.order_status || '').toLowerCase().trim();
+      const ds = String(order.delivery_status || '').toLowerCase().trim();
+
+      if (s === 'delivered' || s === 'completed' || os === 'delivered' || os === 'completed' || ds === 'delivered' || ds === 'completed') {
+        return false;
+      }
+
+      return !isPre && (activeStatuses.includes(s) || activeStatuses.includes(os) || activeStatuses.includes(ds));
     }).sort((a: any, b: any) => {
       const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
       const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
       return timeB - timeA;
     });
-  }, [approvedAdminOrders]);
+  }, [adminOrders]);
 
-  // Requirement 2: Completed History Tab - แสดงเฉพาะออเดอร์ที่มี status เป็น 'delivered' หรือ 'completed' และยังไม่ถูกลบ (is_deleted = false)
-  // ห้ามนำ pre_order หรือ producing มาแสดงในหน้านี้
+  const approvedAdminOrders = activeOrdersList;
+
+  // Tab 2: ประวัติคำสั่งซื้อสำเร็จ (Completed History)
+  // orders.filter(order => order.status === 'completed' || order.status === 'delivered')
   const completedOrdersList = React.useMemo(() => {
     return adminOrders
-      .filter(o => {
-        if (!o) return false;
-        if (o.is_deleted === true || o.is_deleted === 'true') return false;
-        const prodType = String(o.product_type || o.order_type || o.orderType || '').toLowerCase().trim();
-        const s = String(o.status || '').toLowerCase().trim();
-        const os = String(o.order_status || '').toLowerCase().trim();
-        if (prodType === 'pre_order' || prodType === 'preorder' || s === 'producing' || os === 'producing' || isOrderPreOrder(o)) {
-          return false;
-        }
-        return isOrderCompleted(o);
+      .filter(order => {
+        if (!order) return false;
+        if (order.is_deleted === true || order.is_deleted === 'true') return false;
+        const s = String(order.status || '').toLowerCase().trim();
+        const os = String(order.order_status || '').toLowerCase().trim();
+        const ds = String(order.delivery_status || '').toLowerCase().trim();
+        return (
+          s === 'completed' || s === 'delivered' ||
+          os === 'completed' || os === 'delivered' ||
+          ds === 'completed' || ds === 'delivered'
+        );
       })
       .sort((a: any, b: any) => {
         const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
@@ -2094,9 +2280,23 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
       });
   }, [adminOrders]);
 
+  // Tab 3: รายการที่ถูกลบ (Recycle Bin / Trash)
+  // orders.filter(order => order.status === 'cancelled' || order.is_deleted === true)
   const trashOrdersList = React.useMemo(() => {
     return adminOrders
-      .filter(o => o && o.is_deleted === true)
+      .filter(order => {
+        if (!order) return false;
+        const s = String(order.status || '').toLowerCase().trim();
+        const os = String(order.order_status || '').toLowerCase().trim();
+        const ps = String(order.payment_status || '').toLowerCase().trim();
+        return (
+          s === 'cancelled' ||
+          os === 'cancelled' ||
+          ps === 'cancelled' ||
+          order.is_deleted === true ||
+          order.is_deleted === 'true'
+        );
+      })
       .sort((a: any, b: any) => {
         const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
         const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
@@ -2107,33 +2307,52 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
   const filteredActiveOrders = React.useMemo(() => {
     const term = ordersSearch.toLowerCase().trim();
     if (!term) return activeOrdersList;
-    return activeOrdersList.filter(o => 
-      (o.customerName || '').toLowerCase().includes(term) ||
-      (o.id || '').toLowerCase().includes(term) ||
-      (o.productName || '').toLowerCase().includes(term)
-    );
+    return activeOrdersList.filter(o => {
+      const payId = o.payment_id || o.id?.slice(0, 8) || o.id || '';
+      const custName = o.customer_name || o.profiles?.full_name || o.shipping_name || o.customerName || '';
+      const prodName = o.product_name || o.order_items?.[0]?.product_name || o.details || o.productName || '';
+      const trackNo = o.tracking_number || o.shipmentNo || o.shipment_no || '';
+      return (
+        custName.toLowerCase().includes(term) ||
+        payId.toLowerCase().includes(term) ||
+        prodName.toLowerCase().includes(term) ||
+        trackNo.toLowerCase().includes(term)
+      );
+    });
   }, [activeOrdersList, ordersSearch]);
 
   const filteredCompletedOrders = React.useMemo(() => {
     const term = ordersSearch.toLowerCase().trim();
     if (!term) return completedOrdersList;
-    return completedOrdersList.filter(o => 
-      (o.customerName || '').toLowerCase().includes(term) ||
-      (o.id || '').toLowerCase().includes(term) ||
-      (o.productName || '').toLowerCase().includes(term) ||
-      (o.shipmentNo || '').toLowerCase().includes(term)
-    );
+    return completedOrdersList.filter(o => {
+      const payId = o.payment_id || o.id?.slice(0, 8) || o.id || '';
+      const custName = o.customer_name || o.profiles?.full_name || o.shipping_name || o.customerName || '';
+      const prodName = o.product_name || o.order_items?.[0]?.product_name || o.details || o.productName || '';
+      const trackNo = o.tracking_number || o.shipmentNo || o.shipment_no || '';
+      return (
+        custName.toLowerCase().includes(term) ||
+        payId.toLowerCase().includes(term) ||
+        prodName.toLowerCase().includes(term) ||
+        trackNo.toLowerCase().includes(term)
+      );
+    });
   }, [completedOrdersList, ordersSearch]);
 
   const filteredTrashOrders = React.useMemo(() => {
     const term = ordersSearch.toLowerCase().trim();
     if (!term) return trashOrdersList;
-    return trashOrdersList.filter(o => 
-      (o.customerName || o.customer_name || '').toLowerCase().includes(term) ||
-      (o.id || '').toLowerCase().includes(term) ||
-      (o.productName || o.product_name || '').toLowerCase().includes(term) ||
-      (o.shipmentNo || o.tracking_number || '').toLowerCase().includes(term)
-    );
+    return trashOrdersList.filter(o => {
+      const payId = o.payment_id || o.id?.slice(0, 8) || o.id || '';
+      const custName = o.customer_name || o.profiles?.full_name || o.shipping_name || o.customerName || '';
+      const prodName = o.product_name || o.order_items?.[0]?.product_name || o.details || o.productName || '';
+      const trackNo = o.tracking_number || o.shipmentNo || o.shipment_no || '';
+      return (
+        custName.toLowerCase().includes(term) ||
+        payId.toLowerCase().includes(term) ||
+        prodName.toLowerCase().includes(term) ||
+        trackNo.toLowerCase().includes(term)
+      );
+    });
   }, [trashOrdersList, ordersSearch]);
 
   const filteredAdminOrders = 
@@ -2477,24 +2696,33 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                               <td colSpan={4} className="py-6 text-center text-slate-400 font-medium">ยังไม่มีข้อมูล</td>
                             </tr>
                           ) : (
-                            approvedAdminOrders.slice(0, 3).map((order) => (
-                              <tr key={order.id} className="hover:bg-slate-50/80">
-                                <td className="py-2 px-3 font-semibold text-slate-800">{order.id}</td>
-                                <td className="py-2 px-2 text-slate-600 font-medium">{order.customerName}</td>
-                                <td className="py-2 px-2 text-right font-bold text-emerald-600">฿{order.amount.toLocaleString()}</td>
-                                <td className="py-2 px-3 text-center">
-                                  <span className={`inline-flex px-2 py-0.5 rounded-full text-[9px] font-bold ${
-                                    order.status === 'Delivered' 
-                                      ? 'bg-emerald-50 border border-emerald-200 text-emerald-700'
-                                      : order.status === 'Shipping'
-                                        ? 'bg-sky-50 border border-sky-200 text-sky-700'
-                                        : 'bg-amber-50 border border-amber-200 text-amber-700'
-                                  }`}>
-                                    {order.status === 'Delivered' ? 'ส่งมอบเสร็จ' : order.status === 'Shipping' ? 'กำลังขนส่ง' : 'รอชำระ'}
-                                  </span>
-                                </td>
-                              </tr>
-                            ))
+                            approvedAdminOrders.slice(0, 3).map((order) => {
+                              const oId = order.payment_id || (order.id ? (String(order.id).startsWith('ORD-') ? order.id : String(order.id).slice(0, 8)) : '-');
+                              const cName = order.customer_name || order.profiles?.full_name || order.shipping_name || order.customerName || '-';
+                              const amt = Number(order.total_amount || order.price || order.amount || 0);
+                              const s = String(order.status || order.delivery_status || '').toLowerCase();
+                              const isDeliv = s === 'delivered' || s === 'completed';
+                              const isShip = s === 'shipping' || s === 'in_transit' || s === 'shipped';
+
+                              return (
+                                <tr key={order.id} className="hover:bg-slate-50/80">
+                                  <td className="py-2 px-3 font-semibold text-slate-800">{oId}</td>
+                                  <td className="py-2 px-2 text-slate-600 font-medium">{cName}</td>
+                                  <td className="py-2 px-2 text-right font-bold text-emerald-600">฿{amt.toLocaleString()}</td>
+                                  <td className="py-2 px-3 text-center">
+                                    <span className={`inline-flex px-2 py-0.5 rounded-full text-[9px] font-bold ${
+                                      isDeliv 
+                                        ? 'bg-emerald-50 border border-emerald-200 text-emerald-700'
+                                        : isShip
+                                          ? 'bg-sky-50 border border-sky-200 text-sky-700'
+                                          : 'bg-amber-50 border border-amber-200 text-amber-700'
+                                    }`}>
+                                      {isDeliv ? 'ส่งมอบเสร็จ' : isShip ? 'กำลังขนส่ง' : 'พร้อมส่ง/ดำเนินการ'}
+                                    </span>
+                                  </td>
+                                </tr>
+                              );
+                            })
                           )}
                         </tbody>
                       </table>
@@ -3477,185 +3705,216 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                           </td>
                         </tr>
                       ) : (
-                        filteredAdminOrders.map((ord) => (
-                          <tr key={ord.id} className="hover:bg-slate-50/70 text-[11px] group/row">
-                            <td className="py-3.5 px-4 font-mono font-bold text-slate-700">
-                              <div className="flex items-center gap-2">
-                                <span>{ord.id}</span>
-                                {ordersTabFilter !== 'trash' && (
-                                  <button
-                                    type="button"
-                                    onClick={() => handleRequestDeleteOrder(ord)}
-                                    className="p-1 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer border border-transparent hover:border-rose-200"
-                                    title={`ลบรายการคำสั่งซื้อ ${ord.id}`}
-                                    id={`btn-delete-order-${ord.id}`}
-                                  >
-                                    <Trash2 size={13} />
-                                  </button>
+                        filteredAdminOrders.map((ord) => {
+                          // Requirement 3: ป้องกันปัญหาการแปลงข้อมูลผิดพลาดในตาราง (Safe Navigation ?.)
+                          const paymentId = ord.payment_id || (ord.id ? (String(ord.id).startsWith('ORD-') ? ord.id : String(ord.id).slice(0, 8)) : '-') || '-';
+                          const customerName = ord.customer_name || ord.profiles?.full_name || ord.shipping_name || ord.customerName || '-';
+                          const productName = ord.product_name || ord.order_items?.[0]?.product_name || ord.details || ord.productName || '-';
+                          const boatColor = ord.color || ord.order_items?.[0]?.color || ord.selected_color || '-';
+                          const totalAmountFormatted = Number(ord.total_amount || ord.price || ord.amount || 0).toLocaleString() + ' บาท';
+                          const trackingNumber = ord.tracking_number || ord.shipmentNo || ord.shipment_no || '-';
+
+                          return (
+                            <tr key={ord.id} className="hover:bg-slate-50/70 text-[11px] group/row">
+                              {/* 1. เลขที่ใบชำระ */}
+                              <td className="py-3.5 px-4 font-mono font-bold text-slate-700">
+                                <div className="flex items-center gap-2">
+                                  <span>{paymentId}</span>
+                                  {ordersTabFilter !== 'trash' && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleRequestDeleteOrder(ord)}
+                                      className="p-1 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer border border-transparent hover:border-rose-200"
+                                      title={`ลบรายการคำสั่งซื้อ ${ord.id}`}
+                                      id={`btn-delete-order-${ord.id}`}
+                                    >
+                                      <Trash2 size={13} />
+                                    </button>
+                                  )}
+                                </div>
+                              </td>
+
+                              {/* 2. ชื่อคู่ค้าจัดส่ง / ผู้สั่ง */}
+                              <td className="py-3.5 px-3">
+                                <span className="font-bold block text-slate-800">{customerName}</span>
+                                <span className="text-[9px] text-slate-400">
+                                  {ord.created_at ? new Date(ord.created_at).toLocaleDateString('th-TH') : ord.date ? `จดทะเบียน ${ord.date}` : ''}
+                                </span>
+                              </td>
+
+                              {/* 3. รายละเอียดเรือพลาสติก */}
+                              <td className="py-3.5 px-3 max-w-[200px] truncate text-slate-700 font-medium" title={productName}>
+                                {productName}
+                              </td>
+
+                              {/* 4. สีเรือที่สั่ง */}
+                              <td className="py-3.5 px-3 text-slate-600 font-medium">{boatColor}</td>
+
+                              {/* 5. ยอดเรียกเก็บ */}
+                              <td className="py-3.5 px-3 text-right font-black text-emerald-600 font-mono">
+                                {totalAmountFormatted}
+                              </td>
+
+                              {/* 6. รหัสสิ่งส่งของขนส่ง */}
+                              <td className="py-3.5 px-3 text-center">
+                                {trackingNumber !== '-' ? (
+                                  <code className="bg-sky-50 border border-sky-200 rounded-md px-2 py-0.5 text-sky-700 font-mono text-[10px] font-bold inline-flex items-center gap-1">
+                                    <Truck size={10} /> {trackingNumber}
+                                  </code>
+                                ) : (
+                                  <span className="text-slate-400 italic">-</span>
                                 )}
-                              </div>
-                            </td>
-                            <td className="py-3.5 px-3">
-                              <span className="font-bold block text-slate-800">{ord.customerName}</span>
-                              <span className="text-[9px] text-slate-400">จดทะเบียน {ord.date}</span>
-                            </td>
-                            <td className="py-3.5 px-3 max-w-[200px] truncate text-slate-700 font-medium" title={ord.productName}>
-                              {ord.productName}
-                            </td>
-                            <td className="py-3.5 px-3 text-slate-600 font-medium">{ord.color}</td>
-                            <td className="py-3.5 px-3 text-right font-black text-emerald-600 font-mono">
-                              ฿{ord.amount.toLocaleString()}
-                            </td>
-                            <td className="py-3.5 px-3 text-center">
-                              {ord.shipmentNo ? (
-                                <code className="bg-sky-50 border border-sky-200 rounded-md px-2 py-0.5 text-sky-700 font-mono text-[10px] font-bold inline-flex items-center gap-1">
-                                  <Truck size={10} /> {ord.shipmentNo}
-                                </code>
-                              ) : (
-                                <span className="text-slate-400 italic">รอรันลำเลียงรหัสคิว</span>
-                              )}
-                            </td>
-                            <td className="py-3.5 px-3 text-center">
-                              {ordersTabFilter === 'active' ? (
-                                (() => {
-                                  const isPre = isOrderPreOrder(ord);
-                                  const sLower = String(ord.status || '').toLowerCase().trim();
-                                  const osLower = String(ord.order_status || '').toLowerCase().trim();
-                                  const delivLower = String(ord.delivery_status || '').toLowerCase().trim();
+                              </td>
 
-                                  // 4. [จัดส่งสำเร็จ] (Delivered)
-                                  const isDeliveredActive = sLower === 'completed' || sLower === 'delivered' || osLower === 'completed' || osLower === 'delivered' || delivLower === 'delivered' || delivLower === 'completed';
+                              {/* 7. ขั้นตอนจัดส่ง (4 ขั้นตอน) / การจัดการ */}
+                              <td className="py-3.5 px-3 text-center">
+                                {ordersTabFilter === 'active' ? (
+                                  (() => {
+                                    const sLower = String(ord.status || '').toLowerCase().trim();
+                                    const osLower = String(ord.order_status || '').toLowerCase().trim();
+                                    const delivLower = String(ord.delivery_status || '').toLowerCase().trim();
+                                    const stepFromProp = Number(ord.delivery_step || 0);
 
-                                  // 3. [อยู่ระหว่างจัดส่ง] (In Transit) - Active when status/order_status/delivery_status is in_transit or shipping
-                                  const isInTransitActive = !isDeliveredActive && (
-                                    sLower === 'in_transit' || sLower === 'shipping' || sLower === 'shipped' ||
-                                    osLower === 'in_transit' || osLower === 'shipping' || osLower === 'shipped' ||
-                                    delivLower === 'in_transit' || delivLower === 'shipping' ||
-                                    ord.status === 'อยู่ระหว่างจัดส่ง' || ord.stageLabel === 'อยู่ระหว่างจัดส่ง'
-                                  );
+                                    // คำนวณขั้นตอนจัดส่ง 1-4
+                                    let currentStep = 1;
+                                    if (stepFromProp >= 1 && stepFromProp <= 4) {
+                                      currentStep = stepFromProp;
+                                    } else if (sLower === 'completed' || sLower === 'delivered' || osLower === 'completed' || osLower === 'delivered' || delivLower === 'delivered' || delivLower === 'completed') {
+                                      currentStep = 4;
+                                    } else if (
+                                      sLower === 'in_transit' || sLower === 'shipping' || sLower === 'shipped' ||
+                                      osLower === 'in_transit' || osLower === 'shipping' || osLower === 'shipped' ||
+                                      delivLower === 'in_transit' || delivLower === 'shipping' ||
+                                      ord.status === 'อยู่ระหว่างจัดส่ง' || ord.stageLabel === 'อยู่ระหว่างจัดส่ง'
+                                    ) {
+                                      currentStep = 3;
+                                    } else if (
+                                      sLower === 'ready_to_ship' || sLower === 'ready_for_shipping' || sLower === 'ready' ||
+                                      osLower === 'ready_to_ship' || osLower === 'ready_for_shipping' ||
+                                      delivLower === 'ready_to_ship' || delivLower === 'ready_for_shipping'
+                                    ) {
+                                      currentStep = 2;
+                                    } else {
+                                      currentStep = 1;
+                                    }
 
-                                  // 2. [รอขนย้าย] (Ready for Shipping)
-                                  // For in-stock items: start at ready for shipping if not yet in-transit/delivered
-                                  const isReadyActive = isPre
-                                    ? ((sLower === 'ready_for_shipping' || sLower === 'ready' || osLower === 'ready_for_shipping' || delivLower === 'ready_for_shipping') && !isInTransitActive && !isDeliveredActive)
-                                    : (!isInTransitActive && !isDeliveredActive);
+                                    const isStep1Active = currentStep === 1;
+                                    const isStep2Active = currentStep === 2;
+                                    const isStep3Active = currentStep === 3;
+                                    const isStep4Active = currentStep === 4;
 
-                                  // 1. [กำลังผลิต] (Manufacturing - Only for Pre-Order)
-                                  const isMfgActive = isPre && (
-                                    sLower === 'manufacturing' || (
-                                      !isReadyActive && !isInTransitActive && !isDeliveredActive
-                                    )
-                                  );
+                                    return (
+                                      <div className="flex flex-col items-center gap-1.5 py-0.5">
+                                        {/* Stepper Progress Dots (4 ขั้นตอน) */}
+                                        <div className="flex items-center justify-center gap-1 mb-0.5">
+                                          {[1, 2, 3, 4].map((st) => (
+                                            <div
+                                              key={st}
+                                              className={`h-1.5 rounded-full transition-all ${
+                                                st === currentStep
+                                                  ? currentStep === 4 ? 'w-5 bg-emerald-600 animate-pulse' :
+                                                    currentStep === 3 ? 'w-5 bg-sky-500 animate-pulse' :
+                                                    currentStep === 2 ? 'w-5 bg-amber-500 animate-pulse' :
+                                                    'w-5 bg-emerald-500 animate-pulse'
+                                                  : st < currentStep
+                                                  ? 'w-3 bg-emerald-500'
+                                                  : 'w-3 bg-slate-200'
+                                              }`}
+                                            />
+                                          ))}
+                                        </div>
 
-                                  return (
-                                    <div className="flex flex-col items-center gap-1.5 py-0.5">
-                                      {/* Order Type Badge */}
-                                      <div className="flex items-center gap-1 mb-0.5">
-                                        {isPre ? (
-                                          <span className="text-[9px] font-bold text-amber-700 bg-amber-50 px-1.5 py-0.2 rounded border border-amber-200 inline-flex items-center gap-0.5">
-                                            <Flame size={9} /> สั่งผลิต
-                                          </span>
-                                        ) : (
-                                          <span className="text-[9px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200 inline-flex items-center gap-0.5">
-                                            <Package size={9} /> สินค้าพร้อมส่ง
-                                          </span>
-                                        )}
-                                      </div>
-
-                                      <div className="flex items-center justify-center gap-1 flex-wrap">
-                                        {/* ขั้นตอน 1: กำลังผลิต (เฉพาะสินค้า Pre-Order / สั่งผลิต เท่านั้น - สินค้าในสต็อก Auto-Bypass) */}
-                                        {isPre && (
+                                        <div className="flex items-center justify-center gap-1 flex-wrap">
+                                          {/* ขั้นตอน 1: ชำระแล้ว */}
                                           <button
                                             type="button"
-                                            onClick={() => handleSelectManufacturing(ord)}
+                                            className={`px-2 py-1 rounded-md text-[9px] font-black transition-all ${
+                                              isStep1Active
+                                                ? 'bg-emerald-600 text-white shadow-xs'
+                                                : 'bg-slate-100 text-slate-600'
+                                            }`}
+                                            title="ขั้นตอนที่ 1: ชำระเงินเรียบร้อยแล้ว (พร้อมจัดเตรียมสินค้า)"
+                                          >
+                                            1. ชำระแล้ว
+                                          </button>
+
+                                          {/* ขั้นตอน 2: รอจัดส่ง */}
+                                          <button
+                                            type="button"
+                                            onClick={() => handleOpenReadyShippingModal(ord)}
                                             className={`px-2 py-1 rounded-md text-[9px] font-black cursor-pointer transition-all ${
-                                              isMfgActive
-                                                ? 'bg-violet-600 hover:bg-violet-700 text-white shadow-xs ring-1 ring-violet-700/20'
+                                              isStep2Active
+                                                ? 'bg-amber-500 hover:bg-amber-600 text-white shadow-xs ring-1 ring-amber-600/20'
                                                 : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
                                             }`}
-                                            title="ขั้นตอนที่ 1: กำลังผลิต (กำลังหลอมเรือตามสเปก)"
+                                            title="ขั้นตอนที่ 2: รอขนย้าย / รอจัดส่ง (คลิกเพื่อระบุวันคาดส่ง)"
                                           >
-                                            กำลังผลิต
+                                            2. รอจัดส่ง
                                           </button>
-                                        )}
 
-                                        {/* ขั้นตอน 2: รอขนย้าย / รอจัดส่ง */}
-                                        <button
-                                          type="button"
-                                          onClick={() => handleOpenReadyShippingModal(ord)}
-                                          className={`px-2 py-1 rounded-md text-[9px] font-black cursor-pointer transition-all ${
-                                            isReadyActive
-                                              ? 'bg-amber-500 hover:bg-amber-600 text-white shadow-xs ring-1 ring-amber-600/20'
-                                              : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
-                                          }`}
-                                          title={isPre ? "ขั้นตอนที่ 2: รอขนย้าย (ระบุวัน/เวลา คาดว่าจะจัดส่ง)" : "ขั้นตอนเริ่มต้นสินค้าในสต็อก: รอจัดส่ง / รอขนย้าย"}
-                                        >
-                                          {isPre ? 'รอขนย้าย' : 'รอจัดส่ง'}
-                                        </button>
+                                          {/* ขั้นตอน 3: อยู่ระหว่างจัดส่ง */}
+                                          <div className="inline-flex items-center">
+                                            <button
+                                              type="button"
+                                              onClick={() => handleOpenInTransitModal(ord)}
+                                              className={`px-2.5 py-1 rounded-md text-[9px] font-black cursor-pointer transition-all flex items-center gap-1 ${
+                                                isStep3Active
+                                                  ? 'bg-sky-600 hover:bg-sky-700 text-white shadow-xs ring-2 ring-sky-500/40'
+                                                  : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
+                                              }`}
+                                              title="ขั้นตอนที่ 3: อยู่ระหว่างจัดส่ง (คลิกเพื่อบันทึกข้อมูลขนส่ง/คนขับ/Tracking)"
+                                              id={`btn-in-transit-${ord.id}`}
+                                            >
+                                              {isStep3Active && <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse"></span>}
+                                              <Truck size={10} className={isStep3Active ? 'text-white' : 'text-slate-500'} />
+                                              <span>3. กำลังส่ง</span>
+                                            </button>
+                                            <button
+                                              type="button"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleOpenInTransitModal(ord);
+                                              }}
+                                              className={`p-1 ml-0.5 rounded text-[8.5px] transition-colors cursor-pointer ${
+                                                isStep3Active ? 'text-sky-700 hover:bg-sky-100' : 'text-slate-400 hover:bg-slate-200'
+                                              }`}
+                                              title="แก้ไขข้อมูลขนส่ง / เบอร์คนขับ / Tracking"
+                                            >
+                                              <Edit size={9} />
+                                            </button>
+                                          </div>
 
-                                        {/* ขั้นตอน 3: อยู่ระหว่างจัดส่ง (เปิด Modal กรอกข้อมูลขนส่ง และ Active สีเขียวเมื่อ status === 'in_transit') */}
-                                        <div className="inline-flex items-center">
+                                          {/* ขั้นตอน 4: จัดส่งสำเร็จ */}
                                           <button
                                             type="button"
-                                            onClick={() => handleOpenInTransitModal(ord)}
-                                            className={`px-2.5 py-1 rounded-md text-[9px] font-black cursor-pointer transition-all flex items-center gap-1 ${
-                                              isInTransitActive
-                                                ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs ring-2 ring-emerald-500/40 font-black'
-                                                : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
+                                            onClick={() => handleSelectDelivered(ord)}
+                                            className={`px-2.5 py-1 rounded-md text-[9px] font-black cursor-pointer transition-all ${
+                                              isStep4Active
+                                                ? 'bg-emerald-700 text-white shadow-xs ring-1 ring-emerald-700/20'
+                                                : 'bg-slate-100 hover:bg-emerald-50 text-slate-600 hover:text-emerald-700'
                                             }`}
-                                            title="ขั้นตอนที่ 3: อยู่ระหว่างจัดส่ง (คลิกเพื่อเปิดหน้าต่างกรอกข้อมูลการจัดส่งสินค้าและเริ่มจัดส่ง)"
-                                            id={`btn-in-transit-${ord.id}`}
+                                            title="ขั้นตอนที่ 4: จัดส่งสำเร็จ (คลิกเพื่อส่งมอบสำเร็จและย้ายไปประวัติคำสั่งซื้อสำเร็จ)"
                                           >
-                                            {isInTransitActive && <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse"></span>}
-                                            <Truck size={10} className={isInTransitActive ? 'text-white' : 'text-slate-500'} />
-                                            <span>อยู่ระหว่างจัดส่ง</span>
-                                          </button>
-                                          <button
-                                            type="button"
-                                            onClick={(e) => {
-                                              e.stopPropagation();
-                                              handleOpenInTransitModal(ord);
-                                            }}
-                                            className={`p-1 ml-0.5 rounded text-[8.5px] transition-colors cursor-pointer ${
-                                              isInTransitActive ? 'text-emerald-700 hover:bg-emerald-100' : 'text-slate-400 hover:bg-slate-200'
-                                            }`}
-                                            title="แก้ไขข้อมูลขนส่ง / เบอร์คนขับ / Tracking"
-                                          >
-                                            <Edit size={9} />
+                                            ✓ 4. ส่งสำเร็จ
                                           </button>
                                         </div>
 
-                                        {/* ขั้นตอน 4: จัดส่งสำเร็จ */}
-                                        <button
-                                          type="button"
-                                          onClick={() => handleSelectDelivered(ord)}
-                                          className={`px-2.5 py-1 rounded-md text-[9px] font-black cursor-pointer transition-all ${
-                                            isDeliveredActive
-                                              ? 'bg-emerald-500 hover:bg-emerald-600 text-white shadow-xs ring-1 ring-emerald-600/20'
-                                              : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
-                                          }`}
-                                          title="ขั้นตอนที่ 4: จัดส่งสำเร็จ (คลิกเพื่อย้ายไปประวัติคำสั่งซื้อสำเร็จ)"
-                                        >
-                                          ✓ ส่งสำเร็จ
-                                        </button>
+                                        {/* ข้อมูลเสริมใต้ปุ่ม */}
+                                        {isStep2Active && ord.estimated_delivery_date && (
+                                          <span className="text-[9.5px] font-medium text-amber-800 bg-amber-50 border border-amber-200/80 px-2 py-0.5 rounded-md inline-flex items-center gap-1 max-w-[210px] truncate" title={ord.estimated_delivery_date}>
+                                            <Clock size={10} className="shrink-0 text-amber-600" />
+                                            <span className="truncate">คาดส่ง: {ord.estimated_delivery_date}</span>
+                                          </span>
+                                        )}
+                                        {isStep3Active && (
+                                          <span className="text-[9.5px] font-medium text-sky-800 bg-sky-50 border border-sky-200 px-2 py-0.5 rounded-md inline-flex items-center gap-1 max-w-[210px] truncate" title={`${ord.shipping_carrier || ord.carrier_name || 'รถโรงงาน'} โทร: ${ord.driver_phone || '-'}`}>
+                                            <Truck size={10} className="shrink-0 text-sky-600" />
+                                            <span className="truncate">{ord.shipping_carrier || ord.carrier_name || 'ขนส่ง'}: {ord.driver_phone || ord.tracking_number || ord.shipmentNo || ord.shipment_no || 'กำลังเดินทาง'}</span>
+                                          </span>
+                                        )}
                                       </div>
-
-                                      {/* ข้อมูลเสริมใต้ปุ่ม */}
-                                      {isReadyActive && ord.estimated_delivery_date && (
-                                        <span className="text-[9.5px] font-medium text-amber-800 bg-amber-50 border border-amber-200/80 px-2 py-0.5 rounded-md inline-flex items-center gap-1 max-w-[210px] truncate" title={ord.estimated_delivery_date}>
-                                          <Clock size={10} className="shrink-0 text-amber-600" />
-                                          <span className="truncate">คาดส่ง: {ord.estimated_delivery_date}</span>
-                                        </span>
-                                      )}
-                                      {isInTransitActive && (
-                                        <span className="text-[9.5px] font-medium text-emerald-800 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md inline-flex items-center gap-1 max-w-[210px] truncate" title={`${ord.shipping_carrier || ord.carrier_name || 'รถโรงงาน'} โทร: ${ord.driver_phone || '-'}`}>
-                                          <Truck size={10} className="shrink-0 text-emerald-600" />
-                                          <span className="truncate">{ord.shipping_carrier || ord.carrier_name || 'ขนส่ง'}: {ord.driver_phone || ord.tracking_number || ord.shipmentNo || ord.shipment_no || 'กำลังเดินทาง'}</span>
-                                        </span>
-                                      )}
-                                    </div>
-                                  );
-                                })()
+                                    );
+                                  })()
                               ) : ordersTabFilter === 'trash' ? (
                                 <div className="flex items-center justify-center gap-2">
                                   <span className="px-2.5 py-0.5 rounded-full bg-rose-50 border border-rose-200 text-rose-700 font-bold text-[9.5px] inline-flex items-center gap-1">
@@ -3701,8 +3960,9 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                                 </div>
                               )}
                             </td>
-                          </tr>
-                        ))
+                            </tr>
+                          );
+                        })
                       )}
                     </tbody>
                   </table>
@@ -3916,180 +4176,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                             <button
                               type="button"
                               disabled={isVerifying !== null}
-                              onClick={async () => {
-                                if (confirm('คุณแน่ใจหรือไม่ว่าต้องการ "อนุมัติสลิปการโอนเงิน" นี้?')) {
-                                  const targetOrderId = String(ord.id);
-                                  setIsVerifying(targetOrderId);
-                                  try {
-                                    // 1. Instant card removal & badge decrement
-                                    setWaitingVerifyOrders(prev => prev.filter(o => String(o.id) !== targetOrderId));
-
-                                    // Persist in approved IDs set immediately
-                                    try {
-                                      const approvedList = JSON.parse(localStorage.getItem('pornpong_approved_order_ids') || '[]');
-                                      if (!approvedList.map(String).includes(targetOrderId)) {
-                                        approvedList.push(targetOrderId);
-                                        localStorage.setItem('pornpong_approved_order_ids', JSON.stringify(approvedList));
-                                      }
-                                      // Remove from rejected if present
-                                      const rejectedList = JSON.parse(localStorage.getItem('pornpong_rejected_order_ids') || '[]');
-                                      const filteredRej = rejectedList.filter((x: any) => String(x) !== targetOrderId);
-                                      localStorage.setItem('pornpong_rejected_order_ids', JSON.stringify(filteredRej));
-                                    } catch {}
-
-                                    const prodType = ord.product_type || ord.order_type || ord.orderType;
-                                    const isPre = prodType === 'pre_order' || prodType === 'preorder' || (prodType !== 'in_stock' && prodType !== 'instock' && isOrderPreOrder(ord));
-
-                                    let qNum = ord.queue_number || ord.queue_id;
-                                    if (isPre) {
-                                      if (!qNum || !/^Q-\d{4}-\d{3}$/i.test(String(qNum).trim())) {
-                                        qNum = await getNextAvailableQueueNumber();
-                                      } else {
-                                        qNum = String(qNum).trim().toUpperCase();
-                                      }
-                                    }
-
-                                    // Requirement 1:
-                                    // [กรณี A: สินค้าพร้อมส่ง (product_type === 'in_stock')]
-                                    // * status = 'ready_to_ship', payment_status = 'paid', is_deleted = false
-                                    // [กรณี B: สินค้าพรีออเดอร์ (product_type === 'pre_order')]
-                                    // * status = 'producing', queue_status = 'waiting_production', payment_status = 'deposit_paid', is_deleted = false
-                                    if (isSupabaseConfigured && supabase) {
-                                      try {
-                                        if (isPre) {
-                                          await supabase
-                                            .from('orders')
-                                            .update({
-                                              status: 'producing',
-                                              order_status: 'producing',
-                                              queue_status: 'waiting_production',
-                                              queue_stage: 1,
-                                              payment_status: 'deposit_paid',
-                                              product_type: 'pre_order',
-                                              order_type: 'preorder',
-                                              queue_number: qNum,
-                                              queue_id: qNum,
-                                              is_deleted: false,
-                                              updated_at: new Date().toISOString()
-                                            })
-                                            .eq('id', targetOrderId);
-
-                                          await supabaseDeliveries.upsert({
-                                            order_id: targetOrderId,
-                                            delivery_status: 'waiting_production',
-                                            queue_number: qNum
-                                          });
-                                        } else {
-                                          await supabase
-                                            .from('orders')
-                                            .update({
-                                              status: 'ready_to_ship',
-                                              order_status: 'ready_to_ship',
-                                              payment_status: 'paid',
-                                              product_type: 'in_stock',
-                                              order_type: 'instock',
-                                              is_deleted: false,
-                                              delivery_status: 'ready_to_ship',
-                                              updated_at: new Date().toISOString()
-                                            })
-                                            .eq('id', targetOrderId);
-
-                                          await supabaseDeliveries.upsert({
-                                            order_id: targetOrderId,
-                                            delivery_status: 'ready_to_ship'
-                                          });
-                                        }
-                                      } catch (updateErr) {
-                                        console.warn('Direct Supabase update error in approve handler:', updateErr);
-                                      }
-                                    }
-
-                                      const result: any = await supabaseOrders.approve(targetOrderId);
-                                      if (result) {
-                                        // 1. Create In-App notification for customer
-                                        const qNum = (typeof result === 'object' && result?.queueNumber) || ord.queue_number || ord.queue_id || formatQueueId(ord);
-                                      const approvalMsg = isPre
-                                        ? `การชำระเงินเสร็จสิ้น! คำสั่งซื้อ #${targetOrderId} เป็นสินค้าสั่งผลิต ลำดับคิวการผลิตเริ่มต้นแล้ว [${qNum}] โรงงานเริ่มกระบวนการผลิตทันที`
-                                        : `การชำระเงินเสร็จสิ้น! คำสั่งซื้อ #${targetOrderId} เป็นสินค้าพร้อมส่ง คลังสินค้ากำลังเตรียมจัดส่งตรงถึงคุณ`;
-                                      const newNoti = {
-                                        id: 'noti-appr-' + Date.now(),
-                                        title: 'การชำระเงินเสร็จสิ้น!',
-                                        message: approvalMsg,
-                                        type: 'order',
-                                        date: 'เมื่อครู่',
-                                        isRead: false
-                                      };
-
-                                      // Append to notifications state
-                                      setNotifications(prev => [newNoti, ...prev]);
-
-                                      // Persist in localStorage notifications
-                                      try {
-                                        const saved = JSON.parse(localStorage.getItem('pornpong_notifications') || '[]');
-                                        localStorage.setItem('pornpong_notifications', JSON.stringify([newNoti, ...saved]));
-                                      } catch {}
-
-                                      // Save to unshown approvals list so storefront shows Pop-up
-                                      try {
-                                        const unshown = JSON.parse(localStorage.getItem('pornpong_unshown_approvals') || '[]');
-                                        unshown.push({ orderId: targetOrderId, message: approvalMsg, timestamp: Date.now() });
-                                        localStorage.setItem('pornpong_unshown_approvals', JSON.stringify(unshown));
-                                      } catch {}
-
-                                      // Dispatch broadcast event for realtime tabs
-                                      window.dispatchEvent(new CustomEvent('pornpong-order-approved', {
-                                        detail: { orderId: targetOrderId, notification: newNoti }
-                                      }));
-
-                                      // Immediately update adminOrders state so the destination tab reflects it instantly
-                                      setAdminOrders(prev => {
-                                        const updatedOrder = {
-                                          ...ord,
-                                          id: targetOrderId,
-                                          status: isPre ? 'producing' : 'ready_to_ship',
-                                          order_status: isPre ? 'producing' : 'ready_to_ship',
-                                          queue_status: isPre ? 'waiting_production' : undefined,
-                                          queue_stage: isPre ? 1 : undefined,
-                                          payment_status: isPre ? 'deposit_paid' : 'paid',
-                                          product_type: isPre ? 'pre_order' : 'in_stock',
-                                          order_type: isPre ? 'preorder' : 'instock',
-                                          is_deleted: false,
-                                          delivery_status: isPre ? 'waiting_production' : 'ready_to_ship',
-                                          ...(isPre ? { queue_number: qNum, queue_id: qNum, queue_stage: 1 } : {})
-                                        };
-                                        const exists = prev.some(o => String(o.id) === targetOrderId);
-                                        return exists
-                                          ? prev.map(o => String(o.id) === targetOrderId ? updatedOrder : o)
-                                          : [updatedOrder, ...prev];
-                                      });
-
-                                      if (isPre) {
-                                        triggerToast(`อนุมัติการชำระเงิน #${targetOrderId} (สินค้าสั่งผลิต) สำเร็จ! ออกเลขคิว [${qNum}] และย้ายไปที่หน้า 'จัดการคิวผลิตและจัดส่ง' เรียบร้อยแล้ว`);
-                                      } else {
-                                        triggerToast(`อนุมัติการชำระเงิน #${targetOrderId} (สินค้าพร้อมส่ง) สำเร็จ! ย้ายไปที่หน้า 'คำสั่งซื้อสำเร็จ' (แท็บ รายการคำสั่งซื้อกำลังดำเนินการ) เรียบร้อยแล้ว`);
-                                      }
-                                    } else {
-                                      triggerToast(`อนุมัติการชำระเงินคำสั่งซื้อ #${targetOrderId} เรียบร้อยแล้ว`);
-                                    }
-                                    setWaitingVerifyOrders(prev => prev.filter(o => String(o.id) !== targetOrderId));
-                                    await reloadWaitingVerifyOrders();
-                                    await reloadOrders();
-                                    window.dispatchEvent(new Event('orders-updated'));
-                                    window.dispatchEvent(new Event('orders_updated'));
-                                    if (isPre) {
-                                      window.dispatchEvent(new CustomEvent('pornpong-queue-updated', { detail: { orderId: targetOrderId, queue_number: qNum } }));
-                                    }
-                                    setWaitingVerifyOrders(prev => prev.filter(o => String(o.id) !== targetOrderId));
-                                  } catch (err: any) {
-                                    console.error('Approve payment error:', err);
-                                    triggerToast('ข้อผิดพลาด: ' + (err?.message || 'ไม่สามารถอนุมัติได้'));
-                                    setWaitingVerifyOrders(prev => prev.filter(o => String(o.id) !== targetOrderId));
-                                    await reloadWaitingVerifyOrders();
-                                  } finally {
-                                    setIsVerifying(null);
-                                  }
-                                }
-                              }}
+                              onClick={() => handleApprovePayment(ord)}
                               className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs cursor-pointer transition-all disabled:opacity-40 shadow-sm"
                             >
                               {isVerifying === ord.id ? (
