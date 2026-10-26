@@ -2902,11 +2902,12 @@ export const supabaseOrders = {
       const pType = orderData?.product_type || orderData?.order_type || orderData?.orderType;
       const isPreorder = Boolean(
         orderData?.is_preorder === true || 
+        orderData?.is_preorder === 'true' ||
         orderData?.order_type === 'preorder' || 
+        orderData?.order_type === 'pre_order' || 
         orderData?.type === 'preorder' ||
         pType === 'pre_order' || 
-        pType === 'preorder' || 
-        (pType !== 'in_stock' && pType !== 'instock' && isOrderPreOrder(orderData))
+        pType === 'preorder'
       );
       isPre = isPreorder;
 
