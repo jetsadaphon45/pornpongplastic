@@ -182,6 +182,7 @@ export default function App() {
   const [forgotPasswordEmail, setForgotPasswordEmail] = React.useState<string>('');
   const [isProfileOpen, setIsProfileOpen] = React.useState<boolean>(false);
   const [profileInitialTab, setProfileInitialTab] = React.useState<'history' | 'addresses' | 'deliveries'>('history');
+  const [trackingTargetOrderId, setTrackingTargetOrderId] = React.useState<string | null>(null);
 
   // Notifications State (with dynamic default data to avoid database dependency)
   const [notifications, setNotifications] = React.useState<AppNotification[]>(() => {
@@ -422,8 +423,13 @@ export default function App() {
       }
     };
 
-    const handleOpenTrackingFromEvent = () => {
+    const handleOpenTrackingFromEvent = (e: any) => {
+      const order = e?.detail;
+      const orderId = typeof order === 'string' ? order : (order?.id || null);
       setProfileInitialTab('deliveries');
+      if (orderId) {
+        setTrackingTargetOrderId(orderId);
+      }
       setIsProfileOpen(true);
     };
 
@@ -1312,8 +1318,12 @@ export default function App() {
             onAddToCart={(prod, col) => handleAddToCart(prod, col, 1)}
             currentUser={currentUser}
             onOpenLogin={() => setIsLoginOpen(true)}
-            onOpenTracking={() => {
+            onOpenTracking={(ord) => {
+              const orderId = typeof ord === 'string' ? ord : (ord?.id || null);
               setProfileInitialTab('deliveries');
+              if (orderId) {
+                setTrackingTargetOrderId(orderId);
+              }
               setIsProfileOpen(true);
             }}
             setActiveTab={(tab) => {
@@ -1527,6 +1537,7 @@ export default function App() {
         }}
         triggerToast={triggerToast}
         initialTab={profileInitialTab}
+        targetOrderId={trackingTargetOrderId}
       />
 
     </div>

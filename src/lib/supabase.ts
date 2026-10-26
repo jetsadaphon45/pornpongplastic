@@ -2675,9 +2675,9 @@ export const supabaseOrders = {
       const os = String(order.order_status || '').toLowerCase().trim();
 
       // Explicitly excluded statuses (already approved, produced, shipped, or completed)
-      const EXCLUDED_STATUSES = ['paid', 'ready_to_ship', 'producing', 'completed', 'in_transit', 'shipping', 'delivered', 'cancelled', 'payment_rejected'];
+      const EXCLUDED_STATUSES = ['paid', 'in_queue', 'in_production', 'production_queue', 'ready_to_ship', 'producing', 'completed', 'in_transit', 'shipping', 'delivered', 'cancelled', 'payment_rejected'];
       const EXCLUDED_PAYMENT_STATUSES = ['verified', 'paid', 'completed', 'approved', 'rejected', 'payment_rejected'];
-      const EXCLUDED_ORDER_STATUSES = ['manufacturing', 'producing', 'ready_to_ship', 'in_transit', 'shipping', 'completed', 'delivered'];
+      const EXCLUDED_ORDER_STATUSES = ['in_queue', 'in_production', 'production_queue', 'manufacturing', 'producing', 'ready_to_ship', 'in_transit', 'shipping', 'completed', 'delivered'];
 
       if (EXCLUDED_STATUSES.includes(s) || EXCLUDED_PAYMENT_STATUSES.includes(ps) || EXCLUDED_ORDER_STATUSES.includes(os)) {
         return true;

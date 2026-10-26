@@ -57,6 +57,7 @@ interface ProfileModalProps {
   onLogout: () => void;
   triggerToast: (msg: string) => void;
   initialTab?: 'history' | 'addresses' | 'deliveries';
+  targetOrderId?: string | null;
 }
 
 interface OrderItem {
@@ -193,7 +194,8 @@ export function ProfileModal({
   onUpdateProfile, 
   onLogout, 
   triggerToast,
-  initialTab = 'history'
+  initialTab = 'history',
+  targetOrderId = null
 }: ProfileModalProps) {
   const [activeSection, setActiveSection] = React.useState<'history' | 'addresses' | 'deliveries'>(initialTab);
   const [isEditing, setIsEditing] = React.useState(false);
@@ -203,13 +205,21 @@ export function ProfileModal({
   const [editAddress, setEditAddress] = React.useState('');
   const [errors, setErrors] = React.useState<Record<string, string>>({});
   const [copiedTrackingId, setCopiedTrackingId] = React.useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = React.useState<string>(targetOrderId || '');
 
-  // Sync activeSection when modal opens or initialTab prop changes
+  // Sync activeSection when modal opens or initialTab/targetOrderId prop changes
   React.useEffect(() => {
-    if (isOpen && initialTab) {
-      setActiveSection(initialTab);
+    if (isOpen) {
+      if (initialTab) {
+        setActiveSection(initialTab);
+      }
+      if (targetOrderId) {
+        setActiveSection('deliveries');
+        setSearchQuery(targetOrderId);
+        setSelectedTrackedId(targetOrderId);
+      }
     }
-  }, [isOpen, initialTab]);
+  }, [isOpen, initialTab, targetOrderId]);
 
   // Orders and Pre-orders state
   const [orders, setOrders] = React.useState<OrderItem[]>([]);
@@ -314,11 +324,16 @@ export function ProfileModal({
   // Track primary order for the Live Queue Card
   const primaryTrackedOrder = React.useMemo(() => {
     if (selectedTrackedId) {
-      const found = activeTrackedOrders.find(o => o.id === selectedTrackedId);
+      const found = activeTrackedOrders.find(o => String(o.id).toLowerCase() === String(selectedTrackedId).toLowerCase());
+      if (found) return found;
+    }
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase().trim();
+      const found = activeTrackedOrders.find(o => String(o.id).toLowerCase().includes(q) || String(o.queueId || '').toLowerCase().includes(q));
       if (found) return found;
     }
     return activeTrackedOrders[0] || null;
-  }, [activeTrackedOrders, selectedTrackedId]);
+  }, [activeTrackedOrders, selectedTrackedId, searchQuery]);
 
   // Shipping details list for all active shipments
   const shippingOrders = React.useMemo(() => {
@@ -415,20 +430,43 @@ export function ProfileModal({
         }
       } catch {}
 
-      // Filter orders for current user
+      // Ensure targetOrderId is fetched directly if not already present
+      if (targetOrderId && !fetchedOrders.some((f: any) => String(f.id) === String(targetOrderId))) {
+        if (isSupabaseConfigured && supabase) {
+          try {
+            const { data: directOrd } = await supabase.from('orders').select('*').eq('id', targetOrderId).maybeSingle();
+            if (directOrd) {
+              fetchedOrders.unshift(directOrd);
+            }
+          } catch {}
+        }
+      }
+
+      // Filter orders for current user or tracked target order
       const userOrders = fetchedOrders.filter((o: any) => {
+        const oId = String(o.id || '').trim();
+        // If matches targetOrderId, ALWAYS include
+        if (targetOrderId && oId === String(targetOrderId).trim()) return true;
+
+        // Also check if stored in recent customer guest orders
+        let guestOrderIds: string[] = [];
+        try {
+          guestOrderIds = JSON.parse(localStorage.getItem('pornpong_my_order_ids') || '[]');
+        } catch {}
+        if (guestOrderIds.includes(oId)) return true;
+
         if (!currentUser) return false;
         const uId = String(currentUser.id || '').trim();
         const uEmail = String(currentUser.email || '').toLowerCase().trim();
         const uPhone = String(currentUser.phone || '').replace(/\D/g, '');
         const uName = String(currentUser.name || '').trim().toLowerCase();
 
-        const oId = String(o.customer_id || '').trim();
+        const oIdClean = String(o.customer_id || '').trim();
         const oEmail = String(o.customer_email || o.email || '').toLowerCase().trim();
         const oPhone = String(o.customer_phone || o.phone || '').replace(/\D/g, '');
         const oName = String(o.customerName || o.customer_name || '').trim().toLowerCase();
 
-        if (uId && uId !== 'guest' && oId === uId) return true;
+        if (uId && uId !== 'guest' && oIdClean === uId) return true;
         if (uEmail && uEmail !== 'guest@example.com' && oEmail === uEmail) return true;
         if (uPhone && oPhone && (uPhone === oPhone || uPhone.endsWith(oPhone) || oPhone.endsWith(uPhone))) return true;
         if (uName && oName && (uName === oName || uName.includes(oName) || oName.includes(uName))) return true;
@@ -585,7 +623,7 @@ export function ProfileModal({
     } finally {
       setIsLoadingHistory(false);
     }
-  }, [currentUser]);
+  }, [currentUser, targetOrderId]);
 
   // Sync state with current user profile details when modal is triggered or user details change
   React.useEffect(() => {
@@ -1416,6 +1454,36 @@ export function ProfileModal({
                 <Loader2 size={13} className={isLoadingHistory ? 'animate-spin text-sky-600' : 'text-slate-400'} />
                 <span>รีเฟรชสถานะ</span>
               </button>
+            </div>
+
+            {/* Quick Order ID Search Input */}
+            <div className="bg-white p-3 rounded-2xl border border-slate-200 shadow-2xs flex flex-col sm:flex-row items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5 w-full flex-1">
+                <Package size={16} className="text-brand-blue shrink-0 ml-1" />
+                <input
+                  type="text"
+                  placeholder="ค้นหาหรือกรอกหมายเลขคำสั่งซื้อ (Order ID เช่น ORD-...) เพื่อติดตาม..."
+                  value={searchQuery}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setSearchQuery(val);
+                    if (val.trim()) {
+                      setSelectedTrackedId(val.trim());
+                    }
+                  }}
+                  className="w-full text-xs font-mono py-1.5 px-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-blue/30 text-slate-800"
+                  id="input-tracking-search-order"
+                />
+              </div>
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery('')}
+                  className="text-[11px] text-slate-500 hover:text-slate-700 font-bold px-3 py-1 bg-slate-100 rounded-lg cursor-pointer shrink-0 transition-colors"
+                >
+                  ล้างคำค้น
+                </button>
+              )}
             </div>
 
             {/* Check if there are any tracked orders or shipping orders */}

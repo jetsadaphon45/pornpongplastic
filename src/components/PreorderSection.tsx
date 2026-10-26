@@ -30,7 +30,8 @@ import {
   AlertTriangle,
   Trash2,
   Hourglass,
-  Package
+  Package,
+  Hammer
 } from 'lucide-react';
 import { Product, User } from '../types';
 import { 
@@ -765,14 +766,180 @@ export default function PreorderSection({
     }
   };
 
+  // Close modal and completely clear order customization inputs
+  const handleCloseModalAndClearForm = () => {
+    setShowOrderModal(false);
+    // Clear boat customization & order form
+    setCustomText('');
+    setHasCustomText(false);
+    setQuantity(1);
+    setCustomerNotes('');
+    // Clear slip upload states
+    setSlipFile(null);
+    setSlipPreview(null);
+    setSlipUploaded(false);
+    setSlipError(null);
+    setIsUploadingSlip(false);
+    // Clear contact inputs only if guest
+    if (!currentUser) {
+      setCustomerName('');
+      setCustomerPhone('');
+      setCustomerEmail('');
+      setCustomerAddress('');
+    }
+  };
+
+  // Navigate to customer tracking page and pass order ID
+  const handleGoToTracking = () => {
+    const targetOrder = confirmedOrder;
+    handleCloseModalAndClearForm();
+
+    if (targetOrder?.id) {
+      try {
+        const myIds = JSON.parse(localStorage.getItem('pornpong_my_order_ids') || '[]');
+        if (!myIds.includes(targetOrder.id)) {
+          myIds.push(targetOrder.id);
+          localStorage.setItem('pornpong_my_order_ids', JSON.stringify(myIds));
+        }
+      } catch {}
+    }
+
+    if (onOpenTracking) {
+      onOpenTracking(targetOrder);
+    } else {
+      window.dispatchEvent(new CustomEvent('pornpong-open-tracking', { detail: targetOrder }));
+      if (setActiveTab) {
+        setActiveTab('profile');
+      }
+    }
+  };
+
+  // Realtime Supabase Listener & Polling for Payment Approval (Requirement 2)
+  React.useEffect(() => {
+    if (!showOrderModal || !confirmedOrder?.id) return;
+    const targetId = confirmedOrder.id;
+
+    const handleUpdatedOrderData = (updated: any) => {
+      if (!updated) return;
+      const s = String(updated.status || '').toLowerCase().trim();
+      const ps = String(updated.payment_status || '').toLowerCase().trim();
+      const os = String(updated.order_status || '').toLowerCase().trim();
+
+      const isNowApproved =
+        ['paid', 'in_queue', 'in_production', 'production_queue', 'producing', 'ready_to_ship', 'shipped', 'delivering', 'completed', 'verified', 'approved'].includes(s) ||
+        ['paid', 'verified', 'approved', 'deposit_paid'].includes(ps) ||
+        ['in_queue', 'in_production', 'production_queue', 'producing', 'ready_to_ship', 'shipped', 'delivering', 'completed'].includes(os);
+
+      if (isNowApproved && s !== 'pending_verification' && ps !== 'pending_verification') {
+        setConfirmedOrder((prev: any) => ({
+          ...(prev || {}),
+          ...updated,
+          status: updated.status || 'in_queue',
+          payment_status: updated.payment_status || 'paid',
+          queue_number: updated.queue_number || updated.queue_id || prev?.queue_number || 'Q-2610-001'
+        }));
+      }
+    };
+
+    // 1. Supabase Realtime Channel
+    let channel: any = null;
+    if (isSupabaseConfigured && supabase) {
+      try {
+        channel = supabase
+          .channel(`preorder-modal-${targetId}`)
+          .on(
+            'postgres_changes',
+            {
+              event: 'UPDATE',
+              schema: 'public',
+              table: 'orders',
+              filter: `id=eq.${targetId}`
+            },
+            (payload: any) => {
+              if (payload?.new) {
+                handleUpdatedOrderData(payload.new);
+              }
+            }
+          )
+          .subscribe();
+      } catch (err) {
+        console.warn('Realtime channel subscription error:', err);
+      }
+    }
+
+    // 2. High-frequency Polling fallback (every 1.5s) to guarantee instantaneous response in dev/preview
+    const pollInterval = setInterval(async () => {
+      try {
+        if (isSupabaseConfigured && supabase) {
+          const { data, error } = await supabase
+            .from('orders')
+            .select('*')
+            .eq('id', targetId)
+            .maybeSingle();
+
+          if (!error && data) {
+            handleUpdatedOrderData(data);
+          }
+        }
+
+        // Check local storage for same-browser admin approvals
+        const adminOrders = JSON.parse(localStorage.getItem('admin_orders') || '[]');
+        const foundAdmin = adminOrders.find((o: any) => String(o.id) === String(targetId));
+        if (foundAdmin) handleUpdatedOrderData(foundAdmin);
+
+        const adminPre = JSON.parse(localStorage.getItem('admin_preorders') || '[]');
+        const foundPre = adminPre.find((p: any) => String(p.id) === String(targetId));
+        if (foundPre) handleUpdatedOrderData(foundPre);
+      } catch {}
+    }, 1500);
+
+    // 3. Custom events
+    const handleApprovalEvent = (e: any) => {
+      const ord = e?.detail;
+      if (ord && String(ord.id) === String(targetId)) {
+        handleUpdatedOrderData(ord);
+      }
+    };
+
+    window.addEventListener('pornpong-order-approved', handleApprovalEvent);
+    const handleQueueUpdated = () => {
+      const adminPre = JSON.parse(localStorage.getItem('admin_preorders') || '[]');
+      const foundPre = adminPre.find((p: any) => String(p.id) === String(targetId));
+      if (foundPre) handleUpdatedOrderData(foundPre);
+    };
+    window.addEventListener('pornpong-queue-updated', handleQueueUpdated);
+
+    return () => {
+      if (channel && supabase) {
+        supabase.removeChannel(channel);
+      }
+      clearInterval(pollInterval);
+      window.removeEventListener('pornpong-order-approved', handleApprovalEvent);
+      window.removeEventListener('pornpong-queue-updated', handleQueueUpdated);
+    };
+  }, [showOrderModal, confirmedOrder?.id]);
+
   // Other catalog products for browsing below
   const preorderProducts = products.filter(
     (p) => p.status === 'preorder' || p.category === 'rowboat' || p.category === 'kayak' || p.price >= 5000
   );
 
+  // Requirement 2: Check if payment is approved (status moved to in_queue, paid, etc.)
+  const isApproved = Boolean(
+    confirmedOrder && (
+      ['paid', 'in_queue', 'in_production', 'production_queue', 'producing', 'ready_to_ship', 'shipped', 'delivering', 'completed', 'verified', 'approved'].includes(String(confirmedOrder.status || '').toLowerCase().trim()) ||
+      ['paid', 'verified', 'approved', 'deposit_paid'].includes(String(confirmedOrder.payment_status || '').toLowerCase().trim()) ||
+      ['in_queue', 'in_production', 'production_queue', 'producing', 'ready_to_ship', 'shipped', 'delivering', 'completed'].includes(String(confirmedOrder.order_status || '').toLowerCase().trim())
+    ) && (
+      String(confirmedOrder.status || '').toLowerCase().trim() !== 'pending_verification' &&
+      String(confirmedOrder.status || '').toLowerCase().trim() !== 'pending' &&
+      String(confirmedOrder.payment_status || '').toLowerCase().trim() !== 'pending_verification'
+    )
+  );
+
   // Requirement 2 & 3: Auto State Detection on Re-open
   const isPendingVerification = Boolean(
-    confirmedOrder && (
+    !isApproved && confirmedOrder && (
       confirmedOrder.status === 'pending_verification' ||
       confirmedOrder.payment_status === 'pending_verification' ||
       confirmedOrder.order_status === 'pending_verification' ||
@@ -1985,26 +2152,46 @@ export default function PreorderSection({
           <div className="bg-white w-full max-w-lg rounded-3xl shadow-2xl border border-sky-100 overflow-hidden my-8">
             
             {/* Modal Header */}
-            <div className="bg-gradient-to-r from-brand-blue to-sky-800 text-white p-6 relative">
+            <div className={`text-white p-6 relative transition-colors duration-300 ${
+              isApproved
+                ? 'bg-gradient-to-r from-emerald-600 via-emerald-700 to-teal-800'
+                : 'bg-gradient-to-r from-brand-blue to-sky-800'
+            }`}>
               <button
                 type="button"
-                onClick={() => setShowOrderModal(false)}
+                onClick={handleCloseModalAndClearForm}
                 className="absolute top-4 right-4 text-white/80 hover:text-white p-1 rounded-full hover:bg-white/10 transition-colors cursor-pointer"
+                title="ปิดหน้าต่าง"
+                id="btn-close-preorder-modal-x"
               >
                 <X size={20} />
               </button>
 
               <div className="flex items-center gap-2 mb-1">
-                <span className={`w-2.5 h-2.5 rounded-full ${isPendingVerification ? 'bg-amber-400' : 'bg-emerald-400'} animate-pulse`}></span>
-                <span className={`text-xs font-bold uppercase tracking-wider ${isPendingVerification ? 'text-amber-200' : 'text-sky-200'}`}>
-                  {isPendingVerification ? 'Pending Verification' : 'Pre-Order Confirmed'}
+                <span className={`w-2.5 h-2.5 rounded-full ${
+                  isApproved ? 'bg-emerald-300' : isPendingVerification ? 'bg-amber-400' : 'bg-sky-400'
+                } animate-pulse`}></span>
+                <span className={`text-xs font-bold uppercase tracking-wider ${
+                  isApproved ? 'text-emerald-100' : isPendingVerification ? 'text-amber-200' : 'text-sky-200'
+                }`}>
+                  {isApproved
+                    ? 'PAYMENT VERIFIED / การชำระเงินสำเร็จ'
+                    : isPendingVerification
+                    ? 'PENDING VERIFICATION / รอการตรวจสอบ'
+                    : 'PRE-ORDER CONFIRMED'}
                 </span>
               </div>
               <h3 className="font-display text-xl font-bold text-white">
-                {isPendingVerification ? 'สถานะการชำระเงินมัดจำ' : 'สรุปรายการสั่งซื้อพรีออเดอร์'}
+                {isApproved
+                  ? 'การชำระเงินมัดจำได้รับการอนุมัติแล้ว!'
+                  : isPendingVerification
+                  ? 'สถานะการชำระเงินมัดจำ'
+                  : 'สรุปรายการสั่งซื้อพรีออเดอร์'}
               </h3>
               <p className="text-xs text-sky-100/90 mt-0.5">
-                {isPendingVerification 
+                {isApproved
+                  ? 'เจ้าหน้าที่ตรวจสอบสลิปและยืนยันยอดมัดจำแล้ว คำสั่งซื้อเข้าสู่คิวผลิตโรงงานเรียบร้อย'
+                  : isPendingVerification 
                   ? 'ได้รับหลักฐานการโอนเงินเรียบร้อยแล้ว ระบบกำลังตรวจสอบข้อมูล'
                   : 'บันทึกลงระบบเรียบร้อยแล้ว กรุณาชำระเงินมัดจำเพื่อล็อกคิวผลิต'}
               </p>
@@ -2030,7 +2217,12 @@ export default function PreorderSection({
                     {copiedOrderId ? <Check size={13} className="text-emerald-600" /> : <Copy size={13} />}
                     <span>{copiedOrderId ? 'คัดลอกแล้ว' : 'คัดลอก'}</span>
                   </button>
-                  {isPendingVerification ? (
+                  {isApproved ? (
+                    <span className="text-[11px] font-bold px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1.5 shadow-2xs">
+                      <Check size={12} strokeWidth={3} className="text-emerald-700" />
+                      <span>ชำระเงินสำเร็จ / อยู่ในคิวผลิต</span>
+                    </span>
+                  ) : isPendingVerification ? (
                     <span className="text-[11px] font-bold px-3 py-1 rounded-full bg-amber-100 text-amber-900 border border-amber-300 flex items-center gap-1 shadow-2xs">
                       <Clock size={11} className="text-amber-600 animate-pulse" />
                       <span>รอการตรวจสอบ</span>
@@ -2090,8 +2282,54 @@ export default function PreorderSection({
                 </div>
               </div>
 
-              {/* Requirement 2: Switch UI to "Pending Verification State" */}
-              {isPendingVerification ? (
+              {/* Requirement 2: Approved State vs Pending Verification State vs Slip Upload State */}
+              {isApproved ? (
+                <div className="bg-gradient-to-b from-emerald-50/90 via-emerald-50/40 to-white border-2 border-emerald-300 rounded-3xl p-6 sm:p-7 text-center space-y-4 shadow-sm animate-fadeIn" id="approved-verification-state-box">
+                  {/* 🟢 Glowing Green Checkmark Icon */}
+                  <div className="flex justify-center pt-1">
+                    <div className="relative inline-flex items-center justify-center">
+                      <div className="absolute -inset-3 rounded-full bg-emerald-400/30 blur-lg animate-pulse"></div>
+                      <div className="relative h-20 w-20 rounded-3xl bg-gradient-to-tr from-emerald-600 via-emerald-500 to-teal-400 text-white flex items-center justify-center shadow-xl shadow-emerald-200/80 border-2 border-white">
+                        <CheckCircle2 size={42} className="animate-in zoom-in-75 duration-300 drop-shadow-xs" />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-100 border border-emerald-300 text-emerald-900 text-[11px] font-bold">
+                      <Check size={12} strokeWidth={3} className="text-emerald-700" />
+                      <span>ชำระเงินสำเร็จ / อยู่ในคิวผลิต</span>
+                    </div>
+                    <h4 className="font-display text-lg sm:text-xl font-extrabold text-slate-900">
+                      การชำระเงินมัดจำได้รับการอนุมัติแล้ว!
+                    </h4>
+                    <p className="text-xs sm:text-sm text-slate-600 leading-relaxed max-w-sm mx-auto font-medium">
+                      ทางโรงงานตรวจสอบสลิปและยืนยันยอดมัดจำเรียบร้อยแล้ว {confirmedOrder.queue_number ? `คำสั่งซื้อของท่านได้บัตรคิวหมายเลข #${confirmedOrder.queue_number}` : 'เข้าสู่คิวผลิตตามรอบทันที'} เจ้าหน้าที่จะเร่งหลอมขึ้นรูปและจัดส่งตามลำดับ
+                    </p>
+                  </div>
+
+                  {/* Production Queue Details Card */}
+                  <div className="bg-white p-4 rounded-2xl border border-emerald-200 shadow-2xs max-w-sm mx-auto text-left w-full space-y-2">
+                    <div className="flex items-center justify-between border-b border-emerald-100 pb-2">
+                      <span className="text-[11px] font-bold text-slate-500 flex items-center gap-1">
+                        <Hammer size={13} className="text-emerald-600" />
+                        <span>ลำดับคิวผลิตโรงงาน:</span>
+                      </span>
+                      <span className="font-mono text-xs font-black text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-lg border border-emerald-200">
+                        {confirmedOrder.queue_number || confirmedOrder.queue_id || 'Q-2610-001'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center text-xs">
+                      <span className="text-slate-500">สถานะงาน:</span>
+                      <span className="font-bold text-slate-800">ยืนยันคิวแล้ว • รอหลอมขึ้นรูป</span>
+                    </div>
+                    <div className="flex justify-between items-center text-xs">
+                      <span className="text-slate-500">ยอดเงินมัดจำ:</span>
+                      <span className="font-bold text-emerald-600">฿{Number(confirmedOrder.deposit_amount || 1000).toLocaleString()} (ชำระเรียบร้อย)</span>
+                    </div>
+                  </div>
+                </div>
+              ) : isPendingVerification ? (
                 <div className="bg-gradient-to-b from-amber-50/90 via-amber-50/40 to-white border-2 border-amber-200 rounded-3xl p-6 sm:p-7 text-center space-y-4 shadow-sm animate-fadeIn" id="pending-verification-state-box">
                   {/* ⏳ Glowing Yellow/Amber Icon */}
                   <div className="flex justify-center pt-1">
@@ -2257,17 +2495,11 @@ export default function PreorderSection({
 
             {/* Modal Footer Actions */}
             <div className="p-5 bg-slate-50 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-3">
-              {isPendingVerification ? (
+              {(isApproved || isPendingVerification) ? (
                 <div className="flex flex-col sm:flex-row items-center justify-between gap-3 w-full">
                   <button
                     type="button"
-                    onClick={() => {
-                      setShowOrderModal(false);
-                      if (setActiveTab) {
-                        setActiveTab('home');
-                        window.scrollTo({ top: 0, behavior: 'smooth' });
-                      }
-                    }}
+                    onClick={handleCloseModalAndClearForm}
                     className="w-full sm:w-auto px-5 py-2.5 rounded-xl border border-slate-300 hover:bg-slate-100 text-slate-700 font-bold text-xs transition-colors cursor-pointer text-center"
                     id="btn-close-pending-modal"
                   >
@@ -2276,18 +2508,12 @@ export default function PreorderSection({
 
                   <button
                     type="button"
-                    onClick={() => {
-                      setShowOrderModal(false);
-                      if (onOpenTracking) {
-                        onOpenTracking(confirmedOrder);
-                      } else {
-                        window.dispatchEvent(new CustomEvent('pornpong-open-tracking', { detail: confirmedOrder }));
-                        if (setActiveTab) {
-                          setActiveTab('profile');
-                        }
-                      }
-                    }}
-                    className="w-full sm:w-auto px-6 py-2.5 rounded-xl bg-brand-blue hover:bg-brand-blue-light text-white font-bold text-xs shadow-md shadow-brand-blue/20 transition-all cursor-pointer flex items-center justify-center gap-1.5 text-center active:scale-[0.98]"
+                    onClick={handleGoToTracking}
+                    className={`w-full sm:w-auto px-6 py-2.5 rounded-xl font-bold text-xs shadow-md transition-all cursor-pointer flex items-center justify-center gap-1.5 text-center active:scale-[0.98] ${
+                      isApproved
+                        ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-600/20'
+                        : 'bg-brand-blue hover:bg-brand-blue-light text-white shadow-brand-blue/20'
+                    }`}
                     id="btn-goto-tracking"
                   >
                     <Package size={14} />
@@ -2313,14 +2539,9 @@ export default function PreorderSection({
                   <div className="flex items-center gap-2 w-full sm:w-auto">
                     <button
                       type="button"
-                      onClick={() => {
-                        setShowOrderModal(false);
-                        if (setActiveTab) {
-                          setActiveTab('home');
-                          window.scrollTo({ top: 0, behavior: 'smooth' });
-                        }
-                      }}
+                      onClick={handleCloseModalAndClearForm}
                       className="w-full sm:w-auto px-4 py-2.5 rounded-xl border border-slate-300 hover:bg-slate-100 text-slate-700 font-semibold text-xs transition-colors cursor-pointer"
+                      id="btn-close-unpaid-modal"
                     >
                       ปิดหน้าต่าง
                     </button>
