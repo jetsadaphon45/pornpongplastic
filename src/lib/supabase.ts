@@ -2173,9 +2173,9 @@ export const supabaseOrders = {
         customer_email: item.customer_email,
         customer_phone: item.customer_phone,
         total_amount: Number(item.total_amount),
-        status: 'waiting_payment',
-        payment_status: 'pending',
-        order_status: 'waiting_payment'
+        status: 'pending_verification',
+        payment_status: 'pending_verification',
+        order_status: 'pending_verification'
       };
 
       console.log('ORDER PAYLOAD', insertPayload);
@@ -2234,11 +2234,11 @@ export const supabaseOrders = {
       sticker_option: stickerText,
       custom_text: item.custom_text || '',
       total_price: Number(item.total_price),
-      status: 'pending_deposit',
+      status: 'pending_verification',
       // Compatibility columns for existing orders view:
       total_amount: Number(item.total_price),
-      payment_status: 'pending_deposit',
-      order_status: 'pending_deposit',
+      payment_status: 'pending_verification',
+      order_status: 'pending_verification',
       product_name: prodName,
       color: item.selected_color,
       address: item.address || '',
@@ -2670,6 +2670,9 @@ export const supabaseOrders = {
     };
 
     const isOrderExcludedFromPending = (order: any, approvedIds: Set<string>, rejectedIds: Set<string>): boolean => {
+      const id = String(order.id || '');
+      if (approvedIds.has(id) || rejectedIds.has(id)) return true;
+
       const s = String(order.status || '').toLowerCase().trim();
       const ps = String(order.payment_status || '').toLowerCase().trim();
       const os = String(order.order_status || '').toLowerCase().trim();
@@ -2687,9 +2690,6 @@ export const supabaseOrders = {
       if (s === 'pending_verification' || ps === 'pending_verification') {
         return false;
       }
-
-      const id = String(order.id || '');
-      if (approvedIds.has(id) || rejectedIds.has(id)) return true;
 
       // Other pending states
       const isPending = ['waiting_verify', 'waiting_approval', 'pending'].includes(ps) ||

@@ -250,7 +250,22 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
     const EXCLUDED_PAYMENT_STATUSES = ['verified', 'paid', 'completed', 'approved', 'rejected', 'payment_rejected'];
     const EXCLUDED_ORDER_STATUSES = ['in_queue', 'in_production', 'production_queue', 'manufacturing', 'producing', 'ready_to_ship', 'in_transit', 'shipping', 'completed', 'delivered'];
 
-    return (waitingVerifyOrders || []).filter((ord: any) => {
+    // Merge waitingVerifyOrders with adminOrders (so changes in adminOrders immediately reflect here)
+    const combinedMap = new Map<string, any>();
+    for (const o of (waitingVerifyOrders || [])) {
+      if (o && o.id) combinedMap.set(String(o.id), o);
+    }
+    for (const o of (adminOrders || [])) {
+      if (o && o.id) {
+        const prev = combinedMap.get(String(o.id));
+        combinedMap.set(String(o.id), {
+          ...o,
+          payment_slip_url: o.payment_slip_url || prev?.payment_slip_url || o.slip_url || prev?.slip_url || ''
+        });
+      }
+    }
+
+    return Array.from(combinedMap.values()).filter((ord: any) => {
       const id = String(ord.id || '');
       if (approvedIds.has(id) || rejectedIds.has(id)) return false;
 
@@ -264,8 +279,12 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
 
       return ['pending_verification', 'waiting_verify', 'waiting_approval', 'pending'].includes(ps) ||
              ['pending_verification', 'waiting_verify', 'waiting_approval', 'pending'].includes(s);
+    }).sort((a: any, b: any) => {
+      const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
+      const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
+      return timeB - timeA;
     });
-  }, [waitingVerifyOrders]);
+  }, [waitingVerifyOrders, adminOrders]);
 
   // Member & Preorder detail states
   const [selectedMember, setSelectedMember] = React.useState<any | null>(null);
