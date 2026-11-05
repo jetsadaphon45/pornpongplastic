@@ -123,6 +123,54 @@ export const STANDARD_STATUS_LABELS: Record<string, string> = {
   shipped: 'อยู่ระหว่างจัดส่ง'
 };
 
+// -------------------------------------------------------------
+// PRE-ORDER CHECK FUNCTION (isPreorderOrder)
+// ตรวจจับทุกจุดเพื่อป้องกันสินค้าพรีออเดอร์หลุดเข้าไปในคำสั่งซื้อสำเร็จ
+// -------------------------------------------------------------
+export const isPreorderOrder = (order: any): boolean => {
+  if (!order) return false;
+  // 1. เช็กจากฟิลด์สถานะและประเภท
+  if (order.is_preorder === true || order.is_preorder === 'true' || order.isPreOrder === true || order.isPreOrder === 'true') return true;
+  if (order.order_type === 'preorder' || order.order_type === 'pre_order' || order.type === 'preorder' || order.orderType === 'preorder' || order.orderType === 'pre_order' || order.product_type === 'pre_order' || order.product_type === 'preorder') return true;
+  if (order.status === 'in_queue' || order.status === 'in_production' || order.order_status === 'in_queue' || order.order_status === 'in_production') return true;
+
+  const idStr = String(order.id || '').toUpperCase();
+  if (idStr.startsWith('ORD-PRE-') || idStr.startsWith('PRE-')) return true;
+
+  // 2. เช็กจากชื่อสินค้า หรือรายการสินค้าภายในออเดอร์
+  const title = String(order.product_name || order.item_name || order.name || order.productName || order.boat_size || order.boat_model_name || '').toLowerCase();
+  if (title.includes('พรี') || title.includes('สั่งทำ') || title.includes('มัดจำ') || title.includes('preorder') || title.includes('pre-order') || title.includes('สั่งผลิต')) return true;
+
+  const notes = String(order.notes || '').toLowerCase();
+  if (notes.includes('พรี') || notes.includes('สั่งทำ') || notes.includes('มัดจำ') || notes.includes('preorder') || notes.includes('pre-order') || notes.includes('สั่งผลิต')) return true;
+
+  if (Array.isArray(order.order_items)) {
+    const hasPre = order.order_items.some((item: any) => 
+      item.is_preorder || 
+      (item.product_name && (item.product_name.includes('พรี') || item.product_name.includes('สั่งทำ') || item.product_name.includes('มัดจำ') || item.product_name.includes('preorder')))
+    );
+    if (hasPre) return true;
+  }
+
+  if (Array.isArray(order.items)) {
+    const hasPre = order.items.some((item: any) => 
+      item.is_preorder || 
+      item.isPreOrder ||
+      (String(item.name || item.productName || item.product_name || '').toLowerCase().includes('พรี') || 
+       String(item.name || item.productName || item.product_name || '').toLowerCase().includes('สั่งทำ') || 
+       String(item.name || item.productName || item.product_name || '').toLowerCase().includes('มัดจำ') ||
+       String(item.name || item.productName || item.product_name || '').toLowerCase().includes('preorder'))
+    );
+    if (hasPre) return true;
+  }
+
+  if (order.deposit || order.deposit_amount || String(order.status || '').toLowerCase().includes('deposit') || String(order.payment_status || '').toLowerCase().includes('deposit')) {
+    return true;
+  }
+
+  return false;
+};
+
 // Initial default administrative credentials
 const ADMIN_EMAIL = 'admin@pornpongplastic.com';
 const ADMIN_PASS = 'Admin@2026';
@@ -458,15 +506,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
             const isApproved = approvedIds.includes(sid);
             const locItem = localMap[sid];
             if (isApproved && (ord.status === 'pending_verification' || ord.status === 'pending' || ord.payment_status === 'pending')) {
-              const isPre = Boolean(
-                ord.is_preorder === true || 
-                ord.is_preorder === 'true' || 
-                ord.order_type === 'preorder' || 
-                ord.order_type === 'pre_order' || 
-                ord.type === 'preorder' || 
-                ord.product_type === 'pre_order' || 
-                ord.orderType === 'preorder'
-              );
+              const isPre = isPreorderOrder(ord);
               return {
                 ...ord,
                 status: locItem?.status || (isPre ? 'in_queue' : 'paid'),
@@ -1618,16 +1658,8 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
         localStorage.setItem('pornpong_rejected_order_ids', JSON.stringify(filteredRej));
       } catch {}
 
-      // Requirement 1: ตรวจสอบประเภทสินค้าของคำสั่งซื้อ
-      const isPreorder = Boolean(
-        ord.is_preorder === true ||
-        ord.is_preorder === 'true' ||
-        ord.order_type === 'preorder' ||
-        ord.type === 'preorder' ||
-        ord.product_type === 'pre_order' ||
-        ord.order_type === 'pre_order' ||
-        ord.orderType === 'preorder'
-      );
+      // Requirement 1: ตรวจสอบประเภทสินค้าของคำสั่งซื้อด้วยฟังก์ชันรวม isPreorderOrder
+      const isPreorder = isPreorderOrder(ord);
 
       let qNum = ord.queue_number || ord.queue_id;
       if (isPreorder) {
@@ -1881,26 +1913,16 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
       if (!ord) return false;
       if (ord.is_deleted === true || ord.is_deleted === 'true') return false;
 
-      // 1. ต้องเป็นสินค้าพรีออเดอร์: isPreorder === true
-      const isPreorder = Boolean(
-        ord.is_preorder === true ||
-        ord.is_preorder === 'true' ||
-        ord.order_type === 'preorder' ||
-        ord.order_type === 'pre_order' ||
-        ord.type === 'preorder' ||
-        ord.product_type === 'pre_order' ||
-        ord.orderType === 'preorder'
-      );
-      if (!isPreorder) return false;
+      // 1. ต้องเป็นสินค้าพรีออเดอร์: isPreorderOrder(ord) === true
+      if (!isPreorderOrder(ord)) return false;
 
       const s = String(ord.status || '').toLowerCase().trim();
       const os = String(ord.order_status || '').toLowerCase().trim();
       const ps = String(ord.payment_status || '').toLowerCase().trim();
       const qs = String(ord.queue_status || '').toLowerCase().trim();
 
-      // 2. ห้ามดึงสถานะรอตรวจสอบสลิป ('pending_verification') หรือสินค้าพร้อมส่ง ('paid') เข้ามาเด็ดขาด
-      if (s === 'pending_verification' || ps === 'pending_verification') return false;
-      if (s === 'paid' && !isPreorder) return false;
+      // 2. ห้ามดึงสถานะรอตรวจสอบสลิป ('pending_verification') เข้ามาเด็ดขาด
+      if (s === 'pending_verification' || ps === 'pending_verification' || os === 'pending_verification') return false;
 
       const pendingStatuses = [
         'pending',
@@ -2610,55 +2632,38 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
   // Tab 1: รายการคำสั่งซื้อกำลังดำเนินการ (Active Orders)
   // เงื่อนไข:
   // 1. (!isPreorder) - สินค้าพร้อมส่ง
-  // 2. (order.status === 'paid' || order.status === 'processing' || order.status === 'ready_to_ship' || order.status === 'shipped')
-  // 3. order.status !== 'completed' && order.status !== 'cancelled'
-  // 4. ห้ามดึงสถานะ 'pending_verification' หรือ 'in_queue' เข้ามาเด็ดขาด
+  // 2. ดึงรายการสินค้าพร้อมส่งที่อนุมัติแล้ว และ "ยังจัดส่งไม่เสร็จสมบูรณ์" มาแสดงทั้งหมด (!isCompleted && !isPending)
   const activeOrdersList = React.useMemo(() => {
     return adminOrders.filter(order => {
       if (!order) return false;
       if (order.is_deleted === true || order.is_deleted === 'true') return false;
 
-      // 1. ตรวจสอบว่าต้องเป็นสินค้าพร้อมส่ง: (!isPreorder)
-      const isPre = Boolean(
-        order.is_preorder === true ||
-        order.is_preorder === 'true' ||
-        order.order_type === 'preorder' ||
-        order.order_type === 'pre_order' ||
-        order.type === 'preorder' ||
-        order.product_type === 'pre_order' ||
-        order.orderType === 'preorder'
+      // 1. กรองสินค้าพรีออเดอร์ออกตามเดิม (ห้ามเปลี่ยน)
+      const isPreorder = isPreorderOrder(order) || Boolean(
+        order.is_preorder || 
+        order.order_type === 'preorder' || 
+        order.type === 'preorder' || 
+        order.status === 'in_queue' || 
+        order.status === 'in_production' ||
+        order.order_status === 'in_queue' ||
+        order.order_status === 'in_production'
       );
-      if (isPre) return false;
+      if (isPreorder) return false;
 
       const s = String(order.status || '').toLowerCase().trim();
       const os = String(order.order_status || '').toLowerCase().trim();
       const ps = String(order.payment_status || '').toLowerCase().trim();
+      const ds = String(order.delivery_status || '').toLowerCase().trim();
 
-      // ห้ามดึงสถานะ 'pending_verification' หรือ 'in_queue' เข้ามาเด็ดขาด
-      if (s === 'pending_verification' || ps === 'pending_verification' || s === 'in_queue' || os === 'in_queue') {
-        return false;
-      }
+      // 2. ดึงรายการสินค้าพร้อมส่งที่อนุมัติแล้ว และ "ยังจัดส่งไม่เสร็จสมบูรณ์" มาแสดงทั้งหมด:
+      // ไม่ว่าจะอยู่ในสถานะ paid, processing, preparing, ready_to_ship, shipping, delivering, หรือ in_transit
+      const isCompleted = s === 'completed' || s === 'delivered' || os === 'completed' || os === 'delivered' || ds === 'completed' || ds === 'delivered' || Number(order.delivery_step) === 4;
+      const isPending = s === 'pending_verification' || os === 'pending_verification' || ps === 'pending_verification' ||
+                        s === 'cancelled' || os === 'cancelled' || ps === 'cancelled' ||
+                        s === 'rejected' || ps === 'rejected' || ps === 'payment_rejected' ||
+                        s === 'unpaid' || ps === 'unpaid';
 
-      // ห้ามดึงสถานะรอตรวจสอบสลิป / ยังไม่ชำระ
-      const pendingStatuses = ['pending', 'unpaid', 'awaiting_approval', 'waiting_verify', 'waiting_approval', 'waiting_payment'];
-      if (pendingStatuses.includes(ps)) return false;
-      if (pendingStatuses.includes(s) && ps !== 'paid' && ps !== 'verified' && ps !== 'approved') return false;
-
-      // ต้องยังไม่จบงานและไม่ถูกยกเลิก: order.status !== 'completed' && order.status !== 'cancelled'
-      if (s === 'completed' || s === 'delivered' || os === 'completed' || os === 'delivered' || Number(order.delivery_step) === 4) {
-        return false;
-      }
-      if (s === 'cancelled' || os === 'cancelled' || s === 'rejected' || ps === 'cancelled' || ps === 'rejected' || ps === 'payment_rejected') {
-        return false;
-      }
-
-      // แสดงเฉพาะ: (!isPreorder) && (order.status === 'paid' || order.status === 'processing' || order.status === 'ready_to_ship' || order.status === 'shipped') && order.status !== 'completed'
-      const validActiveStatuses = ['paid', 'processing', 'ready_to_ship', 'shipped'];
-      const hasApprovedStatus = validActiveStatuses.includes(s) || validActiveStatuses.includes(os);
-
-      if (!hasApprovedStatus) return false;
-
-      return true;
+      return !isCompleted && !isPending;
     }).sort((a: any, b: any) => {
       const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
       const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
@@ -2669,20 +2674,34 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
   const approvedAdminOrders = activeOrdersList;
 
   // Tab 2: ประวัติคำสั่งซื้อสำเร็จ (Completed History)
-  // Single Source of Truth: แสดงเฉพาะ order.status === 'completed'
+  // Single Source of Truth: แสดงเฉพาะ (!isPreorder) && (order.status === 'completed' || order.status === 'delivered')
   const completedOrdersList = React.useMemo(() => {
     return adminOrders
       .filter(order => {
         if (!order) return false;
         if (order.is_deleted === true || order.is_deleted === 'true') return false;
+
+        // แสดงเฉพาะสินค้าพร้อมส่ง
+        const isPreorder = isPreorderOrder(order) || Boolean(
+          order.is_preorder || 
+          order.order_type === 'preorder' || 
+          order.type === 'preorder' || 
+          order.status === 'in_queue' || 
+          order.status === 'in_production' ||
+          order.order_status === 'in_queue' ||
+          order.order_status === 'in_production'
+        );
+        if (isPreorder) return false;
+
         const s = String(order.status || '').toLowerCase().trim();
         const os = String(order.order_status || '').toLowerCase().trim();
+        const ps = String(order.payment_status || '').toLowerCase().trim();
         const ds = String(order.delivery_status || '').toLowerCase().trim();
         const step = Number(order.delivery_step || 0);
 
-        if (s === 'cancelled' || os === 'cancelled' || s === 'rejected') return false;
+        if (s === 'cancelled' || os === 'cancelled' || ps === 'cancelled' || s === 'rejected') return false;
 
-        // แสดงเฉพาะ: order.status === 'completed' (หรือ delivered / step 4)
+        // แสดงเฉพาะ: (!isPreorder) && (order.status === 'completed' || order.status === 'delivered' || step === 4)
         return (
           s === 'completed' || s === 'delivered' ||
           os === 'completed' || os === 'delivered' ||

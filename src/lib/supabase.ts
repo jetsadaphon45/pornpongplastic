@@ -120,53 +120,45 @@ export const IN_STOCK_STAGES: InStockStageInfo[] = [
 ];
 
 // Helper to determine whether an order is a Pre-Order / Made-to-Order or In-Stock / Ready to Ship
+// Comprehensive helper to determine whether an order is a Pre-Order / Made-to-Order
 export function isOrderPreOrder(order: any): boolean {
   if (!order) return false;
-  // Strict product_type / order_type evaluation per requirement
-  if (order.product_type === 'pre_order' || order.order_type === 'pre_order' || order.orderType === 'pre_order') return true;
-  if (order.product_type === 'in_stock' || order.order_type === 'in_stock' || order.orderType === 'in_stock') return false;
-  if (order.orderType === 'preorder' || order.order_type === 'preorder') return true;
-  if (order.orderType === 'instock' || order.order_type === 'instock') return false;
-  if (order.isPreOrder === true || order.is_preorder === true) return true;
-  if (order.isPreOrder === false || order.is_preorder === false) return false;
+  // 1. เช็กจากฟิลด์สถานะและประเภท
+  if (order.is_preorder === true || order.is_preorder === 'true' || order.isPreOrder === true || order.isPreOrder === 'true') return true;
+  if (order.order_type === 'preorder' || order.order_type === 'pre_order' || order.type === 'preorder' || order.orderType === 'preorder' || order.orderType === 'pre_order' || order.product_type === 'pre_order' || order.product_type === 'preorder') return true;
+  if (order.status === 'in_queue' || order.status === 'in_production' || order.order_status === 'in_queue' || order.order_status === 'in_production') return true;
 
   const idStr = String(order.id || '').toUpperCase();
   if (idStr.startsWith('ORD-PRE-') || idStr.startsWith('PRE-')) return true;
 
-  // Check items list if present
-  if (Array.isArray(order.items) && order.items.length > 0) {
-    const hasPreItem = order.items.some((it: any) => {
-      if (it.isPreOrder === true || it.is_preorder === true || it.orderType === 'preorder' || it.type === 'preorder') return true;
-      const itName = String(it.name || it.productName || it.title || '').toLowerCase();
-      return /พรีออเดอร์|สั่งผลิต|เปิดจอง|สั่งทำพิเศษ|จองล่วงหน้า|สั่งหลอม|หลอมพิเศษ|preorder|pre-order|custom|made-to-order/.test(itName);
-    });
-    if (hasPreItem) return true;
-  }
+  // 2. เช็กจากชื่อสินค้า หรือรายการสินค้าภายในออเดอร์
+  const title = String(order.product_name || order.item_name || order.name || order.productName || order.boat_size || order.boat_model_name || '').toLowerCase();
+  if (title.includes('พรี') || title.includes('สั่งทำ') || title.includes('มัดจำ') || title.includes('preorder') || title.includes('pre-order') || title.includes('สั่งผลิต')) return true;
 
-  const pName = String(order.productName || order.product_name || '').toLowerCase();
   const notes = String(order.notes || '').toLowerCase();
-  const status = String(order.status || order.order_status || '').toLowerCase();
+  if (notes.includes('พรี') || notes.includes('สั่งทำ') || notes.includes('มัดจำ') || notes.includes('preorder') || notes.includes('pre-order') || notes.includes('สั่งผลิต')) return true;
 
-  const preKeywords = [
-    'พรีออเดอร์',
-    'สั่งผลิต',
-    'เปิดจอง',
-    'สั่งทำพิเศษ',
-    'จองล่วงหน้า',
-    'สั่งหลอม',
-    'หลอมพิเศษ',
-    'preorder',
-    'pre-order',
-    'custom pre-order',
-    'made-to-order',
-    'pre_order'
-  ];
-  if (preKeywords.some(kw => pName.includes(kw) || notes.includes(kw))) {
-    return true;
+  if (Array.isArray(order.order_items)) {
+    const hasPre = order.order_items.some((item: any) => 
+      item.is_preorder || 
+      (item.product_name && (item.product_name.includes('พรี') || item.product_name.includes('สั่งทำ') || item.product_name.includes('มัดจำ') || item.product_name.includes('preorder')))
+    );
+    if (hasPre) return true;
   }
 
-  // If order requires deposit, it is a pre-order
-  if (order.deposit || order.deposit_amount || status.includes('deposit')) {
+  if (Array.isArray(order.items)) {
+    const hasPre = order.items.some((item: any) => 
+      item.is_preorder || 
+      item.isPreOrder ||
+      (String(item.name || item.productName || item.product_name || '').toLowerCase().includes('พรี') || 
+       String(item.name || item.productName || item.product_name || '').toLowerCase().includes('สั่งทำ') || 
+       String(item.name || item.productName || item.product_name || '').toLowerCase().includes('มัดจำ') ||
+       String(item.name || item.productName || item.product_name || '').toLowerCase().includes('preorder'))
+    );
+    if (hasPre) return true;
+  }
+
+  if (order.deposit || order.deposit_amount || String(order.status || '').toLowerCase().includes('deposit') || String(order.payment_status || '').toLowerCase().includes('deposit')) {
     return true;
   }
 
