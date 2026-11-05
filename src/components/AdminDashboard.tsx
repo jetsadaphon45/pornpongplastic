@@ -2652,8 +2652,8 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
         return false;
       }
 
-      // แสดงเฉพาะสถานะ: 'paid' | 'processing' | 'ready_to_ship' | 'shipped' (และสถานะที่ผ่านการอนุมัติแล้ว)
-      const validActiveStatuses = ['paid', 'processing', 'ready_to_ship', 'shipped', 'confirmed', 'approved', 'delivering', 'in_transit'];
+      // แสดงเฉพาะ: (!isPreorder) && (order.status === 'paid' || order.status === 'processing' || order.status === 'ready_to_ship' || order.status === 'shipped') && order.status !== 'completed'
+      const validActiveStatuses = ['paid', 'processing', 'ready_to_ship', 'shipped'];
       const hasApprovedStatus = validActiveStatuses.includes(s) || validActiveStatuses.includes(os);
 
       if (!hasApprovedStatus) return false;

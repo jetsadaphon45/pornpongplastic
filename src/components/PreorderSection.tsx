@@ -528,7 +528,9 @@ export default function PreorderSection({
         sticker_option: stickerOptionValue,
         custom_text: hasCustomText ? customText.trim() : '',
         total_price: totalPrice,
-        status: 'pending_deposit' as const,
+        status: 'pending_verification' as const,
+        payment_status: 'pending_verification',
+        order_status: 'pending_verification',
         deposit_amount: depositAmount,
         quantity: quantity,
         address: customerAddress.trim(),
@@ -939,13 +941,16 @@ export default function PreorderSection({
     )
   );
 
-  // Requirement 2 & 3: Auto State Detection on Re-open
+  // State Guard: Only display Step 3 ("ได้รับหลักฐานการโอนเงินเรียบร้อยแล้ว") when slip has actually been uploaded
+  // Never auto-skip Step 2 (QR code + slip upload) when a new order is initialized with pending_verification
   const isPendingVerification = Boolean(
     !isApproved && confirmedOrder && (
-      confirmedOrder.status === 'pending_verification' ||
-      confirmedOrder.payment_status === 'pending_verification' ||
-      confirmedOrder.order_status === 'pending_verification' ||
-      slipUploaded
+      slipUploaded ||
+      (Boolean(confirmedOrder.slip_url || confirmedOrder.payment_slip_url) && (
+        confirmedOrder.status === 'pending_verification' ||
+        confirmedOrder.payment_status === 'pending_verification' ||
+        confirmedOrder.order_status === 'pending_verification'
+      ))
     )
   );
 
@@ -2551,7 +2556,7 @@ export default function PreorderSection({
                     <button
                       type="button"
                       onClick={handleFinishPreOrderWithSlip}
-                      disabled={isUploadingSlip}
+                      disabled={(!slipFile && !slipPreview) || isUploadingSlip}
                       className={`w-full sm:w-auto px-6 py-2.5 rounded-xl font-bold text-xs transition-all text-center flex items-center justify-center gap-2 ${
                         !slipFile && !slipPreview
                           ? 'bg-slate-200 text-slate-400 border border-slate-300 hover:bg-slate-250 cursor-not-allowed shadow-none'

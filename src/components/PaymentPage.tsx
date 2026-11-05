@@ -267,12 +267,12 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, o
         setUploadedSlipUrl(order.payment_slip_url || order.slip_url);
       }
 
-      // Requirement 2:
-      // If status === 'pending_verification' -> ALWAYS show 'verifying' (yellow/amber screen), NEVER 'approved'
-      if (s === 'pending_verification' || ps === 'pending_verification' || ['waiting_verify', 'waiting_approval'].includes(ps) || (hasSlip && !isOrderStatusApproved(order))) {
-        setStep('verifying');
-      } else if (isOrderStatusApproved(order)) {
+      // State Guard: Only transition to 'verifying' if a slip has actually been uploaded
+      // Never auto-skip Step 2 ('pay') to Step 3 ('verifying') just because status is pending_verification
+      if (isOrderStatusApproved(order)) {
         setStep('approved');
+      } else if (hasSlip) {
+        setStep('verifying');
       } else {
         setStep('pay');
       }
@@ -317,11 +317,12 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, o
                 setUploadedSlipUrl(formattedOrder.payment_slip_url);
               }
 
-              // Check pending_verification first
-              if (s === 'pending_verification' || ps === 'pending_verification' || ['waiting_verify', 'waiting_approval'].includes(ps) || (hasSlip && !isOrderStatusApproved(formattedOrder))) {
-                setStep('verifying');
-              } else if (isOrderStatusApproved(formattedOrder)) {
+              // State Guard: Only transition to 'verifying' if a slip has actually been uploaded
+              // Never auto-skip Step 2 ('pay') to Step 3 ('verifying') just because status is pending_verification
+              if (isOrderStatusApproved(formattedOrder)) {
                 setStep('approved');
+              } else if (hasSlip) {
+                setStep('verifying');
               } else {
                 setStep('pay');
               }
@@ -1279,7 +1280,7 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, o
                         triggerToast('กรุณาแนบสลิปหลักฐานการโอนเงินก่อนทำการยืนยัน');
                       }
                     }}
-                    disabled={isProcessing}
+                    disabled={!slipFile || isProcessing}
                     className={`w-full flex items-center justify-center gap-2 rounded-2xl font-display font-bold text-xs py-4 transition-all duration-200 shadow-md ${
                       !slipFile
                         ? 'bg-slate-200 text-slate-400 cursor-not-allowed shadow-none'
