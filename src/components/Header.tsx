@@ -1,5 +1,5 @@
 import React from 'react';
-import { Anchor, ShoppingCart, Menu, X, Search, PhoneCall, User, LogOut, Bell, ListOrdered, Truck, ClipboardList } from 'lucide-react';
+import { Anchor, ShoppingCart, Menu, X, Search, PhoneCall, User, LogOut, Bell, ListOrdered, Truck, ClipboardList, Flame, Package } from 'lucide-react';
 import { CartItem, User as AppUser } from '../types';
 import NotificationDropdown, { AppNotification } from './NotificationDropdown';
 import { supabase, isSupabaseConfigured, supabaseOrders, supabasePreOrders, supabaseDeliveries, isOrderPreOrder } from '../lib/supabase';
@@ -186,29 +186,23 @@ export default function Header({
     });
     setIsInTransitActive(isAnyInTransit);
 
-    // Determine whether to display "🚚 กำลังจัดส่ง" (In-Stock / Shipping) or "📋 ติดตามคิวผลิต" (Pre-Order in production)
-    const hasPreOrderProducing = validActiveOrders.some((ord: any) => {
-      const isPre = isOrderPreOrder(ord);
-      if (!isPre) return false; // In-stock orders never wait in production queue
+    // 1. ตรวจสอบออเดอร์ล่าสุดของลูกค้า (latestOrder หรือ activeOrder):
+    const latestOrder = validActiveOrders[0];
+    const isPreorder = Boolean(
+      latestOrder?.is_preorder || 
+      latestOrder?.order_type === 'preorder' || 
+      latestOrder?.type === 'preorder' ||
+      latestOrder?.status === 'in_queue' ||
+      latestOrder?.status === 'in_production' ||
+      isOrderPreOrder(latestOrder)
+    );
 
-      const orderIdStr = String(ord.id).trim();
-      const delivery = deliveriesMap[orderIdStr] || deliveriesMap[ord.id];
-      const delivStatus = String(delivery?.delivery_status || ord.delivery_status || '').toLowerCase().trim();
-      const ordStatus = String(ord.status || ord.order_status || '').toLowerCase().trim();
-      const qStage = Number(ord.queue_stage || delivery?.queue_stage || 0);
-
-      const isShipping = 
-        delivStatus === 'in_transit' || 
-        delivStatus === 'shipping' || 
-        ordStatus === 'in_transit' || 
-        ordStatus === 'shipping' || 
-        ordStatus === 'shipped' || 
-        qStage === 4;
-
-      return !isShipping;
-    });
-
-    setTrackingStatus(hasPreOrderProducing && !isAnyInTransit ? 'producing' : 'shipping');
+    // 2. กำหนดข้อความบนปุ่ม:
+    // - ถ้าเป็นสินค้าพรีออเดอร์ (isPreorder === true):
+    //   * แสดงข้อความ: "ติดตามคิวผลิต" (ไอคอนเตาหลอม/คิว)
+    // - ถ้าเป็นสินค้าพร้อมส่ง (isPreorder === false หรือ In-Stock):
+    //   * แสดงข้อความ: "ติดตามสถานะจัดส่ง" (ไอคอนกล่องพัสดุ/รถส่งของ)
+    setTrackingStatus(isPreorder ? 'producing' : 'shipping');
   }, [currentUser]);
 
   // Real-time synchronization for Header Tracking Status & Active Orders
@@ -377,14 +371,14 @@ export default function Header({
                   onClick={() => onOpenProfile('deliveries')}
                   className="px-3.5 py-1.5 text-xs font-bold rounded-full transition-all duration-200 cursor-pointer flex items-center gap-1.5 text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 shadow-2xs hover:scale-102 active:scale-97 animate-in fade-in ring-1 ring-emerald-400/30"
                   id="nav-track-queue"
-                  title={isInTransitActive ? "พัสดุอยู่ระหว่างจัดส่ง - กำลังเดินทางไปยังที่อยู่ของคุณ" : "ติดตามสถานะจัดส่งสินค้า (In-Stock / Ready to Ship)"}
+                  title="ติดตามสถานะจัดส่งสินค้า (In-Stock / Ready to Ship)"
                 >
                   <span className="relative flex h-2 w-2">
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                     <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
                   </span>
                   <Truck size={14} className="text-emerald-700 animate-pulse" />
-                  <span>{isInTransitActive ? '🚚 กำลังจัดส่ง' : '🚚 ติดตามสถานะจัดส่ง'}</span>
+                  <span>ติดตามสถานะจัดส่ง</span>
                 </button>
               ) : (
                 <button
@@ -398,8 +392,8 @@ export default function Header({
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
                     <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
                   </span>
-                  <ClipboardList size={13} className="text-amber-700" />
-                  <span>📋 ติดตามคิวผลิต</span>
+                  <Flame size={14} className="text-amber-600 animate-pulse" />
+                  <span>ติดตามคิวผลิต</span>
                 </button>
               )
             )}
@@ -638,10 +632,10 @@ export default function Header({
                       <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
                     </span>
                     <Truck size={15} className="text-emerald-700" />
-                    <span>{isInTransitActive ? '🚚 กำลังจัดส่ง' : '🚚 ติดตามสถานะจัดส่ง'}</span>
+                    <span>ติดตามสถานะจัดส่ง</span>
                   </div>
                   <span className="text-[10px] bg-emerald-200/70 text-emerald-900 px-2 py-0.5 rounded-full font-mono font-bold">
-                    {isInTransitActive ? 'กำลังจัดส่ง' : 'IN-STOCK / SHIPPING'}
+                    IN-STOCK / SHIPPING
                   </span>
                 </button>
               ) : (
@@ -659,8 +653,8 @@ export default function Header({
                       <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
                       <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
                     </span>
-                    <ClipboardList size={15} className="text-amber-700" />
-                    <span>📋 ติดตามคิวผลิต</span>
+                    <Flame size={15} className="text-amber-600 animate-pulse" />
+                    <span>ติดตามคิวผลิต</span>
                   </div>
                   <span className="text-[10px] bg-amber-200/70 text-amber-900 px-2 py-0.5 rounded-full font-mono font-bold">
                     PRE-ORDER
