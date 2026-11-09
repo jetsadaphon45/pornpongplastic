@@ -622,6 +622,10 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
     if (activeMenu === 'orders' && prevActiveMenuRef.current !== 'orders') {
       setOrdersTabFilter('active');
     }
+    if (activeMenu === 'queue-management' && prevActiveMenuRef.current !== 'queue-management') {
+      setQueueSearch('');
+      setQueueStageFilter('all');
+    }
     prevActiveMenuRef.current = activeMenu;
   }, [activeMenu]);
 
@@ -1701,11 +1705,12 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
             await supabase
               .from('orders')
               .update({
-                status: 'in_queue',
+                status: 'in_queue',             // เปลี่ยนจาก pending_verification เป็น in_queue ทันที
                 order_status: 'in_queue',
                 queue_status: 'waiting_production',
                 queue_stage: 1,
-                payment_status: 'deposit_paid',
+                queue_step: 1,                  // ตั้งค่าเริ่มต้นสเต็ป 1 (รับคิวผลิต)
+                payment_status: 'verified',     // ยืนยันชำระเงินเรียบร้อย
                 product_type: 'pre_order',
                 order_type: 'preorder',
                 is_preorder: true,
@@ -1795,13 +1800,14 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
           order_status: isPreorder ? 'in_queue' : 'paid',
           queue_status: isPreorder ? 'waiting_production' : undefined,
           queue_stage: isPreorder ? 1 : undefined,
-          payment_status: isPreorder ? 'deposit_paid' : 'paid',
+          queue_step: isPreorder ? 1 : undefined,
+          payment_status: isPreorder ? 'verified' : 'paid',
           product_type: isPreorder ? 'pre_order' : 'in_stock',
           order_type: isPreorder ? 'preorder' : 'instock',
           is_preorder: isPreorder,
           is_deleted: false,
           delivery_status: isPreorder ? 'waiting_production' : 'ready_to_ship',
-          ...(isPreorder ? { queue_number: assignedQ, queue_id: assignedQ, queue_stage: 1 } : {})
+          ...(isPreorder ? { queue_number: assignedQ, queue_id: assignedQ, queue_stage: 1, queue_step: 1 } : {})
         };
         const exists = prev.some(o => String(o.id) === targetOrderId);
         return exists
@@ -1819,13 +1825,14 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
           order_status: isPreorder ? 'in_queue' : 'paid',
           queue_status: isPreorder ? 'waiting_production' : undefined,
           queue_stage: isPreorder ? 1 : undefined,
-          payment_status: isPreorder ? 'deposit_paid' : 'paid',
+          queue_step: isPreorder ? 1 : undefined,
+          payment_status: isPreorder ? 'verified' : 'paid',
           product_type: isPreorder ? 'pre_order' : 'in_stock',
           order_type: isPreorder ? 'preorder' : 'instock',
           is_preorder: isPreorder,
           is_deleted: false,
           delivery_status: isPreorder ? 'waiting_production' : 'ready_to_ship',
-          ...(isPreorder ? { queue_number: assignedQ, queue_id: assignedQ, queue_stage: 1 } : {})
+          ...(isPreorder ? { queue_number: assignedQ, queue_id: assignedQ, queue_stage: 1, queue_step: 1 } : {})
         };
         const existsInLocal = local.some((o: any) => String(o.id) === targetOrderId);
         const newLocal = existsInLocal
@@ -1935,34 +1942,46 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
   // เงื่อนไขการกรองเพื่อแสดงในตารางคิวผลิต:
   // นำข้อมูลมากรองเฉพาะพรีออเดอร์ที่ "ยังดำเนินการไม่เสร็จสิ้น" (order.status !== 'completed' && order.status !== 'cancelled')
   const sortedQueueOrders = React.useMemo(() => {
-    const activePreorders = (adminOrders || []).filter(order => {
+    const queueList = (adminOrders || []).filter(order => {
       if (!order) return false;
       if (order.is_deleted === true || order.is_deleted === 'true') return false;
 
-      const isPre = Boolean(
+      // ตรวจสอบความเป็นพรีออเดอร์
+      const isPreorder = Boolean(
         order.is_preorder === true ||
         order.is_preorder === 'true' ||
         order.order_type === 'preorder' ||
         order.order_type === 'pre_order' ||
         order.type === 'preorder' ||
-        order.status === 'in_queue' ||
-        order.status === 'in_production' ||
-        order.status === 'ready_to_transfer' ||
-        order.status === 'delivering' ||
+        (order.queue_id && String(order.queue_id).startsWith('Q-')) ||
+        (order.queue_number && String(order.queue_number).startsWith('Q-')) ||
+        (order.order_id && String(order.order_id).includes('ORD-PRE')) ||
+        (order.id && String(order.id).includes('ORD-PRE')) ||
+        ['in_queue', 'in_production', 'ready_to_transfer', 'delivering'].includes(order.status) ||
         Number(order.queue_step) > 0 ||
         isPreorderOrder(order)
       );
 
-      // แสดงเฉพาะรายการที่ยังไม่จบงาน (ไม่ดึง completed หรือ cancelled มาแสดง)
-      const s = String(order.status || '').toLowerCase().trim();
-      const os = String(order.order_status || '').toLowerCase().trim();
-      const isCompleted = s === 'completed' || s === 'delivered' || os === 'completed' || os === 'delivered';
-      const isCancelled = s === 'cancelled' || os === 'cancelled' || s === 'rejected';
+      // เงื่อนไขสำคัญ:
+      // - ต้องเป็นพรีออเดอร์
+      // - ต้องไม่อยู่ในสถานะ 'pending_verification' (ต้องอนุมัติแล้วเท่านั้น)
+      // - ต้องไม่อยู่ในสถานะ 'completed' หรือ 'cancelled'
+      const statusStr = String(order.status || '').toLowerCase().trim();
+      const paymentStatusStr = String(order.payment_status || '').toLowerCase().trim();
+      const isApproved = order.status !== 'pending_verification' &&
+                         statusStr !== 'pending_verification' &&
+                         statusStr !== 'waiting_verify' &&
+                         statusStr !== 'waiting_payment' &&
+                         paymentStatusStr !== 'pending_verification';
+      const isNotFinished = order.status !== 'completed' && 
+                            order.status !== 'cancelled' &&
+                            statusStr !== 'completed' && 
+                            statusStr !== 'cancelled';
 
-      return isPre && !isCompleted && !isCancelled;
+      return isPreorder && isApproved && isNotFinished;
     });
 
-    const list = activePreorders.map((ord, idx) => {
+    const list = queueList.map((ord, idx) => {
       const qId = ord.queue_id || ord.queue_number || formatQueueId(ord, idx);
       const ordSt = (ord.order_status || ord.status || '').toLowerCase();
       const qStatus = (ord.queue_status || '').toLowerCase();

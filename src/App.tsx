@@ -818,10 +818,16 @@ export default function App() {
       <Header
         activeTab={activeTab}
         setActiveTab={(tab) => {
+          if (tab === 'tracking') {
+            setProfileInitialTab('deliveries');
+            setIsProfileOpen(true);
+            return;
+          }
           setActiveTab(tab);
           // Auto-scroll screen back to top upon switching tabs
           window.scrollTo({ top: 0, behavior: 'smooth' });
         }}
+        setIsProfileOpen={setIsProfileOpen}
         cart={cart}
         setIsCartOpen={setIsCartOpen}
         searchTerm={searchTerm}

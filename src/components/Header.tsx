@@ -16,6 +16,7 @@ interface HeaderProps {
   onOpenRegister: () => void;
   onLogout: () => void;
   onOpenProfile: (tab?: 'history' | 'addresses' | 'deliveries') => void;
+  setIsProfileOpen?: (open: boolean) => void;
   notifications: AppNotification[];
   onMarkAsRead: (id: string) => void;
   onMarkAllAsRead: () => void;
@@ -35,6 +36,7 @@ export default function Header({
   onOpenRegister,
   onLogout,
   onOpenProfile,
+  setIsProfileOpen,
   notifications,
   onMarkAsRead,
   onMarkAllAsRead,
@@ -368,7 +370,11 @@ export default function Header({
               trackingStatus === 'shipping' ? (
                 <button
                   type="button"
-                  onClick={() => onOpenProfile('deliveries')}
+                  onClick={() => {
+                    if (typeof setIsProfileOpen === 'function') setIsProfileOpen(true);
+                    if (typeof setActiveTab === 'function') setActiveTab('tracking');
+                    if (typeof onOpenProfile === 'function') onOpenProfile('deliveries');
+                  }}
                   className="px-3.5 py-1.5 text-xs font-bold rounded-full transition-all duration-200 cursor-pointer flex items-center gap-1.5 text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 shadow-2xs hover:scale-102 active:scale-97 animate-in fade-in ring-1 ring-emerald-400/30"
                   id="nav-track-queue"
                   title="ติดตามสถานะจัดส่งสินค้า (In-Stock / Ready to Ship)"
@@ -383,7 +389,11 @@ export default function Header({
               ) : (
                 <button
                   type="button"
-                  onClick={() => onOpenProfile('deliveries')}
+                  onClick={() => {
+                    if (typeof setIsProfileOpen === 'function') setIsProfileOpen(true);
+                    if (typeof setActiveTab === 'function') setActiveTab('tracking');
+                    if (typeof onOpenProfile === 'function') onOpenProfile('deliveries');
+                  }}
                   className="px-3.5 py-1.5 text-xs font-bold rounded-full transition-all duration-200 cursor-pointer flex items-center gap-1.5 text-amber-800 bg-amber-50/90 hover:bg-amber-100 border border-amber-200/90 shadow-2xs hover:scale-102 active:scale-97 animate-in fade-in"
                   id="nav-track-queue"
                   title="ติดตามคิวผลิตเรือพรีออเดอร์และเตาหลอมโรงงาน Real-time"
@@ -620,7 +630,9 @@ export default function Header({
                 <button
                   type="button"
                   onClick={() => {
-                    onOpenProfile('deliveries');
+                    if (typeof setIsProfileOpen === 'function') setIsProfileOpen(true);
+                    if (typeof setActiveTab === 'function') setActiveTab('tracking');
+                    if (typeof onOpenProfile === 'function') onOpenProfile('deliveries');
                     setIsMobileMenuOpen(false);
                   }}
                   className="w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl font-bold text-xs bg-emerald-50 text-emerald-900 border border-emerald-200 shadow-2xs mt-1 transition-all"
@@ -642,7 +654,9 @@ export default function Header({
                 <button
                   type="button"
                   onClick={() => {
-                    onOpenProfile('deliveries');
+                    if (typeof setIsProfileOpen === 'function') setIsProfileOpen(true);
+                    if (typeof setActiveTab === 'function') setActiveTab('tracking');
+                    if (typeof onOpenProfile === 'function') onOpenProfile('deliveries');
                     setIsMobileMenuOpen(false);
                   }}
                   className="w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl font-bold text-xs bg-amber-50 text-amber-900 border border-amber-200 shadow-2xs mt-1 transition-all"
