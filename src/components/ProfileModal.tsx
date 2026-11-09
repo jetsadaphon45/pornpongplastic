@@ -284,12 +284,18 @@ export function ProfileModal({
 
       if (isCancelled) return false;
 
-      // Condition 3: Match active in-progress statuses: pending_verification, ready_to_ship, producing, in_transit
+      // Condition 3: Match active in-progress statuses: pending_verification, in_queue, in_production, ready_to_transfer, delivering, etc.
       const activeKeywords = [
         'pending_verification',
+        'in_queue',
+        'in_production',
+        'ready_to_transfer',
+        'delivering',
         'ready_to_ship',
         'producing',
         'manufacturing',
+        'molding',
+        'assembling',
         'in_transit',
         'shipping',
         'paid',
@@ -304,7 +310,8 @@ export function ProfileModal({
         activeKeywords.includes(os) ||
         activeKeywords.includes(ds) ||
         activeKeywords.includes(ps) ||
-        ['รับคิวผลิต', 'กำลังหลอม/ผลิต', 'รอขนย้าย', 'เตรียมพัสดุ / รอจัดส่ง', 'อยู่ระหว่างจัดส่ง', 'รอตรวจสอบชำระเงิน'].includes(o.stageLabel)
+        (Number((o as any).queue_step) >= 1 && Number((o as any).queue_step) <= 4) ||
+        ['รับคิวผลิต', 'กำลังหลอมขึ้นรูป', 'กำลังหลอม/ผลิต', 'รอขนย้าย', 'เตรียมพัสดุ / รอจัดส่ง', 'อยู่ระหว่างจัดส่ง', 'รอตรวจสอบชำระเงิน'].includes(o.stageLabel)
       );
     });
   }, [orders, isOrderCompleted]);
@@ -369,33 +376,16 @@ export function ProfileModal({
 
       if (isSupabaseConfigured && supabase) {
         try {
-          // Requirement 1 & 2:
-          // 1. "ติดตามสถานะจัดส่ง" Tab: .or('status.eq.pending_verification,status.eq.ready_to_ship,status.eq.producing,status.eq.in_transit')
-          // 2. "ประวัติการสั่งซื้อและจัดจอง" Tab: .or('status.eq.delivered,status.eq.completed')
-          const [activeRes, completedRes, delivs] = await Promise.all([
+          // Fetch all customer orders and deliveries from Supabase
+          const [ordersRes, delivs] = await Promise.all([
             supabase
               .from('orders')
               .select('*')
-              .or('status.eq.pending_verification,status.eq.ready_to_ship,status.eq.producing,status.eq.in_transit')
-              .order('created_at', { ascending: false }),
-            supabase
-              .from('orders')
-              .select('*')
-              .or('status.eq.delivered,status.eq.completed')
               .order('created_at', { ascending: false }),
             supabaseDeliveries.getAll()
           ]);
 
-          const orderMap = new Map<string, any>();
-          // Active in-progress orders
-          (activeRes.data || []).forEach((o: any) => { 
-            if (o && o.id) orderMap.set(String(o.id), o); 
-          });
-          // Completed orders overwrite any earlier active records
-          (completedRes.data || []).forEach((o: any) => { 
-            if (o && o.id) orderMap.set(String(o.id), o); 
-          });
-          fetchedOrders = Array.from(orderMap.values());
+          fetchedOrders = ordersRes.data || [];
           deliveriesMap = delivs || {};
         } catch (e) {
           console.warn('Could not query orders directly from Supabase in ProfileModal:', e);
@@ -478,7 +468,14 @@ export function ProfileModal({
         const orderIdStr = String(o.id).trim();
         const delivery = deliveriesMap[orderIdStr] || deliveriesMap[o.id];
 
-        const isPre = isOrderPreOrder(o);
+        const isPre = isOrderPreOrder(o) || Boolean(
+          o.is_preorder === true || 
+          o.is_preorder === 'true' || 
+          o.order_type === 'preorder' || 
+          ['in_queue', 'in_production', 'ready_to_transfer', 'delivering', 'molding', 'assembling'].includes(String(o.status || '').toLowerCase()) ||
+          ['in_queue', 'in_production', 'ready_to_transfer', 'delivering', 'molding', 'assembling'].includes(String(o.order_status || '').toLowerCase()) ||
+          Number(o.queue_step || 0) > 0
+        );
         const orderType: 'preorder' | 'instock' = isPre ? 'preorder' : 'instock';
 
         // Read real-time delivery columns joined by order_id: In-Stock items bypass queue
@@ -492,13 +489,14 @@ export function ProfileModal({
         const delivStatus = (delivery?.delivery_status || '').toLowerCase();
         const ordStatus = (o.status || o.order_status || '').toLowerCase();
         const payStatus = (o.payment_status || '').toLowerCase();
+        const qStep = Number(o.queue_step || o.queue_stage || 0);
 
         let stageNumber: 1 | 2 | 3 | 4 = 1;
         let stageLabel = 'รับคิวผลิต';
         let statusMessage = 'โรงงานลงทะเบียนรับคิวผลิตของคุณเข้าระบบเรียบร้อยแล้ว';
 
-        const isDelivered = delivStatus === 'delivered' || delivStatus === 'completed' || ordStatus === 'delivered' || ordStatus === 'completed';
-        const isShipping = delivStatus === 'in_transit' || delivStatus === 'shipping' || ordStatus === 'in_transit' || ordStatus === 'shipped' || ordStatus === 'shipping' || o.queue_stage === 4;
+        const isDelivered = delivStatus === 'delivered' || delivStatus === 'completed' || ordStatus === 'delivered' || ordStatus === 'completed' || qStep === 5;
+        const isShipping = delivStatus === 'in_transit' || delivStatus === 'shipping' || ordStatus === 'in_transit' || ordStatus === 'delivering' || ordStatus === 'shipped' || ordStatus === 'shipping' || o.queue_stage === 4 || qStep === 4;
         const isPendingVerif = ordStatus === 'pending_verification' || (o.payment_status || '').toLowerCase() === 'pending_verification' || (ordStatus === 'pending' && (o.payment_status || '').toLowerCase() !== 'verified');
         const isWaitingPayment = ordStatus === 'waiting_payment' || ((o.payment_status || '').toLowerCase() === 'pending' && !ordStatus);
 
@@ -506,12 +504,6 @@ export function ProfileModal({
           stageNumber = 4;
           stageLabel = 'จัดส่งสำเร็จ';
           statusMessage = 'จัดส่งสำเร็จเรียบร้อยแล้ว - ขอบคุณที่ไว้วางใจใช้บริการพรพงศ์พลาสติก';
-        } else if (isShipping) {
-          stageNumber = 4;
-          stageLabel = 'อยู่ระหว่างจัดส่ง';
-          statusMessage = isPre
-            ? `เรือสั่งผลิตเสร็จสิ้นและอยู่ระหว่างจัดส่ง - ขนส่ง: ${carrier} | เบอร์คนขับ: ${driver} | Tracking: ${trackingNo}`
-            : `สินค้าพร้อมส่งอยู่ระหว่างจัดส่ง - ขนส่ง: ${carrier} | เบอร์คนขับ: ${driver} | Tracking: ${trackingNo}`;
         } else if (isPendingVerif) {
           stageNumber = 1;
           stageLabel = 'รอตรวจสอบชำระเงิน';
@@ -522,19 +514,29 @@ export function ProfileModal({
           statusMessage = 'กรุณาแนบหลักฐานการชำระเงินเพื่อเริ่มดำเนินการ';
         } else if (!isPre) {
           // For In-Stock items: Skip furnace casting stages 1 & 2 directly to Ready for Shipping ONLY when approved!
-          stageNumber = 3;
-          stageLabel = 'เตรียมพัสดุ / รอจัดส่ง';
-          statusMessage = 'สินค้าพร้อมส่ง (In-Stock) ชำระเงินเรียบร้อยแล้ว - คลังสินค้ากำลังตรวจเช็คและแพ็คสินค้าเพื่อเตรียมส่งมอบให้ขนส่ง';
+          if (isShipping) {
+            stageNumber = 4;
+            stageLabel = 'อยู่ระหว่างจัดส่ง';
+            statusMessage = `สินค้าพร้อมส่งอยู่ระหว่างจัดส่ง - ขนส่ง: ${carrier} | เบอร์คนขับ: ${driver} | Tracking: ${trackingNo}`;
+          } else {
+            stageNumber = 3;
+            stageLabel = 'เตรียมพัสดุ / รอจัดส่ง';
+            statusMessage = 'สินค้าพร้อมส่ง (In-Stock) ชำระเงินเรียบร้อยแล้ว - คลังสินค้ากำลังตรวจเช็คและแพ็คสินค้าเพื่อเตรียมส่งมอบให้ขนส่ง';
+          }
         } else {
-          // For Pre-Order items: Full manufacturing queue
-          if (delivStatus === 'ready_for_shipping' || ordStatus === 'ready_for_shipping' || ordStatus === 'ready' || o.queue_stage === 3) {
+          // For Pre-Order items: Strictly 4 steps bound to status and queue_step
+          if (qStep === 4 || ordStatus === 'delivering' || isShipping) {
+            stageNumber = 4;
+            stageLabel = 'อยู่ระหว่างจัดส่ง';
+            statusMessage = `เรือสั่งผลิตเสร็จสิ้นและอยู่ระหว่างจัดส่ง - ขนส่ง: ${carrier} | เบอร์คนขับ: ${driver} | Tracking: ${trackingNo}`;
+          } else if (qStep === 3 || ordStatus === 'ready_to_transfer' || delivStatus === 'ready_for_shipping' || ordStatus === 'ready_for_shipping' || ordStatus === 'ready') {
             stageNumber = 3;
             stageLabel = 'รอขนย้าย';
-            statusMessage = `เรือผลิตเสร็จแล้ว - คาดว่าจะจัดส่งวันที่: ${estDate || 'กำลังประสานงานคิวจัดส่ง'}`;
-          } else if (delivStatus === 'manufacturing' || delivStatus === 'producing' || ordStatus === 'manufacturing' || ordStatus === 'producing' || ordStatus === 'processing' || ordStatus === 'paid' || o.queue_stage === 2) {
+            statusMessage = `เรือผลิตเสร็จแล้ว อยู่ในขั้นตอนรอขนย้าย - คาดว่าจะจัดส่งวันที่: ${estDate || 'กำลังประสานงานคิวจัดส่ง'}`;
+          } else if (qStep === 2 || ordStatus === 'in_production' || delivStatus === 'manufacturing' || delivStatus === 'producing' || ordStatus === 'manufacturing' || ordStatus === 'producing') {
             stageNumber = 2;
-            stageLabel = 'กำลังหลอม/ผลิต';
-            statusMessage = 'กำลังหลอมเรือตามสเปกที่คุณออกแบบในเตาหลอม';
+            stageLabel = 'กำลังหลอมขึ้นรูป';
+            statusMessage = 'กำลังหลอมเรือตามสเปกที่คุณออกแบบในเตาหลอมความร้อนสูง';
           } else {
             stageNumber = 1;
             stageLabel = 'รับคิวผลิต';
@@ -549,6 +551,7 @@ export function ProfileModal({
           id: o.id,
           queueId: queueNum,
           queue_number: isPre ? queueNum : (queueNum || undefined),
+          queue_step: qStep,
           date: o.date || (o.created_at ? new Date(o.created_at).toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric' }) : 'เมื่อเร็วๆ นี้'),
           productName: o.productName || 'เรือพลาสติกและอุปกรณ์',
           color: o.color || 'คละสี',
@@ -1548,7 +1551,7 @@ export function ProfileModal({
                           <div>
                             <h3 className="font-display font-black text-sm text-white tracking-wide">
                               {primaryTrackedOrder.isPreOrder
-                                ? 'บัตรติดตามคิวและสถานะพรีออเดอร์'
+                                ? 'บัตรติดตามคิวผลิตเรือพลาสติก (Pre-order Queue Tracking)'
                                 : 'บัตรติดตามสถานะจัดส่งสินค้าพร้อมส่ง'}
                             </h3>
                             <span className="text-[10.5px] text-slate-300">
@@ -1723,27 +1726,32 @@ export function ProfileModal({
                                 <div 
                                   className="h-full bg-gradient-to-r from-violet-500 via-amber-500 via-sky-500 to-emerald-400 transition-all duration-500 rounded-full"
                                   style={{
-                                    width: (primaryTrackedOrder.stageNumber || 1) === 1 ? '0%' :
-                                      (primaryTrackedOrder.stageNumber || 1) === 2 ? '33%' :
-                                      (primaryTrackedOrder.stageNumber || 1) === 3 ? '66%' : '100%'
+                                    width: (primaryTrackedOrder.stageLabel === 'จัดส่งสำเร็จ' || primaryTrackedOrder.raw_status === 'completed' || primaryTrackedOrder.raw_status === 'delivered' || (primaryTrackedOrder as any).queue_step === 5)
+                                      ? '100%'
+                                      : (primaryTrackedOrder.stageNumber || 1) === 1 ? '0%' :
+                                        (primaryTrackedOrder.stageNumber || 1) === 2 ? '33%' :
+                                        (primaryTrackedOrder.stageNumber || 1) === 3 ? '66%' : '100%'
                                   }}
                                 />
                               </div>
 
                               {[
                                 { step: 1, label: '1. รับคิวผลิต', desc: 'ลงทะเบียนรับคิว' },
-                                { step: 2, label: '2. กำลังหลอมขึ้นรูป', desc: 'หลอมเรซิ่นในเตา' },
-                                { step: 3, label: '3. ตรวจสอบ QC & บรรจุ', desc: 'ผลิตเสร็จ-รอรถ' },
+                                { step: 2, label: '2. กำลังหลอมขึ้นรูป', desc: 'หลอมขึ้นรูปในเตา' },
+                                { step: 3, label: '3. รอขนย้าย', desc: 'ผลิตเสร็จ-รอขนย้าย' },
                                 { step: 4, label: '4. อยู่ระหว่างจัดส่ง', desc: 'ขึ้นรถจัดส่งแล้ว' }
                               ].map((s) => {
                                 const cur = primaryTrackedOrder.stageNumber || 1;
-                                const isPast = cur > s.step;
-                                const isCur = cur === s.step;
+                                const isCompleted = primaryTrackedOrder.stageLabel === 'จัดส่งสำเร็จ' || primaryTrackedOrder.raw_status === 'completed' || primaryTrackedOrder.raw_status === 'delivered' || (primaryTrackedOrder as any).queue_step === 5;
+                                const isPast = isCompleted || cur > s.step;
+                                const isCur = !isCompleted && cur === s.step;
 
                                 return (
                                   <div key={s.step} className="relative z-10 flex flex-col items-center">
                                     <div className={`w-7 h-7 rounded-full flex items-center justify-center font-bold text-xs transition-all ${
-                                      isCur
+                                      isCompleted || isPast
+                                        ? 'bg-emerald-500 text-white shadow-xs'
+                                        : isCur
                                         ? s.step === 4 
                                           ? 'bg-emerald-500 text-white ring-4 ring-emerald-500/30 scale-110 shadow-lg shadow-emerald-500/40' 
                                           : s.step === 3 
@@ -1751,18 +1759,16 @@ export function ProfileModal({
                                           : s.step === 2
                                           ? 'bg-amber-500 text-white ring-4 ring-amber-500/30 scale-110 shadow-lg shadow-amber-500/40'
                                           : 'bg-violet-500 text-white ring-4 ring-violet-500/30 scale-110 shadow-lg shadow-violet-500/40'
-                                        : isPast
-                                        ? 'bg-emerald-500 text-white shadow-xs'
                                         : 'bg-slate-800 text-slate-400 border border-slate-700'
                                     }`}>
-                                      {isPast || (isCur && s.step === 4) ? (
+                                      {isCompleted || isPast || (isCur && s.step === 4) ? (
                                         <Check size={13} strokeWidth={3} />
                                       ) : (
                                         <span>{s.step}</span>
                                       )}
                                     </div>
                                     <span className={`text-[10px] mt-1 font-bold ${
-                                      isCur ? 'text-white font-black' : isPast ? 'text-emerald-300' : 'text-slate-400'
+                                      isCompleted || isPast ? 'text-emerald-300' : isCur ? 'text-white font-black' : 'text-slate-400'
                                     }`}>
                                       {s.label}
                                     </span>

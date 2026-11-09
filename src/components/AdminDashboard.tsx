@@ -1891,10 +1891,12 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
       const ps = String(ord.payment_status || '').toLowerCase().trim();
       const ds = String(ord.delivery_status || '').toLowerCase().trim();
 
-      // 1. เงื่อนไข: status อยู่ใน ['in_queue', 'in_production', 'molding', 'assembling'] หรือเป็นออเดอร์ประเภทพรีออเดอร์ที่อนุมัติแล้ว
+      // 1. เงื่อนไข: status อยู่ใน ['in_queue', 'in_production', 'ready_to_transfer', 'delivering', 'molding', 'assembling'] หรือเป็นออเดอร์ประเภทพรีออเดอร์ที่อนุมัติแล้ว
       const queueStatuses = [
         'in_queue', 
         'in_production', 
+        'ready_to_transfer',
+        'delivering',
         'molding', 
         'assembling', 
         'queue_received', 
@@ -1914,6 +1916,9 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
         ord.type === 'preorder' ||
         ord.status === 'in_queue' ||
         ord.status === 'in_production' ||
+        ord.status === 'ready_to_transfer' ||
+        ord.status === 'delivering' ||
+        Number(ord.queue_step) > 0 ||
         (Array.isArray(ord.order_items) && ord.order_items.some((item: any) => item?.is_preorder)) ||
         (Array.isArray(ord.items) && ord.items.some((item: any) => item?.is_preorder))
       );
@@ -1932,22 +1937,27 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
       const qId = ord.queue_id || ord.queue_number || formatQueueId(ord, idx);
       const ordSt = (ord.order_status || ord.status || '').toLowerCase();
       const qStatus = (ord.queue_status || '').toLowerCase();
+      const qStep = Number(ord.queue_step || 0);
+
       let defaultStage: 1 | 2 | 3 | 4 = 1;
-      if (ordSt === 'in_transit' || ordSt === 'shipped' || ordSt === 'shipping' || ordSt === 'delivered' || ordSt === 'completed' || qStatus === 'in_transit') {
+      if (qStep >= 1 && qStep <= 4) {
+        defaultStage = qStep as 1 | 2 | 3 | 4;
+      } else if (ordSt === 'delivering' || ordSt === 'in_transit' || ordSt === 'shipped' || ordSt === 'shipping' || ordSt === 'delivered' || ordSt === 'completed' || qStatus === 'in_transit') {
         defaultStage = 4;
-      } else if (ordSt === 'ready_for_shipping' || ordSt === 'ready' || ordSt === 'ready_to_ship' || qStatus === 'ready_for_shipping') {
+      } else if (ordSt === 'ready_to_transfer' || ordSt === 'ready_for_shipping' || ordSt === 'ready' || ordSt === 'ready_to_ship' || qStatus === 'ready_for_shipping') {
         defaultStage = 3;
-      } else if (ordSt === 'manufacturing' || ordSt === 'processing' || qStatus === 'manufacturing') {
+      } else if (ordSt === 'in_production' || ordSt === 'manufacturing' || ordSt === 'processing' || qStatus === 'manufacturing') {
         defaultStage = 2;
       } else {
         defaultStage = 1;
       }
-      const qStage = (ord.queue_stage ? Number(ord.queue_stage) : (qStatus === 'waiting_production' ? 1 : defaultStage)) as 1 | 2 | 3 | 4;
+      const qStage = (ord.queue_step ? Number(ord.queue_step) : (ord.queue_stage ? Number(ord.queue_stage) : (qStatus === 'waiting_production' ? 1 : defaultStage))) as 1 | 2 | 3 | 4;
       return {
         ...ord,
         queue_id: qId,
         queue_number: qId,
         queue_stage: qStage,
+        queue_step: ord.queue_step || qStage,
         queue_status: qStatus || (qStage === 1 ? 'waiting_production' : (qStage === 2 ? 'manufacturing' : (qStage === 3 ? 'ready_for_shipping' : 'in_transit')))
       };
     });
@@ -1975,10 +1985,22 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
         (item.productName || item.product_name || '').toLowerCase().includes(term) ||
         (item.phone || item.customer_phone || '').includes(term);
 
+      const stageNum = Number(item.queue_step || item.queue_stage || (
+        item.status === 'in_production' ? 2 :
+        item.status === 'ready_to_transfer' ? 3 :
+        item.status === 'delivering' ? 4 : 1
+      ));
+
       const matchesStage = queueStageFilter === 'all' || 
         (queueStageFilter === '1' 
-          ? (item.queue_stage === 1 || item.queue_status === 'waiting_production') 
-          : String(item.queue_stage) === queueStageFilter);
+          ? (stageNum === 1 || item.status === 'in_queue' || item.queue_status === 'waiting_production') 
+          : queueStageFilter === '2'
+          ? (stageNum === 2 || item.status === 'in_production' || item.queue_status === 'manufacturing')
+          : queueStageFilter === '3'
+          ? (stageNum === 3 || item.status === 'ready_to_transfer' || item.queue_status === 'ready_for_shipping')
+          : queueStageFilter === '4'
+          ? (stageNum === 4 || item.status === 'delivering' || item.queue_status === 'in_transit')
+          : String(stageNum) === queueStageFilter);
       return matchesSearch && matchesStage;
     });
   }, [sortedQueueOrders, queueSearch, queueStageFilter]);
@@ -2024,6 +2046,108 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
       isRead: false
     };
     setNotifications(prev => [notif, ...prev]);
+  };
+
+  const handleUpdateQueueStatus = async (
+    order: any,
+    newStatusData: { status: string; queue_step: number; delivery_step: number }
+  ) => {
+    const orderId = order.id;
+    const orderIdStr = String(orderId);
+    const qNum = order.queue_number || order.queue_id || formatQueueId(order);
+    const updatedAt = new Date().toISOString();
+
+    const stageTitles: Record<number, string> = {
+      1: 'รับคิวผลิต',
+      2: 'กำลังหลอมขึ้นรูป',
+      3: 'รอขนย้าย',
+      4: 'อยู่ระหว่างจัดส่ง',
+      5: 'จัดส่งสำเร็จ'
+    };
+    const stageTitle = stageTitles[newStatusData.queue_step] || newStatusData.status;
+
+    if (newStatusData.queue_step === 2) {
+      setActiveProductionQueueId(qNum);
+      setActiveProductionQueue(qNum);
+    }
+
+    const carrier = order.shipping_carrier || order.carrier_name || 'รถโรงงานพรพงศ์พลาสติก (สายส่งด่วน)';
+    const driver = order.driver_phone || '089-456-7890';
+    const tracking = order.tracking_number || order.shipmentNo || order.shipment_no || `TH-EX-${String(orderId).replace(/[^0-9]/g, '').slice(-6) || '291823'}`;
+    const estDate = order.estimated_delivery_date || new Date(Date.now() + 2 * 86400000).toISOString().split('T')[0];
+
+    // 1. Optimistically update local adminOrders state
+    setAdminOrders(prev => prev.map(o => String(o.id) === orderIdStr ? {
+      ...o,
+      status: newStatusData.status,
+      order_status: newStatusData.status,
+      queue_step: newStatusData.queue_step,
+      queue_stage: newStatusData.queue_step,
+      delivery_step: newStatusData.delivery_step,
+      delivery_status: newStatusData.queue_step === 5 ? 'delivered' : newStatusData.queue_step === 4 ? 'in_transit' : 'waiting_production',
+      shipping_carrier: carrier,
+      driver_phone: driver,
+      tracking_number: tracking,
+      shipmentNo: tracking,
+      estimated_delivery_date: estDate,
+      updated_at: updatedAt
+    } : o));
+
+    // 2. Direct Supabase update to orders table
+    if (isSupabaseConfigured && supabase) {
+      try {
+        const { error } = await supabase
+          .from('orders')
+          .update({
+            status: newStatusData.status,
+            queue_step: newStatusData.queue_step,
+            delivery_step: newStatusData.delivery_step,
+            order_status: newStatusData.status,
+            shipping_carrier: carrier,
+            driver_phone: driver,
+            tracking_number: tracking,
+            estimated_delivery_date: estDate,
+            updated_at: updatedAt
+          })
+          .eq('id', orderIdStr);
+        if (error) {
+          console.warn('Direct update orders error in handleUpdateQueueStatus:', error);
+        }
+      } catch (err) {
+        console.warn('Failed to update orders table in handleUpdateQueueStatus:', err);
+      }
+
+      // Also upsert deliveries table for customer tracking real-time join
+      try {
+        const delivStatus = newStatusData.queue_step === 5 ? 'delivered' : newStatusData.queue_step === 4 ? 'in_transit' : 'waiting_production';
+        await supabaseDeliveries.upsert({
+          order_id: orderIdStr,
+          queue_number: qNum,
+          delivery_status: delivStatus,
+          shipping_carrier: carrier,
+          driver_phone: driver,
+          tracking_number: tracking,
+          estimated_delivery_date: estDate
+        });
+      } catch (delivErr) {
+        console.warn('supabaseDeliveries upsert error:', delivErr);
+      }
+
+      await fetchOrdersFromSupabase();
+    }
+
+    triggerToast(`อัปเดตคิว ${qNum} เป็น [${stageTitle}] เรียบร้อยแล้ว`);
+
+    const notif: AppNotification = {
+      id: 'noti-queue-st-' + Date.now(),
+      title: `อัปเดตสถานะคิว ${qNum}: ${stageTitle}`,
+      message: `คิว ${qNum} (${order.productName || order.product_name || 'เรือพลาสติก'}) ปรับสถานะเป็น ${stageTitle}`,
+      type: 'order',
+      date: 'เมื่อสักครู่',
+      isRead: false
+    };
+    setNotifications(prev => [notif, ...prev]);
+    window.dispatchEvent(new Event('orders-updated'));
   };
 
   const handleQueueStageChange = async (order: any, nextStage: 1 | 2 | 3 | 4) => {
@@ -3652,25 +3776,25 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                   <div className="bg-white/5 rounded-xl p-2.5 border border-white/5">
                     <div className="text-[10px] text-slate-400 font-medium">1. รับคิวผลิต</div>
                     <div className="text-lg font-black text-violet-300 font-mono mt-0.5">
-                      {sortedQueueOrders.filter(o => o.queue_stage === 1 || o.queue_status === 'waiting_production').length} <span className="text-[11px] font-sans font-normal text-slate-400">ลำ</span>
+                      {sortedQueueOrders.filter(o => o.queue_step === 1 || o.queue_stage === 1 || o.status === 'in_queue' || o.queue_status === 'waiting_production').length} <span className="text-[11px] font-sans font-normal text-slate-400">ลำ</span>
                     </div>
                   </div>
                   <div className="bg-white/5 rounded-xl p-2.5 border border-white/5">
                     <div className="text-[10px] text-slate-400 font-medium">2. กำลังหลอม/ผลิต</div>
                     <div className="text-lg font-black text-amber-300 font-mono mt-0.5">
-                      {sortedQueueOrders.filter(o => o.queue_stage === 2 || o.queue_status === 'manufacturing').length} <span className="text-[11px] font-sans font-normal text-slate-400">ลำ</span>
+                      {sortedQueueOrders.filter(o => o.queue_step === 2 || o.queue_stage === 2 || o.status === 'in_production' || o.queue_status === 'manufacturing').length} <span className="text-[11px] font-sans font-normal text-slate-400">ลำ</span>
                     </div>
                   </div>
                   <div className="bg-white/5 rounded-xl p-2.5 border border-white/5">
                     <div className="text-[10px] text-slate-400 font-medium">3. รอขนย้าย</div>
                     <div className="text-lg font-black text-sky-300 font-mono mt-0.5">
-                      {sortedQueueOrders.filter(o => o.queue_stage === 3 || o.queue_status === 'ready_for_shipping').length} <span className="text-[11px] font-sans font-normal text-slate-400">ลำ</span>
+                      {sortedQueueOrders.filter(o => o.queue_step === 3 || o.queue_stage === 3 || o.status === 'ready_to_transfer' || o.queue_status === 'ready_for_shipping').length} <span className="text-[11px] font-sans font-normal text-slate-400">ลำ</span>
                     </div>
                   </div>
                   <div className="bg-white/5 rounded-xl p-2.5 border border-white/5">
                     <div className="text-[10px] text-slate-400 font-medium">4. อยู่ระหว่างจัดส่ง</div>
                     <div className="text-lg font-black text-emerald-300 font-mono mt-0.5">
-                      {sortedQueueOrders.filter(o => o.queue_stage === 4 || o.queue_status === 'in_transit').length} <span className="text-[11px] font-sans font-normal text-slate-400">ลำ</span>
+                      {sortedQueueOrders.filter(o => o.queue_step === 4 || o.queue_stage === 4 || o.status === 'delivering' || o.queue_status === 'in_transit').length} <span className="text-[11px] font-sans font-normal text-slate-400">ลำ</span>
                     </div>
                   </div>
                 </div>
@@ -3704,10 +3828,10 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                 <div className="flex items-center gap-1.5 flex-wrap">
                   {[
                     { id: 'all', label: 'ทั้งหมด', count: sortedQueueOrders.length },
-                    { id: '1', label: '1. รับคิวผลิต', count: sortedQueueOrders.filter(o => o.queue_stage === 1 || o.queue_status === 'waiting_production').length },
-                    { id: '2', label: '2. กำลังหลอม/ผลิต', count: sortedQueueOrders.filter(o => o.queue_stage === 2 || o.queue_status === 'manufacturing').length },
-                    { id: '3', label: '3. รอขนย้าย', count: sortedQueueOrders.filter(o => o.queue_stage === 3 || o.queue_status === 'ready_for_shipping').length },
-                    { id: '4', label: '4. อยู่ระหว่างจัดส่ง', count: sortedQueueOrders.filter(o => o.queue_stage === 4 || o.queue_status === 'in_transit').length }
+                    { id: '1', label: '1. รับคิวผลิต', count: sortedQueueOrders.filter(o => o.queue_step === 1 || o.queue_stage === 1 || o.status === 'in_queue' || o.queue_status === 'waiting_production').length },
+                    { id: '2', label: '2. กำลังหลอม/ผลิต', count: sortedQueueOrders.filter(o => o.queue_step === 2 || o.queue_stage === 2 || o.status === 'in_production' || o.queue_status === 'manufacturing').length },
+                    { id: '3', label: '3. รอขนย้าย', count: sortedQueueOrders.filter(o => o.queue_step === 3 || o.queue_stage === 3 || o.status === 'ready_to_transfer' || o.queue_status === 'ready_for_shipping').length },
+                    { id: '4', label: '4. อยู่ระหว่างจัดส่ง', count: sortedQueueOrders.filter(o => o.queue_step === 4 || o.queue_stage === 4 || o.status === 'delivering' || o.queue_status === 'in_transit').length }
                   ].map((tab) => (
                     <button
                       key={tab.id}
@@ -3794,7 +3918,12 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                       <tbody className="divide-y divide-slate-150">
                         {filteredQueueOrders.map((order) => {
                           const isCurrentActive = order.queue_id === activeProductionQueueId;
-                          const currentStage = order.queue_stage || 1;
+                          const currentStage = Number(order.queue_step || order.queue_stage || (
+                            order.status === 'in_production' ? 2 :
+                            order.status === 'ready_to_transfer' ? 3 :
+                            order.status === 'delivering' ? 4 :
+                            order.status === 'completed' ? 5 : 1
+                          ));
 
                           return (
                             <tr 
@@ -3945,72 +4074,72 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                               {/* 5. 4-Stage Action Buttons + Delivered Finish Button */}
                               <td className="py-3.5 px-4 align-top">
                                 <div className="flex items-center justify-center gap-1.5 flex-wrap">
-                                  {/* Button 1: รับคิวผลิต */}
+                                  {/* Button 1: 1. รับคิว */}
                                   <button
                                     type="button"
-                                    onClick={() => handleQueueStageChange(order, 1)}
+                                    onClick={() => handleUpdateQueueStatus(order, { status: 'in_queue', queue_step: 1, delivery_step: 1 })}
                                     className={`px-2.5 py-1.5 rounded-xl text-[10.5px] font-bold transition-all cursor-pointer flex items-center gap-1 ${
                                       currentStage === 1
                                         ? 'bg-violet-600 text-white shadow-xs font-black scale-102 ring-2 ring-violet-200'
                                         : 'bg-slate-100 hover:bg-violet-50 text-slate-600 hover:text-violet-700 border border-slate-200/80'
                                     }`}
-                                    title="ขั้นตอนที่ 1: รับคิวผลิต"
+                                    title="ขั้นตอนที่ 1: รับคิว (status: in_queue, queue_step: 1, delivery_step: 1)"
                                   >
                                     <Check size={11} className={currentStage === 1 ? 'block' : 'hidden'} />
                                     <span>1. รับคิว</span>
                                   </button>
 
-                                  {/* Button 2: กำลังหลอม/ผลิต */}
+                                  {/* Button 2: 2. กำลังหลอม */}
                                   <button
                                     type="button"
-                                    onClick={() => handleQueueStageChange(order, 2)}
+                                    onClick={() => handleUpdateQueueStatus(order, { status: 'in_production', queue_step: 2, delivery_step: 1 })}
                                     className={`px-2.5 py-1.5 rounded-xl text-[10.5px] font-bold transition-all cursor-pointer flex items-center gap-1 ${
                                       currentStage === 2
                                         ? 'bg-amber-500 text-white shadow-xs font-black scale-102 ring-2 ring-amber-200'
                                         : 'bg-slate-100 hover:bg-amber-50 text-slate-600 hover:text-amber-700 border border-slate-200/80'
                                     }`}
-                                    title="ขั้นตอนที่ 2: กำลังหลอม/ผลิต"
+                                    title="ขั้นตอนที่ 2: กำลังหลอม (status: in_production, queue_step: 2, delivery_step: 1)"
                                   >
                                     <Flame size={11} className={currentStage === 2 ? 'block' : 'hidden'} />
                                     <span>2. กำลังหลอม</span>
                                   </button>
 
-                                  {/* Button 3: รอขนย้าย */}
+                                  {/* Button 3: 3. รอขนย้าย */}
                                   <button
                                     type="button"
-                                    onClick={() => handleQueueStageChange(order, 3)}
+                                    onClick={() => handleUpdateQueueStatus(order, { status: 'ready_to_transfer', queue_step: 3, delivery_step: 1 })}
                                     className={`px-2.5 py-1.5 rounded-xl text-[10.5px] font-bold transition-all cursor-pointer flex items-center gap-1 ${
                                       currentStage === 3
                                         ? 'bg-sky-600 text-white shadow-xs font-black scale-102 ring-2 ring-sky-200'
                                         : 'bg-slate-100 hover:bg-sky-50 text-slate-600 hover:text-sky-700 border border-slate-200/80'
                                     }`}
-                                    title="ขั้นตอนที่ 3: รอขนย้าย"
+                                    title="ขั้นตอนที่ 3: รอขนย้าย (status: ready_to_transfer, queue_step: 3, delivery_step: 1)"
                                   >
                                     <Clock size={11} className={currentStage === 3 ? 'block' : 'hidden'} />
                                     <span>3. รอขนย้าย</span>
                                   </button>
 
-                                  {/* Button 4: อยู่ระหว่างจัดส่ง */}
+                                  {/* Button 4: 4. อยู่ระหว่างจัดส่ง */}
                                   <button
                                     type="button"
-                                    onClick={() => handleQueueStageChange(order, 4)}
+                                    onClick={() => handleUpdateQueueStatus(order, { status: 'delivering', queue_step: 4, delivery_step: 2 })}
                                     className={`px-2.5 py-1.5 rounded-xl text-[10.5px] font-bold transition-all cursor-pointer flex items-center gap-1 ${
                                       currentStage === 4
                                         ? 'bg-emerald-600 text-white shadow-xs font-black scale-102 ring-2 ring-emerald-200'
                                         : 'bg-slate-100 hover:bg-emerald-50 text-slate-600 hover:text-emerald-700 border border-slate-200/80'
                                     }`}
-                                    title="ขั้นตอนที่ 4: อยู่ระหว่างจัดส่ง (เปิดแบบฟอร์มกรอกข้อมูลขนส่ง บันทึกลง deliveries)"
+                                    title="ขั้นตอนที่ 4: อยู่ระหว่างจัดส่ง (status: delivering, queue_step: 4, delivery_step: 2)"
                                   >
                                     <Truck size={11} className={currentStage === 4 ? 'block' : 'hidden'} />
                                     <span>4. อยู่ระหว่างจัดส่ง</span>
                                   </button>
 
-                                  {/* Button 5: ส่งสำเร็จ (ย้ายไปแท็บ Completed History) */}
+                                  {/* Button 5: ส่งสำเร็จ */}
                                   <button
                                     type="button"
-                                    onClick={() => handleSelectDelivered(order)}
+                                    onClick={() => handleUpdateQueueStatus(order, { status: 'completed', queue_step: 5, delivery_step: 3 })}
                                     className="px-2.5 py-1.5 rounded-xl text-[10.5px] font-black transition-all cursor-pointer flex items-center gap-1 bg-emerald-700 hover:bg-emerald-800 text-white shadow-xs"
-                                    title="ขั้นตอนสำเร็จ: จัดส่งสำเร็จ (อัปเดต delivery_status เป็น delivered)"
+                                    title="ส่งสำเร็จ (status: completed, queue_step: 5, delivery_step: 3)"
                                   >
                                     <CheckCircle2 size={11} />
                                     <span>✓ ส่งสำเร็จ</span>
