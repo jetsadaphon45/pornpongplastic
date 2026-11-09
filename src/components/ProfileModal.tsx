@@ -83,6 +83,9 @@ interface OrderItem {
   delivery_status?: string;
   orderType?: 'preorder' | 'instock';
   isPreOrder?: boolean;
+  queue_step?: number;
+  order_status?: string;
+  raw_status?: string;
 }
 
 interface PreOrderItem {
@@ -205,14 +208,13 @@ export const PreorderQueueCard: React.FC<TrackingCardProps> = ({
 }) => {
   const queueId = order.queueId || order.queue_number || order.queue_id || formatQueueId(order);
   
-  // Read status & queue_step explicitly from database
-  const rawStatus = String((order as any).order_status || order.status || (order as any).raw_status || '').toLowerCase().trim();
-  const currentStep = Number((order as any).queue_step || (
-    rawStatus === 'in_production' ? 2 :
-    rawStatus === 'ready_to_transfer' ? 3 :
-    rawStatus === 'delivering' ? 4 :
-    (rawStatus === 'completed' || rawStatus === 'delivered') ? 5 : 1
-  ));
+  // 1. คำนวณสเต็ปปัจจุบัน (currentStep) ให้อ่านจาก Supabase ตาราง orders โดยตรง
+  const currentStep = Number(order.queue_step) || (
+    order.order_status === 'in_production' || (order as any).status === 'in_production' ? 2 :
+    order.order_status === 'ready_to_transfer' || (order as any).status === 'ready_to_transfer' ? 3 :
+    order.order_status === 'delivering' || (order as any).status === 'delivering' ? 4 :
+    order.order_status === 'completed' || (order as any).status === 'completed' || (order as any).status === 'delivered' ? 5 : 1
+  );
 
   const isCompleted = currentStep >= 5;
   const stageNum = currentStep;
@@ -390,10 +392,34 @@ export const PreorderQueueCard: React.FC<TrackingCardProps> = ({
           </div>
 
           {[
-            { step: 1, label: '1. รับคิวผลิต', desc: 'ลงทะเบียนรับคิว' },
-            { step: 2, label: '2. กำลังหลอมขึ้นรูป', desc: 'หลอมขึ้นรูปในเตา' },
-            { step: 3, label: '3. รอขนย้าย', desc: 'ผลิตเสร็จ-รอขนย้าย' },
-            { step: 4, label: '4. อยู่ระหว่างจัดส่ง', desc: 'ขึ้นรถจัดส่งแล้ว' }
+            { 
+              step: 1, 
+              label: '1. รับคิวผลิต', 
+              desc: 'ลงทะเบียนรับคิว',
+              circleActive: 'bg-purple-600 text-white ring-4 ring-purple-400/50 shadow-lg shadow-purple-500/50',
+              labelColor: 'text-purple-300 font-extrabold'
+            },
+            { 
+              step: 2, 
+              label: '2. กำลังหลอมขึ้นรูป', 
+              desc: 'หลอมขึ้นรูปในเตา',
+              circleActive: 'bg-orange-500 text-white ring-4 ring-orange-400/50 shadow-lg shadow-orange-500/50',
+              labelColor: 'text-orange-300 font-extrabold'
+            },
+            { 
+              step: 3, 
+              label: '3. รอขนย้าย', 
+              desc: 'ผลิตเสร็จ-รอขนย้าย',
+              circleActive: 'bg-sky-500 text-white ring-4 ring-sky-400/50 shadow-lg shadow-sky-500/50',
+              labelColor: 'text-sky-300 font-extrabold'
+            },
+            { 
+              step: 4, 
+              label: '4. อยู่ระหว่างจัดส่ง', 
+              desc: 'ขึ้นรถจัดส่งแล้ว',
+              circleActive: 'bg-blue-600 text-white ring-4 ring-blue-400/50 shadow-lg shadow-blue-500/50',
+              labelColor: 'text-blue-300 font-extrabold'
+            }
           ].map((s) => {
             const isActive = currentStep >= s.step;
             const isCompletedStep = currentStep > s.step || currentStep >= 5;
@@ -405,7 +431,7 @@ export const PreorderQueueCard: React.FC<TrackingCardProps> = ({
                   isActive
                     ? isCompletedStep
                       ? 'bg-emerald-500 text-white shadow-xs'
-                      : 'bg-indigo-600 text-white ring-4 ring-indigo-400/50 scale-110 shadow-lg shadow-indigo-500/50'
+                      : `${s.circleActive} scale-110`
                     : 'bg-slate-800 text-slate-400 border border-slate-700'
                 }`}>
                   {isCompletedStep ? (
@@ -415,7 +441,7 @@ export const PreorderQueueCard: React.FC<TrackingCardProps> = ({
                   )}
                 </div>
                 <span className={`text-[10px] mt-1 font-bold ${
-                  isActive ? 'text-white font-black' : 'text-slate-400'
+                  isActive ? (isCurrent ? 'text-white font-black' : s.labelColor) : 'text-slate-400'
                 }`}>
                   {s.label}
                 </span>
@@ -934,9 +960,10 @@ export function ProfileModal({
         const oName = String(o.customerName || o.customer_name || '').trim().toLowerCase();
 
         if (uId && uId !== 'guest' && oIdClean === uId) return true;
-        if (uEmail && uEmail !== 'guest@example.com' && oEmail === uEmail) return true;
+        if (uEmail && uEmail !== 'guest@example.com' && (oEmail === uEmail || oEmail.includes(uEmail) || uEmail.includes(oEmail))) return true;
         if (uPhone && oPhone && (uPhone === oPhone || uPhone.endsWith(oPhone) || oPhone.endsWith(uPhone))) return true;
         if (uName && oName && (uName === oName || uName.includes(oName) || oName.includes(uName))) return true;
+        if ((currentUser as any)?.role === 'admin') return true;
 
         return false;
       });
@@ -964,7 +991,7 @@ export function ProfileModal({
         const trackingNo = delivery?.tracking_number || o.tracking_number || o.shipmentNo || o.shipment_no || `TH-EX-${String(o.id).replace(/[^0-9]/g, '').slice(-6) || '291823'}`;
         const estDate = delivery?.estimated_delivery_date || o.estimated_delivery_date || o.est_delivery || '';
         const delivStatus = (delivery?.delivery_status || '').toLowerCase();
-        const ordStatus = (o.status || o.order_status || '').toLowerCase();
+        const ordStatus = (o.order_status || o.status || '').toLowerCase();
         const payStatus = (o.payment_status || '').toLowerCase();
         const qStep = Number(o.queue_step || o.queue_stage || 0);
 
@@ -1115,7 +1142,9 @@ export function ProfileModal({
         const userPhone = currentUser?.phone?.replace(/\D/g, '') || '';
 
         let query = supabase.from('orders').select('*');
-        if (userEmail && userPhone) {
+        if ((currentUser as any)?.role === 'admin') {
+          query = query.order('created_at', { ascending: false });
+        } else if (userEmail && userPhone) {
           query = query.or(`customer_email.eq.${userEmail},customer_phone.eq.${userPhone},email.eq.${userEmail},phone.eq.${userPhone}`);
         } else if (userEmail) {
           query = query.or(`customer_email.eq.${userEmail},email.eq.${userEmail}`);
@@ -1254,7 +1283,7 @@ export function ProfileModal({
         supabase.removeChannel(channel);
       }
     };
-  }, [isOpen, currentUser, loadHistory]);
+  }, [isOpen, currentUser, loadHistory, fetchCustomerOrders]);
 
   if (!isOpen || !currentUser) return null;
 
