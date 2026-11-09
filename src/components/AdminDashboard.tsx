@@ -1942,11 +1942,14 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
   // เงื่อนไขการกรองเพื่อแสดงในตารางคิวผลิต:
   // นำข้อมูลมากรองเฉพาะพรีออเดอร์ที่ "ยังดำเนินการไม่เสร็จสิ้น" (order.status !== 'completed' && order.status !== 'cancelled')
   const sortedQueueOrders = React.useMemo(() => {
-    const queueList = (adminOrders || []).filter(order => {
+    const activeQueueOrders = (adminOrders || []).filter(order => {
       if (!order) return false;
       if (order.is_deleted === true || order.is_deleted === 'true') return false;
 
-      // ตรวจสอบความเป็นพรีออเดอร์
+      const status = order.order_status || order.status;
+      const statusLower = String(status || '').toLowerCase().trim();
+
+      // ตรวจจับความเป็นพรีออเดอร์จากทุกฟิลด์ที่เป็นไปได้
       const isPreorder = Boolean(
         order.is_preorder === true ||
         order.is_preorder === 'true' ||
@@ -1957,31 +1960,23 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
         (order.queue_number && String(order.queue_number).startsWith('Q-')) ||
         (order.order_id && String(order.order_id).includes('ORD-PRE')) ||
         (order.id && String(order.id).includes('ORD-PRE')) ||
-        ['in_queue', 'in_production', 'ready_to_transfer', 'delivering'].includes(order.status) ||
+        (order.id && String(order.id).startsWith('Q-')) ||
+        ['in_queue', 'in_production', 'ready_to_transfer', 'delivering'].includes(status) ||
+        ['in_queue', 'in_production', 'ready_to_transfer', 'delivering'].includes(statusLower) ||
         Number(order.queue_step) > 0 ||
         isPreorderOrder(order)
       );
 
-      // เงื่อนไขสำคัญ:
-      // - ต้องเป็นพรีออเดอร์
-      // - ต้องไม่อยู่ในสถานะ 'pending_verification' (ต้องอนุมัติแล้วเท่านั้น)
-      // - ต้องไม่อยู่ในสถานะ 'completed' หรือ 'cancelled'
-      const statusStr = String(order.status || '').toLowerCase().trim();
-      const paymentStatusStr = String(order.payment_status || '').toLowerCase().trim();
-      const isApproved = order.status !== 'pending_verification' &&
-                         statusStr !== 'pending_verification' &&
-                         statusStr !== 'waiting_verify' &&
-                         statusStr !== 'waiting_payment' &&
-                         paymentStatusStr !== 'pending_verification';
-      const isNotFinished = order.status !== 'completed' && 
-                            order.status !== 'cancelled' &&
-                            statusStr !== 'completed' && 
-                            statusStr !== 'cancelled';
+      // ไม่แสดงออเดอร์ที่จบงานแล้ว หรือยกเลิก
+      const notFinished = status !== 'completed' && 
+                          status !== 'cancelled' && 
+                          statusLower !== 'completed' && 
+                          statusLower !== 'cancelled';
 
-      return isPreorder && isApproved && isNotFinished;
+      return isPreorder && notFinished;
     });
 
-    const list = queueList.map((ord, idx) => {
+    const list = activeQueueOrders.map((ord, idx) => {
       const qId = ord.queue_id || ord.queue_number || formatQueueId(ord, idx);
       const ordSt = (ord.order_status || ord.status || '').toLowerCase();
       const qStatus = (ord.queue_status || '').toLowerCase();
@@ -2195,6 +2190,51 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
       isRead: false
     };
     setNotifications(prev => [notif, ...prev]);
+    window.dispatchEvent(new Event('orders-updated'));
+  };
+
+  const handleUpdateStatus = async (item: any, targetStep: number, targetStatus: string) => {
+    const orderId = item.id || (item as any).order_id;
+    if (!orderId) return;
+
+    // อัปเดต UI ทันที
+    setAdminOrders(prev => prev.map(row => 
+      (row.id === orderId || row.order_id === orderId) 
+        ? { 
+            ...row, 
+            queue_step: targetStep, 
+            queue_stage: targetStep,
+            order_status: targetStatus,
+            status: targetStatus
+          } 
+        : row
+    ));
+
+    // อัปเดตลง Supabase
+    if (isSupabaseConfigured && supabase) {
+      try {
+        await supabase
+          .from('orders')
+          .update({
+            order_status: targetStatus,
+            status: targetStatus,
+            queue_step: targetStep,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', item.id);
+      } catch (err) {
+        console.error("Error updating order status in Supabase:", err);
+      }
+    }
+
+    const stepLabels: Record<number, string> = {
+      1: 'รับคิวผลิต',
+      2: 'กำลังหลอม/ผลิต',
+      3: 'รอขนย้าย',
+      4: 'อยู่ระหว่างจัดส่ง',
+      5: 'ส่งสำเร็จ'
+    };
+    triggerToast(`อัปเดตออเดอร์ #${orderId} เป็น [${stepLabels[targetStep] || targetStatus}] เรียบร้อยแล้ว`);
     window.dispatchEvent(new Event('orders-updated'));
   };
 
@@ -3824,7 +3864,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                   <div className="bg-white/5 rounded-xl p-2.5 border border-white/5">
                     <div className="text-[10px] text-slate-400 font-medium">1. รับคิวผลิต</div>
                     <div className="text-lg font-black text-violet-300 font-mono mt-0.5">
-                      {sortedQueueOrders.filter(o => o.queue_step === 1 || o.queue_stage === 1 || o.status === 'in_queue' || o.queue_status === 'waiting_production').length} <span className="text-[11px] font-sans font-normal text-slate-400">ลำ</span>
+                      {sortedQueueOrders.filter(o => !o.queue_step || o.queue_step === 1 || o.queue_stage === 1 || o.status === 'in_queue' || o.queue_status === 'waiting_production').length} <span className="text-[11px] font-sans font-normal text-slate-400">ลำ</span>
                     </div>
                   </div>
                   <div className="bg-white/5 rounded-xl p-2.5 border border-white/5">
@@ -3876,7 +3916,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                 <div className="flex items-center gap-1.5 flex-wrap">
                   {[
                     { id: 'all', label: 'ทั้งหมด', count: sortedQueueOrders.length },
-                    { id: '1', label: '1. รับคิวผลิต', count: sortedQueueOrders.filter(o => o.queue_step === 1 || o.queue_stage === 1 || o.status === 'in_queue' || o.queue_status === 'waiting_production').length },
+                    { id: '1', label: '1. รับคิวผลิต', count: sortedQueueOrders.filter(o => !o.queue_step || o.queue_step === 1 || o.queue_stage === 1 || o.status === 'in_queue' || o.queue_status === 'waiting_production').length },
                     { id: '2', label: '2. กำลังหลอม/ผลิต', count: sortedQueueOrders.filter(o => o.queue_step === 2 || o.queue_stage === 2 || o.status === 'in_production' || o.queue_status === 'manufacturing').length },
                     { id: '3', label: '3. รอขนย้าย', count: sortedQueueOrders.filter(o => o.queue_step === 3 || o.queue_stage === 3 || o.status === 'ready_to_transfer' || o.queue_status === 'ready_for_shipping').length },
                     { id: '4', label: '4. อยู่ระหว่างจัดส่ง', count: sortedQueueOrders.filter(o => o.queue_step === 4 || o.queue_stage === 4 || o.status === 'delivering' || o.queue_status === 'in_transit').length }
@@ -4131,29 +4171,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                                       <button
                                         type="button"
                                         style={{ cursor: 'pointer' }}
-                                        onClick={async () => {
-                                          const orderId = item.id || (item as any).order_id;
-                                          if (!orderId) return;
-
-                                          // อัปเดตเฉพาะแถวนี้ใน state ทันทีเพื่อให้ปุ่มเปลี่ยนสี
-                                          setQueueOrders((prev: any[]) => prev.map((row: any) => 
-                                            (row.id === orderId || row.order_id === orderId) 
-                                              ? { ...row, queue_step: 1, status: 'in_queue', order_status: 'in_queue' } 
-                                              : row
-                                          ));
-
-                                          // อัปเดตลง Supabase เฉพาะคอลัมน์ status และ queue_step
-                                          if (isSupabaseConfigured && supabase) {
-                                            await supabase
-                                              .from('orders')
-                                              .update({ 
-                                                status: 'in_queue', 
-                                                queue_step: 1, 
-                                                updated_at: new Date().toISOString() 
-                                              })
-                                              .eq('id', orderId);
-                                          }
-                                        }}
+                                        onClick={() => handleUpdateStatus(item, 1, 'in_queue')}
                                         className={`px-2.5 py-1.5 rounded-xl text-[10.5px] font-bold transition-all cursor-pointer flex items-center gap-1 ${
                                           currentStage === 1
                                             ? 'bg-violet-600 text-white shadow-xs font-black scale-102 ring-2 ring-violet-200'
@@ -4169,29 +4187,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                                       <button
                                         type="button"
                                         style={{ cursor: 'pointer' }}
-                                        onClick={async () => {
-                                          const orderId = item.id || (item as any).order_id;
-                                          if (!orderId) return;
-
-                                          // อัปเดตเฉพาะแถวนี้ใน state ทันทีเพื่อให้ปุ่มเปลี่ยนสี
-                                          setQueueOrders((prev: any[]) => prev.map((row: any) => 
-                                            (row.id === orderId || row.order_id === orderId) 
-                                              ? { ...row, queue_step: 2, status: 'in_production', order_status: 'in_production' } 
-                                              : row
-                                          ));
-
-                                          // อัปเดตลง Supabase เฉพาะคอลัมน์ status และ queue_step
-                                          if (isSupabaseConfigured && supabase) {
-                                            await supabase
-                                              .from('orders')
-                                              .update({ 
-                                                status: 'in_production', 
-                                                queue_step: 2, 
-                                                updated_at: new Date().toISOString() 
-                                              })
-                                              .eq('id', orderId);
-                                          }
-                                        }}
+                                        onClick={() => handleUpdateStatus(item, 2, 'in_production')}
                                         className={`px-2.5 py-1.5 rounded-xl text-[10.5px] font-bold transition-all cursor-pointer flex items-center gap-1 ${
                                           currentStage === 2
                                             ? 'bg-amber-500 text-white shadow-xs font-black scale-102 ring-2 ring-amber-200'
@@ -4207,29 +4203,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                                       <button
                                         type="button"
                                         style={{ cursor: 'pointer' }}
-                                        onClick={async () => {
-                                          const orderId = item.id || (item as any).order_id;
-                                          if (!orderId) return;
-
-                                          // อัปเดตเฉพาะแถวนี้ใน state ทันทีเพื่อให้ปุ่มเปลี่ยนสี
-                                          setQueueOrders((prev: any[]) => prev.map((row: any) => 
-                                            (row.id === orderId || row.order_id === orderId) 
-                                              ? { ...row, queue_step: 3, status: 'ready_to_transfer', order_status: 'ready_to_transfer' } 
-                                              : row
-                                          ));
-
-                                          // อัปเดตลง Supabase เฉพาะคอลัมน์ status และ queue_step
-                                          if (isSupabaseConfigured && supabase) {
-                                            await supabase
-                                              .from('orders')
-                                              .update({ 
-                                                status: 'ready_to_transfer', 
-                                                queue_step: 3, 
-                                                updated_at: new Date().toISOString() 
-                                              })
-                                              .eq('id', orderId);
-                                          }
-                                        }}
+                                        onClick={() => handleUpdateStatus(item, 3, 'ready_to_transfer')}
                                         className={`px-2.5 py-1.5 rounded-xl text-[10.5px] font-bold transition-all cursor-pointer flex items-center gap-1 ${
                                           currentStage === 3
                                             ? 'bg-sky-600 text-white shadow-xs font-black scale-102 ring-2 ring-sky-200'
@@ -4245,29 +4219,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                                       <button
                                         type="button"
                                         style={{ cursor: 'pointer' }}
-                                        onClick={async () => {
-                                          const orderId = item.id || (item as any).order_id;
-                                          if (!orderId) return;
-
-                                          // อัปเดตเฉพาะแถวนี้ใน state ทันทีเพื่อให้ปุ่มเปลี่ยนสี
-                                          setQueueOrders((prev: any[]) => prev.map((row: any) => 
-                                            (row.id === orderId || row.order_id === orderId) 
-                                              ? { ...row, queue_step: 4, status: 'delivering', order_status: 'delivering' } 
-                                              : row
-                                          ));
-
-                                          // อัปเดตลง Supabase เฉพาะคอลัมน์ status และ queue_step
-                                          if (isSupabaseConfigured && supabase) {
-                                            await supabase
-                                              .from('orders')
-                                              .update({ 
-                                                status: 'delivering', 
-                                                queue_step: 4, 
-                                                updated_at: new Date().toISOString() 
-                                              })
-                                              .eq('id', orderId);
-                                          }
-                                        }}
+                                        onClick={() => handleUpdateStatus(item, 4, 'delivering')}
                                         className={`px-2.5 py-1.5 rounded-xl text-[10.5px] font-bold transition-all cursor-pointer flex items-center gap-1 ${
                                           currentStage === 4
                                             ? 'bg-emerald-600 text-white shadow-xs font-black scale-102 ring-2 ring-emerald-200'
@@ -4283,29 +4235,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                                       <button
                                         type="button"
                                         style={{ cursor: 'pointer' }}
-                                        onClick={async () => {
-                                          const orderId = item.id || (item as any).order_id;
-                                          if (!orderId) return;
-
-                                          // อัปเดตเฉพาะแถวนี้ใน state ทันทีเพื่อให้ปุ่มเปลี่ยนสี
-                                          setQueueOrders((prev: any[]) => prev.map((row: any) => 
-                                            (row.id === orderId || row.order_id === orderId) 
-                                              ? { ...row, queue_step: 5, status: 'completed', order_status: 'completed' } 
-                                              : row
-                                          ));
-
-                                          // อัปเดตลง Supabase เฉพาะคอลัมน์ status และ queue_step
-                                          if (isSupabaseConfigured && supabase) {
-                                            await supabase
-                                              .from('orders')
-                                              .update({ 
-                                                status: 'completed', 
-                                                queue_step: 5, 
-                                                updated_at: new Date().toISOString() 
-                                              })
-                                              .eq('id', orderId);
-                                          }
-                                        }}
+                                        onClick={() => handleUpdateStatus(item, 5, 'completed')}
                                         className="px-2.5 py-1.5 rounded-xl text-[10.5px] font-black transition-all cursor-pointer flex items-center gap-1 bg-emerald-700 hover:bg-emerald-800 text-white shadow-xs"
                                         title="ส่งสำเร็จ"
                                       >

@@ -366,46 +366,25 @@ export default function Header({
                 {item.label}
               </button>
             ))}
-            {activeOrders.length > 0 && trackingStatus !== 'hidden' && (
-              trackingStatus === 'shipping' ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (typeof setIsProfileOpen === 'function') setIsProfileOpen(true);
-                    if (typeof setActiveTab === 'function') setActiveTab('tracking');
-                    if (typeof onOpenProfile === 'function') onOpenProfile('deliveries');
-                  }}
-                  className="px-3.5 py-1.5 text-xs font-bold rounded-full transition-all duration-200 cursor-pointer flex items-center gap-1.5 text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 shadow-2xs hover:scale-102 active:scale-97 animate-in fade-in ring-1 ring-emerald-400/30"
-                  id="nav-track-queue"
-                  title="ติดตามสถานะจัดส่งสินค้า (In-Stock / Ready to Ship)"
-                >
-                  <span className="relative flex h-2 w-2">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                  </span>
-                  <Truck size={14} className="text-emerald-700 animate-pulse" />
-                  <span>ติดตามสถานะจัดส่ง</span>
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (typeof setIsProfileOpen === 'function') setIsProfileOpen(true);
-                    if (typeof setActiveTab === 'function') setActiveTab('tracking');
-                    if (typeof onOpenProfile === 'function') onOpenProfile('deliveries');
-                  }}
-                  className="px-3.5 py-1.5 text-xs font-bold rounded-full transition-all duration-200 cursor-pointer flex items-center gap-1.5 text-amber-800 bg-amber-50/90 hover:bg-amber-100 border border-amber-200/90 shadow-2xs hover:scale-102 active:scale-97 animate-in fade-in"
-                  id="nav-track-queue"
-                  title="ติดตามคิวผลิตเรือพรีออเดอร์และเตาหลอมโรงงาน Real-time"
-                >
-                  <span className="relative flex h-2 w-2">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
-                  </span>
-                  <Flame size={14} className="text-amber-600 animate-pulse" />
-                  <span>ติดตามคิวผลิต</span>
-                </button>
-              )
+            {Boolean(currentUser) && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (typeof setIsProfileOpen === 'function') setIsProfileOpen(true);
+                  if (typeof setActiveTab === 'function') setActiveTab('tracking');
+                  if (typeof onOpenProfile === 'function') onOpenProfile('deliveries');
+                }}
+                className="px-3.5 py-1.5 text-xs font-bold rounded-full transition-all duration-200 cursor-pointer flex items-center gap-1.5 text-amber-800 bg-amber-50/90 hover:bg-amber-100 border border-amber-200/90 shadow-2xs hover:scale-102 active:scale-97 animate-in fade-in"
+                id="nav-track-queue"
+                title="ติดตามคิวผลิตเรือพรีออเดอร์และเตาหลอมโรงงาน Real-time"
+              >
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+                </span>
+                <Flame size={14} className="text-amber-600 animate-pulse" />
+                <span>ติดตามคิวผลิต</span>
+              </button>
             )}
           </nav>
 
@@ -625,56 +604,30 @@ export default function Header({
                 {item.label}
               </button>
             ))}
-            {activeOrders.length > 0 && trackingStatus !== 'hidden' && (
-              trackingStatus === 'shipping' ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (typeof setIsProfileOpen === 'function') setIsProfileOpen(true);
-                    if (typeof setActiveTab === 'function') setActiveTab('tracking');
-                    if (typeof onOpenProfile === 'function') onOpenProfile('deliveries');
-                    setIsMobileMenuOpen(false);
-                  }}
-                  className="w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl font-bold text-xs bg-emerald-50 text-emerald-900 border border-emerald-200 shadow-2xs mt-1 transition-all"
-                  id="mobile-nav-track-queue"
-                >
-                  <div className="flex items-center gap-2">
-                    <span className="relative flex h-2 w-2">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                    </span>
-                    <Truck size={15} className="text-emerald-700" />
-                    <span>ติดตามสถานะจัดส่ง</span>
-                  </div>
-                  <span className="text-[10px] bg-emerald-200/70 text-emerald-900 px-2 py-0.5 rounded-full font-mono font-bold">
-                    IN-STOCK / SHIPPING
+            {Boolean(currentUser) && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (typeof setIsProfileOpen === 'function') setIsProfileOpen(true);
+                  if (typeof setActiveTab === 'function') setActiveTab('tracking');
+                  if (typeof onOpenProfile === 'function') onOpenProfile('deliveries');
+                  setIsMobileMenuOpen(false);
+                }}
+                className="w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl font-bold text-xs bg-amber-50 text-amber-900 border border-amber-200 shadow-2xs mt-1 transition-all"
+                id="mobile-nav-track-queue"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
                   </span>
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (typeof setIsProfileOpen === 'function') setIsProfileOpen(true);
-                    if (typeof setActiveTab === 'function') setActiveTab('tracking');
-                    if (typeof onOpenProfile === 'function') onOpenProfile('deliveries');
-                    setIsMobileMenuOpen(false);
-                  }}
-                  className="w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl font-bold text-xs bg-amber-50 text-amber-900 border border-amber-200 shadow-2xs mt-1 transition-all"
-                  id="mobile-nav-track-queue"
-                >
-                  <div className="flex items-center gap-2">
-                    <span className="relative flex h-2 w-2">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
-                    </span>
-                    <Flame size={15} className="text-amber-600 animate-pulse" />
-                    <span>ติดตามคิวผลิต</span>
-                  </div>
-                  <span className="text-[10px] bg-amber-200/70 text-amber-900 px-2 py-0.5 rounded-full font-mono font-bold">
-                    PRE-ORDER
-                  </span>
-                </button>
-              )
+                  <Flame size={15} className="text-amber-600 animate-pulse" />
+                  <span>ติดตามคิวผลิต</span>
+                </div>
+                <span className="text-[10px] bg-amber-200/70 text-amber-900 px-2 py-0.5 rounded-full font-mono font-bold">
+                  PRE-ORDER
+                </span>
+              </button>
             )}
           </div>
 
