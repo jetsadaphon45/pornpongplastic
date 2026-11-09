@@ -4073,78 +4073,200 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
 
                               {/* 5. 4-Stage Action Buttons + Delivered Finish Button */}
                               <td className="py-3.5 px-4 align-top">
-                                <div className="flex items-center justify-center gap-1.5 flex-wrap">
-                                  {/* Button 1: 1. รับคิว */}
-                                  <button
-                                    type="button"
-                                    onClick={() => handleUpdateQueueStatus(order, { status: 'in_queue', queue_step: 1, delivery_step: 1 })}
-                                    className={`px-2.5 py-1.5 rounded-xl text-[10.5px] font-bold transition-all cursor-pointer flex items-center gap-1 ${
-                                      currentStage === 1
-                                        ? 'bg-violet-600 text-white shadow-xs font-black scale-102 ring-2 ring-violet-200'
-                                        : 'bg-slate-100 hover:bg-violet-50 text-slate-600 hover:text-violet-700 border border-slate-200/80'
-                                    }`}
-                                    title="ขั้นตอนที่ 1: รับคิว (status: in_queue, queue_step: 1, delivery_step: 1)"
-                                  >
-                                    <Check size={11} className={currentStage === 1 ? 'block' : 'hidden'} />
-                                    <span>1. รับคิว</span>
-                                  </button>
+                                {(() => {
+                                  const item = order;
+                                  const setQueueOrders = setAdminOrders;
 
-                                  {/* Button 2: 2. กำลังหลอม */}
-                                  <button
-                                    type="button"
-                                    onClick={() => handleUpdateQueueStatus(order, { status: 'in_production', queue_step: 2, delivery_step: 1 })}
-                                    className={`px-2.5 py-1.5 rounded-xl text-[10.5px] font-bold transition-all cursor-pointer flex items-center gap-1 ${
-                                      currentStage === 2
-                                        ? 'bg-amber-500 text-white shadow-xs font-black scale-102 ring-2 ring-amber-200'
-                                        : 'bg-slate-100 hover:bg-amber-50 text-slate-600 hover:text-amber-700 border border-slate-200/80'
-                                    }`}
-                                    title="ขั้นตอนที่ 2: กำลังหลอม (status: in_production, queue_step: 2, delivery_step: 1)"
-                                  >
-                                    <Flame size={11} className={currentStage === 2 ? 'block' : 'hidden'} />
-                                    <span>2. กำลังหลอม</span>
-                                  </button>
+                                  return (
+                                    <div className="flex items-center justify-center gap-1.5 flex-wrap">
+                                      {/* Button 1: 1. รับคิว */}
+                                      <button
+                                        type="button"
+                                        style={{ cursor: 'pointer' }}
+                                        onClick={async () => {
+                                          const orderId = item.id || (item as any).order_id;
+                                          if (!orderId) return;
 
-                                  {/* Button 3: 3. รอขนย้าย */}
-                                  <button
-                                    type="button"
-                                    onClick={() => handleUpdateQueueStatus(order, { status: 'ready_to_transfer', queue_step: 3, delivery_step: 1 })}
-                                    className={`px-2.5 py-1.5 rounded-xl text-[10.5px] font-bold transition-all cursor-pointer flex items-center gap-1 ${
-                                      currentStage === 3
-                                        ? 'bg-sky-600 text-white shadow-xs font-black scale-102 ring-2 ring-sky-200'
-                                        : 'bg-slate-100 hover:bg-sky-50 text-slate-600 hover:text-sky-700 border border-slate-200/80'
-                                    }`}
-                                    title="ขั้นตอนที่ 3: รอขนย้าย (status: ready_to_transfer, queue_step: 3, delivery_step: 1)"
-                                  >
-                                    <Clock size={11} className={currentStage === 3 ? 'block' : 'hidden'} />
-                                    <span>3. รอขนย้าย</span>
-                                  </button>
+                                          // อัปเดตเฉพาะแถวนี้ใน state ทันทีเพื่อให้ปุ่มเปลี่ยนสี
+                                          setQueueOrders((prev: any[]) => prev.map((row: any) => 
+                                            (row.id === orderId || row.order_id === orderId) 
+                                              ? { ...row, queue_step: 1, status: 'in_queue', order_status: 'in_queue' } 
+                                              : row
+                                          ));
 
-                                  {/* Button 4: 4. อยู่ระหว่างจัดส่ง */}
-                                  <button
-                                    type="button"
-                                    onClick={() => handleUpdateQueueStatus(order, { status: 'delivering', queue_step: 4, delivery_step: 2 })}
-                                    className={`px-2.5 py-1.5 rounded-xl text-[10.5px] font-bold transition-all cursor-pointer flex items-center gap-1 ${
-                                      currentStage === 4
-                                        ? 'bg-emerald-600 text-white shadow-xs font-black scale-102 ring-2 ring-emerald-200'
-                                        : 'bg-slate-100 hover:bg-emerald-50 text-slate-600 hover:text-emerald-700 border border-slate-200/80'
-                                    }`}
-                                    title="ขั้นตอนที่ 4: อยู่ระหว่างจัดส่ง (status: delivering, queue_step: 4, delivery_step: 2)"
-                                  >
-                                    <Truck size={11} className={currentStage === 4 ? 'block' : 'hidden'} />
-                                    <span>4. อยู่ระหว่างจัดส่ง</span>
-                                  </button>
+                                          // อัปเดตลง Supabase เฉพาะคอลัมน์ status และ queue_step
+                                          if (isSupabaseConfigured && supabase) {
+                                            await supabase
+                                              .from('orders')
+                                              .update({ 
+                                                status: 'in_queue', 
+                                                queue_step: 1, 
+                                                updated_at: new Date().toISOString() 
+                                              })
+                                              .eq('id', orderId);
+                                          }
+                                        }}
+                                        className={`px-2.5 py-1.5 rounded-xl text-[10.5px] font-bold transition-all cursor-pointer flex items-center gap-1 ${
+                                          currentStage === 1
+                                            ? 'bg-violet-600 text-white shadow-xs font-black scale-102 ring-2 ring-violet-200'
+                                            : 'bg-slate-100 hover:bg-violet-50 text-slate-600 hover:text-violet-700 border border-slate-200/80'
+                                        }`}
+                                        title="ขั้นตอนที่ 1: รับคิว"
+                                      >
+                                        <Check size={11} className={currentStage === 1 ? 'block' : 'hidden'} />
+                                        <span>1. รับคิว</span>
+                                      </button>
 
-                                  {/* Button 5: ส่งสำเร็จ */}
-                                  <button
-                                    type="button"
-                                    onClick={() => handleUpdateQueueStatus(order, { status: 'completed', queue_step: 5, delivery_step: 3 })}
-                                    className="px-2.5 py-1.5 rounded-xl text-[10.5px] font-black transition-all cursor-pointer flex items-center gap-1 bg-emerald-700 hover:bg-emerald-800 text-white shadow-xs"
-                                    title="ส่งสำเร็จ (status: completed, queue_step: 5, delivery_step: 3)"
-                                  >
-                                    <CheckCircle2 size={11} />
-                                    <span>✓ ส่งสำเร็จ</span>
-                                  </button>
-                                </div>
+                                      {/* Button 2: 2. กำลังหลอม */}
+                                      <button
+                                        type="button"
+                                        style={{ cursor: 'pointer' }}
+                                        onClick={async () => {
+                                          const orderId = item.id || (item as any).order_id;
+                                          if (!orderId) return;
+
+                                          // อัปเดตเฉพาะแถวนี้ใน state ทันทีเพื่อให้ปุ่มเปลี่ยนสี
+                                          setQueueOrders((prev: any[]) => prev.map((row: any) => 
+                                            (row.id === orderId || row.order_id === orderId) 
+                                              ? { ...row, queue_step: 2, status: 'in_production', order_status: 'in_production' } 
+                                              : row
+                                          ));
+
+                                          // อัปเดตลง Supabase เฉพาะคอลัมน์ status และ queue_step
+                                          if (isSupabaseConfigured && supabase) {
+                                            await supabase
+                                              .from('orders')
+                                              .update({ 
+                                                status: 'in_production', 
+                                                queue_step: 2, 
+                                                updated_at: new Date().toISOString() 
+                                              })
+                                              .eq('id', orderId);
+                                          }
+                                        }}
+                                        className={`px-2.5 py-1.5 rounded-xl text-[10.5px] font-bold transition-all cursor-pointer flex items-center gap-1 ${
+                                          currentStage === 2
+                                            ? 'bg-amber-500 text-white shadow-xs font-black scale-102 ring-2 ring-amber-200'
+                                            : 'bg-slate-100 hover:bg-amber-50 text-slate-600 hover:text-amber-700 border border-slate-200/80'
+                                        }`}
+                                        title="ขั้นตอนที่ 2: กำลังหลอม"
+                                      >
+                                        <Flame size={11} className={currentStage === 2 ? 'block' : 'hidden'} />
+                                        <span>2. กำลังหลอม</span>
+                                      </button>
+
+                                      {/* Button 3: 3. รอขนย้าย */}
+                                      <button
+                                        type="button"
+                                        style={{ cursor: 'pointer' }}
+                                        onClick={async () => {
+                                          const orderId = item.id || (item as any).order_id;
+                                          if (!orderId) return;
+
+                                          // อัปเดตเฉพาะแถวนี้ใน state ทันทีเพื่อให้ปุ่มเปลี่ยนสี
+                                          setQueueOrders((prev: any[]) => prev.map((row: any) => 
+                                            (row.id === orderId || row.order_id === orderId) 
+                                              ? { ...row, queue_step: 3, status: 'ready_to_transfer', order_status: 'ready_to_transfer' } 
+                                              : row
+                                          ));
+
+                                          // อัปเดตลง Supabase เฉพาะคอลัมน์ status และ queue_step
+                                          if (isSupabaseConfigured && supabase) {
+                                            await supabase
+                                              .from('orders')
+                                              .update({ 
+                                                status: 'ready_to_transfer', 
+                                                queue_step: 3, 
+                                                updated_at: new Date().toISOString() 
+                                              })
+                                              .eq('id', orderId);
+                                          }
+                                        }}
+                                        className={`px-2.5 py-1.5 rounded-xl text-[10.5px] font-bold transition-all cursor-pointer flex items-center gap-1 ${
+                                          currentStage === 3
+                                            ? 'bg-sky-600 text-white shadow-xs font-black scale-102 ring-2 ring-sky-200'
+                                            : 'bg-slate-100 hover:bg-sky-50 text-slate-600 hover:text-sky-700 border border-slate-200/80'
+                                        }`}
+                                        title="ขั้นตอนที่ 3: รอขนย้าย"
+                                      >
+                                        <Clock size={11} className={currentStage === 3 ? 'block' : 'hidden'} />
+                                        <span>3. รอขนย้าย</span>
+                                      </button>
+
+                                      {/* Button 4: 4. อยู่ระหว่างจัดส่ง */}
+                                      <button
+                                        type="button"
+                                        style={{ cursor: 'pointer' }}
+                                        onClick={async () => {
+                                          const orderId = item.id || (item as any).order_id;
+                                          if (!orderId) return;
+
+                                          // อัปเดตเฉพาะแถวนี้ใน state ทันทีเพื่อให้ปุ่มเปลี่ยนสี
+                                          setQueueOrders((prev: any[]) => prev.map((row: any) => 
+                                            (row.id === orderId || row.order_id === orderId) 
+                                              ? { ...row, queue_step: 4, status: 'delivering', order_status: 'delivering' } 
+                                              : row
+                                          ));
+
+                                          // อัปเดตลง Supabase เฉพาะคอลัมน์ status และ queue_step
+                                          if (isSupabaseConfigured && supabase) {
+                                            await supabase
+                                              .from('orders')
+                                              .update({ 
+                                                status: 'delivering', 
+                                                queue_step: 4, 
+                                                updated_at: new Date().toISOString() 
+                                              })
+                                              .eq('id', orderId);
+                                          }
+                                        }}
+                                        className={`px-2.5 py-1.5 rounded-xl text-[10.5px] font-bold transition-all cursor-pointer flex items-center gap-1 ${
+                                          currentStage === 4
+                                            ? 'bg-emerald-600 text-white shadow-xs font-black scale-102 ring-2 ring-emerald-200'
+                                            : 'bg-slate-100 hover:bg-emerald-50 text-slate-600 hover:text-emerald-700 border border-slate-200/80'
+                                        }`}
+                                        title="ขั้นตอนที่ 4: อยู่ระหว่างจัดส่ง"
+                                      >
+                                        <Truck size={11} className={currentStage === 4 ? 'block' : 'hidden'} />
+                                        <span>4. อยู่ระหว่างจัดส่ง</span>
+                                      </button>
+
+                                      {/* Button 5: ส่งสำเร็จ */}
+                                      <button
+                                        type="button"
+                                        style={{ cursor: 'pointer' }}
+                                        onClick={async () => {
+                                          const orderId = item.id || (item as any).order_id;
+                                          if (!orderId) return;
+
+                                          // อัปเดตเฉพาะแถวนี้ใน state ทันทีเพื่อให้ปุ่มเปลี่ยนสี
+                                          setQueueOrders((prev: any[]) => prev.map((row: any) => 
+                                            (row.id === orderId || row.order_id === orderId) 
+                                              ? { ...row, queue_step: 5, status: 'completed', order_status: 'completed' } 
+                                              : row
+                                          ));
+
+                                          // อัปเดตลง Supabase เฉพาะคอลัมน์ status และ queue_step
+                                          if (isSupabaseConfigured && supabase) {
+                                            await supabase
+                                              .from('orders')
+                                              .update({ 
+                                                status: 'completed', 
+                                                queue_step: 5, 
+                                                updated_at: new Date().toISOString() 
+                                              })
+                                              .eq('id', orderId);
+                                          }
+                                        }}
+                                        className="px-2.5 py-1.5 rounded-xl text-[10.5px] font-black transition-all cursor-pointer flex items-center gap-1 bg-emerald-700 hover:bg-emerald-800 text-white shadow-xs"
+                                        title="ส่งสำเร็จ"
+                                      >
+                                        <CheckCircle2 size={11} />
+                                        <span>✓ ส่งสำเร็จ</span>
+                                      </button>
+                                    </div>
+                                  );
+                                })()}
                               </td>
                             </tr>
                           );
