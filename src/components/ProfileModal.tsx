@@ -83,9 +83,6 @@ interface OrderItem {
   delivery_status?: string;
   orderType?: 'preorder' | 'instock';
   isPreOrder?: boolean;
-  queue_step?: number;
-  order_status?: string;
-  raw_status?: string;
 }
 
 interface PreOrderItem {
@@ -208,21 +205,40 @@ export const PreorderQueueCard: React.FC<TrackingCardProps> = ({
 }) => {
   const queueId = order.queueId || order.queue_number || order.queue_id || formatQueueId(order);
   
-  // 1. คำนวณสเต็ปปัจจุบัน (currentStep) ให้อ่านจาก Supabase ตาราง orders โดยตรง
-  const currentStep = Number(order.queue_step) || (
-    order.order_status === 'in_production' || (order as any).status === 'in_production' ? 2 :
-    order.order_status === 'ready_to_transfer' || (order as any).status === 'ready_to_transfer' ? 3 :
-    order.order_status === 'delivering' || (order as any).status === 'delivering' ? 4 :
-    order.order_status === 'completed' || (order as any).status === 'completed' || (order as any).status === 'delivered' ? 5 : 1
-  );
+  // Read status & queue_step explicitly from database
+  const rawStatus = String(order.raw_status || order.status || (order as any).order_status || '').toLowerCase().trim();
+  const rawStep = Number(order.queue_step || (order as any).queue_stage || 0);
 
-  const isCompleted = currentStep >= 5;
-  const stageNum = currentStep;
+  // Exact 5-step mapping as specified:
+  // step 1 ('in_queue'): ไฮไลต์ 1. รับคิวผลิต
+  // step 2 ('in_production'): ไฮไลต์ 2. กำลังหลอมขึ้นรูป
+  // step 3 ('ready_to_transfer'): ไฮไลต์ 3. รอขนย้าย
+  // step 4 ('delivering'): ไฮไลต์ 4. อยู่ระหว่างจัดส่ง
+  // step 5 ('completed'): จัดส่งสำเร็จ
+  let qStep = 1;
+  if (rawStep >= 1 && rawStep <= 5) {
+    qStep = rawStep;
+  } else if (rawStatus === 'completed' || rawStatus === 'delivered' || order.stageLabel === 'จัดส่งสำเร็จ') {
+    qStep = 5;
+  } else if (rawStatus === 'delivering' || rawStatus === 'in_transit' || rawStatus === 'shipping') {
+    qStep = 4;
+  } else if (rawStatus === 'ready_to_transfer' || rawStatus === 'ready_for_shipping' || rawStatus === 'ready') {
+    qStep = 3;
+  } else if (rawStatus === 'in_production' || rawStatus === 'producing' || rawStatus === 'manufacturing' || rawStatus === 'molding') {
+    qStep = 2;
+  } else if (rawStatus === 'in_queue') {
+    qStep = 1;
+  } else {
+    qStep = Number(order.stageNumber || 1);
+  }
 
-  const stageLabel = isCompleted ? 'จัดส่งสำเร็จ' : (
-    currentStep === 1 ? '1. รับคิวผลิต' :
-    currentStep === 2 ? '2. กำลังหลอมขึ้นรูป' :
-    currentStep === 3 ? '3. รอขนย้าย' : '4. อยู่ระหว่างจัดส่ง'
+  const isCompleted = qStep === 5 || rawStatus === 'completed' || rawStatus === 'delivered' || order.stageLabel === 'จัดส่งสำเร็จ';
+  const stageNum = isCompleted ? 5 : qStep;
+
+  const stageLabel = isCompleted ? 'จัดส่งสำเร็จเรียบร้อยแล้ว' : (
+    stageNum === 1 ? '1. รับคิวผลิต' :
+    stageNum === 2 ? '2. กำลังหลอมขึ้นรูป' :
+    stageNum === 3 ? '3. รอขนย้าย' : '4. อยู่ระหว่างจัดส่ง'
   );
 
   const carrier = order.carrierName || order.shipping_carrier || 'รถโรงงานพรพงศ์พลาสติก (สายส่งด่วน)';
@@ -273,31 +289,17 @@ export const PreorderQueueCard: React.FC<TrackingCardProps> = ({
             <span className="font-mono text-3xl sm:text-4xl font-black text-amber-400 tracking-tight drop-shadow-sm">
               {queueId}
             </span>
-            {currentStep === 1 && (
-              <span className="px-2.5 py-1 rounded-full text-[10.5px] font-extrabold border bg-purple-600/30 text-purple-200 border-purple-500/50 shadow-xs">
-                1. รับคิวผลิต
-              </span>
-            )}
-            {currentStep === 2 && (
-              <span className="px-2.5 py-1 rounded-full text-[10.5px] font-extrabold border bg-orange-600/30 text-orange-200 border-orange-500/50 shadow-xs">
-                2. กำลังหลอมขึ้นรูป
-              </span>
-            )}
-            {currentStep === 3 && (
-              <span className="px-2.5 py-1 rounded-full text-[10.5px] font-extrabold border bg-sky-600/30 text-sky-200 border-sky-500/50 shadow-xs">
-                3. รอขนย้าย
-              </span>
-            )}
-            {currentStep === 4 && (
-              <span className="px-2.5 py-1 rounded-full text-[10.5px] font-extrabold border bg-blue-600/30 text-blue-200 border-blue-500/50 shadow-xs">
-                4. อยู่ระหว่างจัดส่ง
-              </span>
-            )}
-            {currentStep >= 5 && (
-              <span className="px-2.5 py-1 rounded-full text-[10.5px] font-extrabold border bg-emerald-600/30 text-emerald-200 border-emerald-500/50 shadow-xs">
-                จัดส่งสำเร็จ
-              </span>
-            )}
+            <span className={`px-2.5 py-1 rounded-full text-[10.5px] font-extrabold border ${
+              isCompleted || stageNum === 4
+                ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                : stageNum === 3
+                ? 'bg-sky-500/20 text-sky-300 border-sky-500/40'
+                : stageNum === 2
+                ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                : 'bg-violet-500/20 text-violet-300 border-violet-500/40'
+            }`}>
+              {stageLabel}
+            </span>
           </div>
           <div className="flex items-center gap-3 text-[10.5px] text-slate-400 font-mono">
             <span>รหัสคำสั่งซื้อ: #{order.id}</span>
@@ -381,67 +383,48 @@ export const PreorderQueueCard: React.FC<TrackingCardProps> = ({
         <div className="relative flex items-center justify-between px-2 sm:px-6 mb-2">
           <div className="absolute left-6 right-6 top-3.5 h-1 bg-white/10 rounded-full">
             <div 
-              className="h-full bg-gradient-to-r from-purple-500 via-orange-500 via-sky-500 to-emerald-400 transition-all duration-500 rounded-full"
+              className="h-full bg-gradient-to-r from-violet-500 via-amber-500 via-sky-500 to-emerald-400 transition-all duration-500 rounded-full"
               style={{
-                width:
-                  currentStep >= 4 ? '100%' :
-                  currentStep === 3 ? '66%' :
-                  currentStep === 2 ? '33%' : '0%'
+                width: isCompleted ? '100%' :
+                  stageNum === 1 ? '0%' :
+                  stageNum === 2 ? '33%' :
+                  stageNum === 3 ? '66%' : '100%'
               }}
             />
           </div>
 
           {[
-            { 
-              step: 1, 
-              label: '1. รับคิวผลิต', 
-              desc: 'ลงทะเบียนรับคิว',
-              circleActive: 'bg-purple-600 text-white ring-4 ring-purple-400/50 shadow-lg shadow-purple-500/50',
-              labelColor: 'text-purple-300 font-extrabold'
-            },
-            { 
-              step: 2, 
-              label: '2. กำลังหลอมขึ้นรูป', 
-              desc: 'หลอมขึ้นรูปในเตา',
-              circleActive: 'bg-orange-500 text-white ring-4 ring-orange-400/50 shadow-lg shadow-orange-500/50',
-              labelColor: 'text-orange-300 font-extrabold'
-            },
-            { 
-              step: 3, 
-              label: '3. รอขนย้าย', 
-              desc: 'ผลิตเสร็จ-รอขนย้าย',
-              circleActive: 'bg-sky-500 text-white ring-4 ring-sky-400/50 shadow-lg shadow-sky-500/50',
-              labelColor: 'text-sky-300 font-extrabold'
-            },
-            { 
-              step: 4, 
-              label: '4. อยู่ระหว่างจัดส่ง', 
-              desc: 'ขึ้นรถจัดส่งแล้ว',
-              circleActive: 'bg-blue-600 text-white ring-4 ring-blue-400/50 shadow-lg shadow-blue-500/50',
-              labelColor: 'text-blue-300 font-extrabold'
-            }
+            { step: 1, label: '1. รับคิวผลิต', desc: 'ลงทะเบียนรับคิว' },
+            { step: 2, label: '2. กำลังหลอมขึ้นรูป', desc: 'หลอมขึ้นรูปในเตา' },
+            { step: 3, label: '3. รอขนย้าย', desc: 'ผลิตเสร็จ-รอขนย้าย' },
+            { step: 4, label: '4. อยู่ระหว่างจัดส่ง', desc: 'ขึ้นรถจัดส่งแล้ว' }
           ].map((s) => {
-            const isActive = currentStep >= s.step;
-            const isCompletedStep = currentStep > s.step || currentStep >= 5;
-            const isCurrent = currentStep === s.step;
+            const isPast = isCompleted || stageNum > s.step;
+            const isCur = !isCompleted && stageNum === s.step;
 
             return (
               <div key={s.step} className="relative z-10 flex flex-col items-center">
                 <div className={`w-7 h-7 rounded-full flex items-center justify-center font-bold text-xs transition-all ${
-                  isActive
-                    ? isCompletedStep
-                      ? 'bg-emerald-500 text-white shadow-xs'
-                      : `${s.circleActive} scale-110`
+                  isCompleted || isPast
+                    ? 'bg-emerald-500 text-white shadow-xs'
+                    : isCur
+                    ? s.step === 4 
+                      ? 'bg-emerald-500 text-white ring-4 ring-emerald-500/30 scale-110 shadow-lg shadow-emerald-500/40' 
+                      : s.step === 3 
+                      ? 'bg-sky-500 text-white ring-4 ring-sky-500/30 scale-110 shadow-lg shadow-sky-500/40'
+                      : s.step === 2
+                      ? 'bg-amber-500 text-white ring-4 ring-amber-500/30 scale-110 shadow-lg shadow-amber-500/40'
+                      : 'bg-violet-500 text-white ring-4 ring-violet-500/30 scale-110 shadow-lg shadow-violet-500/40'
                     : 'bg-slate-800 text-slate-400 border border-slate-700'
                 }`}>
-                  {isCompletedStep ? (
+                  {isCompleted || isPast || (isCur && s.step === 4) ? (
                     <Check size={13} strokeWidth={3} />
                   ) : (
                     <span>{s.step}</span>
                   )}
                 </div>
                 <span className={`text-[10px] mt-1 font-bold ${
-                  isActive ? (isCurrent ? 'text-white font-black' : s.labelColor) : 'text-slate-400'
+                  isCompleted || isPast ? 'text-emerald-300' : isCur ? 'text-white font-black' : 'text-slate-400'
                 }`}>
                   {s.label}
                 </span>
@@ -908,15 +891,15 @@ export function ProfileModal({
         deliveriesMap = delivs || {};
       }
 
-      // Merge local storage admin_orders to ensure newly placed local mock orders are present, while keeping live Supabase authoritative
+      // Merge local storage admin_orders to ensure newly placed or updated orders are present with latest status
       try {
         const local = JSON.parse(localStorage.getItem('admin_orders') || '[]');
         for (const loc of local) {
           const locId = String(loc.id);
           const existingIdx = fetchedOrders.findIndex((f: any) => String(f.id) === locId);
           if (existingIdx >= 0) {
-            // Keep remote Supabase data authoritative so live admin updates reflect immediately without being masked by stale cache
-            fetchedOrders[existingIdx] = { ...loc, ...fetchedOrders[existingIdx] };
+            // Overwrite with latest local administrative data (e.g. status was set to delivered by admin)
+            fetchedOrders[existingIdx] = { ...fetchedOrders[existingIdx], ...loc };
           } else {
             fetchedOrders.push(loc);
           }
@@ -960,10 +943,9 @@ export function ProfileModal({
         const oName = String(o.customerName || o.customer_name || '').trim().toLowerCase();
 
         if (uId && uId !== 'guest' && oIdClean === uId) return true;
-        if (uEmail && uEmail !== 'guest@example.com' && (oEmail === uEmail || oEmail.includes(uEmail) || uEmail.includes(oEmail))) return true;
+        if (uEmail && uEmail !== 'guest@example.com' && oEmail === uEmail) return true;
         if (uPhone && oPhone && (uPhone === oPhone || uPhone.endsWith(oPhone) || oPhone.endsWith(uPhone))) return true;
         if (uName && oName && (uName === oName || uName.includes(oName) || oName.includes(uName))) return true;
-        if ((currentUser as any)?.role === 'admin') return true;
 
         return false;
       });
@@ -991,7 +973,7 @@ export function ProfileModal({
         const trackingNo = delivery?.tracking_number || o.tracking_number || o.shipmentNo || o.shipment_no || `TH-EX-${String(o.id).replace(/[^0-9]/g, '').slice(-6) || '291823'}`;
         const estDate = delivery?.estimated_delivery_date || o.estimated_delivery_date || o.est_delivery || '';
         const delivStatus = (delivery?.delivery_status || '').toLowerCase();
-        const ordStatus = (o.order_status || o.status || '').toLowerCase();
+        const ordStatus = (o.status || o.order_status || '').toLowerCase();
         const payStatus = (o.payment_status || '').toLowerCase();
         const qStep = Number(o.queue_step || o.queue_stage || 0);
 
@@ -1142,9 +1124,7 @@ export function ProfileModal({
         const userPhone = currentUser?.phone?.replace(/\D/g, '') || '';
 
         let query = supabase.from('orders').select('*');
-        if ((currentUser as any)?.role === 'admin') {
-          query = query.order('created_at', { ascending: false });
-        } else if (userEmail && userPhone) {
+        if (userEmail && userPhone) {
           query = query.or(`customer_email.eq.${userEmail},customer_phone.eq.${userPhone},email.eq.${userEmail},phone.eq.${userPhone}`);
         } else if (userEmail) {
           query = query.or(`customer_email.eq.${userEmail},email.eq.${userEmail}`);
@@ -1283,7 +1263,7 @@ export function ProfileModal({
         supabase.removeChannel(channel);
       }
     };
-  }, [isOpen, currentUser, loadHistory, fetchCustomerOrders]);
+  }, [isOpen, currentUser, loadHistory]);
 
   if (!isOpen || !currentUser) return null;
 
