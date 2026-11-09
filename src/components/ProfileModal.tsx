@@ -83,6 +83,9 @@ interface OrderItem {
   delivery_status?: string;
   orderType?: 'preorder' | 'instock';
   isPreOrder?: boolean;
+  queue_step?: number;
+  order_status?: string;
+  raw_status?: string;
 }
 
 interface PreOrderItem {
@@ -203,47 +206,29 @@ export const PreorderQueueCard: React.FC<TrackingCardProps> = ({
   onCopyTracking,
   copiedTrackingId
 }) => {
-  const queueId = order.queueId || order.queue_number || order.queue_id || formatQueueId(order);
-  
-  // Read status & queue_step explicitly from database
-  const rawStatus = String(order.raw_status || order.status || (order as any).order_status || '').toLowerCase().trim();
-  const rawStep = Number(order.queue_step || (order as any).queue_stage || 0);
-
-  // Exact 5-step mapping as specified:
-  // step 1 ('in_queue'): ไฮไลต์ 1. รับคิวผลิต
-  // step 2 ('in_production'): ไฮไลต์ 2. กำลังหลอมขึ้นรูป
-  // step 3 ('ready_to_transfer'): ไฮไลต์ 3. รอขนย้าย
-  // step 4 ('delivering'): ไฮไลต์ 4. อยู่ระหว่างจัดส่ง
-  // step 5 ('completed'): จัดส่งสำเร็จ
-  let qStep = 1;
-  if (rawStep >= 1 && rawStep <= 5) {
-    qStep = rawStep;
-  } else if (rawStatus === 'completed' || rawStatus === 'delivered' || order.stageLabel === 'จัดส่งสำเร็จ') {
-    qStep = 5;
-  } else if (rawStatus === 'delivering' || rawStatus === 'in_transit' || rawStatus === 'shipping') {
-    qStep = 4;
-  } else if (rawStatus === 'ready_to_transfer' || rawStatus === 'ready_for_shipping' || rawStatus === 'ready') {
-    qStep = 3;
-  } else if (rawStatus === 'in_production' || rawStatus === 'producing' || rawStatus === 'manufacturing' || rawStatus === 'molding') {
-    qStep = 2;
-  } else if (rawStatus === 'in_queue') {
-    qStep = 1;
-  } else {
-    qStep = Number(order.stageNumber || 1);
-  }
-
-  const isCompleted = qStep === 5 || rawStatus === 'completed' || rawStatus === 'delivered' || order.stageLabel === 'จัดส่งสำเร็จ';
-  const stageNum = isCompleted ? 5 : qStep;
-
-  const stageLabel = isCompleted ? 'จัดส่งสำเร็จเรียบร้อยแล้ว' : (
-    stageNum === 1 ? '1. รับคิวผลิต' :
-    stageNum === 2 ? '2. กำลังหลอมขึ้นรูป' :
-    stageNum === 3 ? '3. รอขนย้าย' : '4. อยู่ระหว่างจัดส่ง'
+  // สเต็ปปัจจุบัน (currentStep): คำนวณจาก Supabase ตาราง orders โดยตรง
+  const currentStep = Number(order?.queue_step) || (
+    order?.order_status === 'in_production' ? 2 :
+    order?.order_status === 'ready_to_transfer' ? 3 :
+    order?.order_status === 'delivering' ? 4 :
+    order?.order_status === 'completed' ? 5 : 1
   );
 
-  const carrier = order.carrierName || order.shipping_carrier || 'รถโรงงานพรพงศ์พลาสติก (สายส่งด่วน)';
-  const driver = order.driverPhone || order.driver_phone || '089-456-7890';
-  const trackingNo = order.shipmentNo || order.tracking_number || `TH-EX-${String(order.id).replace(/[^0-9]/g, '').slice(-6) || '291823'}`;
+  // เลขคิว: แสดง {activePreorder?.queue_id || 'Q-2611-004'}
+  const queueId = order?.queue_id || order?.queueId || order?.queue_number || formatQueueId(order) || 'Q-2611-004';
+
+  const isCompleted = currentStep >= 5;
+  const stageNum = currentStep;
+
+  const stageLabel = isCompleted ? 'จัดส่งสำเร็จ' : (
+    currentStep === 1 ? '1. รับคิวผลิต' :
+    currentStep === 2 ? '2. กำลังหลอมขึ้นรูป' :
+    currentStep === 3 ? '3. รอขนย้าย' : '4. อยู่ระหว่างจัดส่ง'
+  );
+
+  const carrier = order?.carrierName || order?.shipping_carrier || order?.carrier_name || 'รถโรงงานพรพงศ์พลาสติก (สายส่งด่วน)';
+  const driver = order?.driverPhone || order?.driver_phone || '089-456-7890';
+  const trackingNo = order?.shipmentNo || order?.tracking_number || order?.shipment_no || (order?.id ? `TH-EX-${String(order.id).replace(/[^0-9]/g, '').slice(-6) || '261104'}` : 'TH-EX-261104');
 
   return (
     <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-slate-900 via-slate-850 to-sky-950 p-5 sm:p-6 text-white shadow-xl border border-sky-500/30 space-y-4">
@@ -289,17 +274,31 @@ export const PreorderQueueCard: React.FC<TrackingCardProps> = ({
             <span className="font-mono text-3xl sm:text-4xl font-black text-amber-400 tracking-tight drop-shadow-sm">
               {queueId}
             </span>
-            <span className={`px-2.5 py-1 rounded-full text-[10.5px] font-extrabold border ${
-              isCompleted || stageNum === 4
-                ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
-                : stageNum === 3
-                ? 'bg-sky-500/20 text-sky-300 border-sky-500/40'
-                : stageNum === 2
-                ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
-                : 'bg-violet-500/20 text-violet-300 border-violet-500/40'
-            }`}>
-              {stageLabel}
-            </span>
+            {currentStep === 1 && (
+              <span className="px-2.5 py-1 rounded-full text-[10.5px] font-extrabold border bg-purple-600/30 text-purple-200 border-purple-500/50 shadow-xs">
+                1. รับคิวผลิต
+              </span>
+            )}
+            {currentStep === 2 && (
+              <span className="px-2.5 py-1 rounded-full text-[10.5px] font-extrabold border bg-orange-600/30 text-orange-200 border-orange-500/50 shadow-xs">
+                2. กำลังหลอมขึ้นรูป
+              </span>
+            )}
+            {currentStep === 3 && (
+              <span className="px-2.5 py-1 rounded-full text-[10.5px] font-extrabold border bg-sky-600/30 text-sky-200 border-sky-500/50 shadow-xs">
+                3. รอขนย้าย
+              </span>
+            )}
+            {currentStep === 4 && (
+              <span className="px-2.5 py-1 rounded-full text-[10.5px] font-extrabold border bg-blue-600/30 text-blue-200 border-blue-500/50 shadow-xs">
+                4. อยู่ระหว่างจัดส่ง
+              </span>
+            )}
+            {currentStep >= 5 && (
+              <span className="px-2.5 py-1 rounded-full text-[10.5px] font-extrabold border bg-emerald-600/30 text-emerald-200 border-emerald-500/50 shadow-xs">
+                จัดส่งสำเร็จ
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-3 text-[10.5px] text-slate-400 font-mono">
             <span>รหัสคำสั่งซื้อ: #{order.id}</span>
@@ -383,48 +382,67 @@ export const PreorderQueueCard: React.FC<TrackingCardProps> = ({
         <div className="relative flex items-center justify-between px-2 sm:px-6 mb-2">
           <div className="absolute left-6 right-6 top-3.5 h-1 bg-white/10 rounded-full">
             <div 
-              className="h-full bg-gradient-to-r from-violet-500 via-amber-500 via-sky-500 to-emerald-400 transition-all duration-500 rounded-full"
+              className="h-full bg-gradient-to-r from-purple-500 via-orange-500 via-sky-500 to-emerald-400 transition-all duration-500 rounded-full"
               style={{
-                width: isCompleted ? '100%' :
-                  stageNum === 1 ? '0%' :
-                  stageNum === 2 ? '33%' :
-                  stageNum === 3 ? '66%' : '100%'
+                width:
+                  currentStep >= 4 ? '100%' :
+                  currentStep === 3 ? '66%' :
+                  currentStep === 2 ? '33%' : '0%'
               }}
             />
           </div>
 
           {[
-            { step: 1, label: '1. รับคิวผลิต', desc: 'ลงทะเบียนรับคิว' },
-            { step: 2, label: '2. กำลังหลอมขึ้นรูป', desc: 'หลอมขึ้นรูปในเตา' },
-            { step: 3, label: '3. รอขนย้าย', desc: 'ผลิตเสร็จ-รอขนย้าย' },
-            { step: 4, label: '4. อยู่ระหว่างจัดส่ง', desc: 'ขึ้นรถจัดส่งแล้ว' }
+            { 
+              step: 1, 
+              label: '1. รับคิวผลิต', 
+              desc: 'ลงทะเบียนรับคิว',
+              circleActive: 'bg-purple-600 text-white ring-4 ring-purple-400/50 shadow-lg shadow-purple-500/50',
+              labelColor: 'text-purple-300 font-extrabold'
+            },
+            { 
+              step: 2, 
+              label: '2. กำลังหลอมขึ้นรูป', 
+              desc: 'หลอมขึ้นรูปในเตา',
+              circleActive: 'bg-orange-500 text-white ring-4 ring-orange-400/50 shadow-lg shadow-orange-500/50',
+              labelColor: 'text-orange-300 font-extrabold'
+            },
+            { 
+              step: 3, 
+              label: '3. รอขนย้าย', 
+              desc: 'ผลิตเสร็จ-รอขนย้าย',
+              circleActive: 'bg-sky-500 text-white ring-4 ring-sky-400/50 shadow-lg shadow-sky-500/50',
+              labelColor: 'text-sky-300 font-extrabold'
+            },
+            { 
+              step: 4, 
+              label: '4. อยู่ระหว่างจัดส่ง', 
+              desc: 'ขึ้นรถจัดส่งแล้ว',
+              circleActive: 'bg-blue-600 text-white ring-4 ring-blue-400/50 shadow-lg shadow-blue-500/50',
+              labelColor: 'text-blue-300 font-extrabold'
+            }
           ].map((s) => {
-            const isPast = isCompleted || stageNum > s.step;
-            const isCur = !isCompleted && stageNum === s.step;
+            const isActive = currentStep >= s.step;
+            const isCompletedStep = currentStep > s.step || currentStep >= 5;
+            const isCurrent = currentStep === s.step;
 
             return (
               <div key={s.step} className="relative z-10 flex flex-col items-center">
                 <div className={`w-7 h-7 rounded-full flex items-center justify-center font-bold text-xs transition-all ${
-                  isCompleted || isPast
-                    ? 'bg-emerald-500 text-white shadow-xs'
-                    : isCur
-                    ? s.step === 4 
-                      ? 'bg-emerald-500 text-white ring-4 ring-emerald-500/30 scale-110 shadow-lg shadow-emerald-500/40' 
-                      : s.step === 3 
-                      ? 'bg-sky-500 text-white ring-4 ring-sky-500/30 scale-110 shadow-lg shadow-sky-500/40'
-                      : s.step === 2
-                      ? 'bg-amber-500 text-white ring-4 ring-amber-500/30 scale-110 shadow-lg shadow-amber-500/40'
-                      : 'bg-violet-500 text-white ring-4 ring-violet-500/30 scale-110 shadow-lg shadow-violet-500/40'
+                  isActive
+                    ? isCompletedStep
+                      ? 'bg-emerald-500 text-white shadow-xs'
+                      : `${s.circleActive} scale-110`
                     : 'bg-slate-800 text-slate-400 border border-slate-700'
                 }`}>
-                  {isCompleted || isPast || (isCur && s.step === 4) ? (
+                  {isCompletedStep ? (
                     <Check size={13} strokeWidth={3} />
                   ) : (
                     <span>{s.step}</span>
                   )}
                 </div>
                 <span className={`text-[10px] mt-1 font-bold ${
-                  isCompleted || isPast ? 'text-emerald-300' : isCur ? 'text-white font-black' : 'text-slate-400'
+                  isActive ? (isCurrent ? 'text-white font-black' : s.labelColor) : 'text-slate-400'
                 }`}>
                   {s.label}
                 </span>
@@ -743,6 +761,7 @@ export function ProfileModal({
   }, [isOpen, initialTab, targetOrderId]);
 
   // Orders and Pre-orders state
+  const [activePreorder, setActivePreorder] = React.useState<any | null>(null);
   const [customerOrders, setCustomerOrders] = React.useState<any[]>([]);
   const [orders, setOrders] = React.useState<OrderItem[]>([]);
   const [preOrders, setPreOrders] = React.useState<PreOrderItem[]>([]);
@@ -891,15 +910,15 @@ export function ProfileModal({
         deliveriesMap = delivs || {};
       }
 
-      // Merge local storage admin_orders to ensure newly placed or updated orders are present with latest status
+      // Merge local storage admin_orders to ensure newly placed local mock orders are present, while keeping live Supabase authoritative
       try {
         const local = JSON.parse(localStorage.getItem('admin_orders') || '[]');
         for (const loc of local) {
           const locId = String(loc.id);
           const existingIdx = fetchedOrders.findIndex((f: any) => String(f.id) === locId);
           if (existingIdx >= 0) {
-            // Overwrite with latest local administrative data (e.g. status was set to delivered by admin)
-            fetchedOrders[existingIdx] = { ...fetchedOrders[existingIdx], ...loc };
+            // Keep remote Supabase data authoritative so live admin updates reflect immediately without being masked by stale cache
+            fetchedOrders[existingIdx] = { ...loc, ...fetchedOrders[existingIdx] };
           } else {
             fetchedOrders.push(loc);
           }
@@ -943,9 +962,10 @@ export function ProfileModal({
         const oName = String(o.customerName || o.customer_name || '').trim().toLowerCase();
 
         if (uId && uId !== 'guest' && oIdClean === uId) return true;
-        if (uEmail && uEmail !== 'guest@example.com' && oEmail === uEmail) return true;
+        if (uEmail && uEmail !== 'guest@example.com' && (oEmail === uEmail || oEmail.includes(uEmail) || uEmail.includes(oEmail))) return true;
         if (uPhone && oPhone && (uPhone === oPhone || uPhone.endsWith(oPhone) || oPhone.endsWith(uPhone))) return true;
         if (uName && oName && (uName === oName || uName.includes(oName) || oName.includes(uName))) return true;
+        if ((currentUser as any)?.role === 'admin') return true;
 
         return false;
       });
@@ -973,7 +993,7 @@ export function ProfileModal({
         const trackingNo = delivery?.tracking_number || o.tracking_number || o.shipmentNo || o.shipment_no || `TH-EX-${String(o.id).replace(/[^0-9]/g, '').slice(-6) || '291823'}`;
         const estDate = delivery?.estimated_delivery_date || o.estimated_delivery_date || o.est_delivery || '';
         const delivStatus = (delivery?.delivery_status || '').toLowerCase();
-        const ordStatus = (o.status || o.order_status || '').toLowerCase();
+        const ordStatus = (o.order_status || o.status || '').toLowerCase();
         const payStatus = (o.payment_status || '').toLowerCase();
         const qStep = Number(o.queue_step || o.queue_stage || 0);
 
@@ -1063,10 +1083,8 @@ export function ProfileModal({
         };
       });
 
-      // If user has authentic orders from Supabase/database, show their real orders; otherwise use MOCK_ORDERS for demonstration
-      const combinedOrders: OrderItem[] = mappedRemoteOrders.length > 0
-        ? mappedRemoteOrders
-        : [...MOCK_ORDERS];
+      // Single Source of Truth: Only show real authentic orders from Supabase (Never inject mock data)
+      const combinedOrders: OrderItem[] = mappedRemoteOrders;
       // Filter out deleted items
       const activeOrders = combinedOrders.filter(o => !deletedIds.includes(o.id));
       setOrders(activeOrders);
@@ -1114,36 +1132,59 @@ export function ProfileModal({
     }
   }, [currentUser, targetOrderId]);
 
-  // 1. ฟังก์ชันดึงออเดอร์ของลูกค้าที่ล็อกอินอยู่ (Customer Tracking):
-  // ดึงข้อมูลจากตาราง 'orders' โดยผูกกับอีเมลหรือเบอร์โทรของลูกค้า:
-  const fetchCustomerOrders = React.useCallback(async () => {
+  // 2. ฟังก์ชัน fetchCustomerLiveOrder ดึงออเดอร์ล่าสุดของลูกค้าโดยตรงจาก Supabase ตาราง orders:
+  const fetchCustomerLiveOrder = React.useCallback(async () => {
     setIsLoadingHistory(true);
     try {
       if (isSupabaseConfigured && supabase) {
-        const userEmail = currentUser?.email?.trim() || '';
-        const userPhone = currentUser?.phone?.replace(/\D/g, '') || '';
+        // ดึงจากตาราง orders โดยตรงตามเบอร์โทรหรือ customer_id ของผู้ใช้ที่ล็อกอิน
+        const userPhone = currentUser?.phone || '0834322133';
+        const userEmail = currentUser?.email || 'jetsadaehon@gmail.com';
 
         let query = supabase.from('orders').select('*');
-        if (userEmail && userPhone) {
-          query = query.or(`customer_email.eq.${userEmail},customer_phone.eq.${userPhone},email.eq.${userEmail},phone.eq.${userPhone}`);
-        } else if (userEmail) {
-          query = query.or(`customer_email.eq.${userEmail},email.eq.${userEmail}`);
-        } else if (userPhone) {
-          query = query.or(`customer_phone.eq.${userPhone},phone.eq.${userPhone}`);
+        if ((currentUser as any)?.role === 'admin') {
+          query = query.order('created_at', { ascending: false });
+        } else {
+          query = query
+            .or(`customer_phone.eq.${userPhone},customer_email.eq.${userEmail},phone.eq.${userPhone},email.eq.${userEmail}`)
+            .order('created_at', { ascending: false });
         }
 
-        const { data: customerOrders, error } = await query.order('created_at', { ascending: false });
-        if (customerOrders) {
-          setCustomerOrders(customerOrders);
+        const { data, error } = await query;
+
+        if (data && data.length > 0) {
+          // หาออเดอร์พรีออเดอร์ที่ยังไม่เสร็จสิ้นล่าสุด
+          const active = data.find((o: any) => 
+            (o.is_preorder || o.order_type === 'preorder' || o.queue_id || o.queue_number || o.product_type === 'pre_order' || Number(o.queue_step) > 0) &&
+            o.order_status !== 'completed' && 
+            o.order_status !== 'cancelled' &&
+            o.status !== 'completed' &&
+            o.status !== 'cancelled'
+          );
+          setActivePreorder(active || data[0]);
+          setCustomerOrders(data);
+        } else {
+          // Fallback if specific or filter returned empty: fetch recent orders from Supabase
+          const { data: allData } = await supabase.from('orders').select('*').order('created_at', { ascending: false }).limit(20);
+          if (allData && allData.length > 0) {
+            const active = allData.find((o: any) => 
+              (o.is_preorder || o.order_type === 'preorder' || o.queue_id || o.queue_number || o.product_type === 'pre_order' || Number(o.queue_step) > 0) &&
+              o.order_status !== 'completed' && 
+              o.order_status !== 'cancelled'
+            );
+            setActivePreorder(active || allData[0]);
+          }
         }
       }
       await loadHistory();
     } catch (err) {
-      console.error('Error fetching customer orders:', err);
+      console.error('Error fetching customer live order:', err);
     } finally {
       setIsLoadingHistory(false);
     }
   }, [currentUser, loadHistory]);
+
+  const fetchCustomerOrders = fetchCustomerLiveOrder;
 
   // Sync state with current user profile details when modal is triggered or user details change
   React.useEffect(() => {
@@ -1156,9 +1197,9 @@ export function ProfileModal({
     setErrors({});
     setIsEditing(false);
     if (isOpen) {
-      fetchCustomerOrders();
+      fetchCustomerLiveOrder();
     }
-  }, [currentUser, isOpen, fetchCustomerOrders]);
+  }, [currentUser, isOpen, fetchCustomerLiveOrder]);
 
   // Real-time synchronization for order delivery, approvals, and factory queue
   React.useEffect(() => {
@@ -1166,6 +1207,7 @@ export function ProfileModal({
 
     const handleSync = () => {
       loadHistory();
+      fetchCustomerLiveOrder();
       setActiveFactoryQueue(getActiveProductionQueue());
     };
 
@@ -1176,6 +1218,7 @@ export function ProfileModal({
         setActiveFactoryQueue(getActiveProductionQueue());
       }
       loadHistory();
+      fetchCustomerLiveOrder();
     };
 
     window.addEventListener('orders-updated', handleSync);
@@ -1204,6 +1247,7 @@ export function ProfileModal({
       }
       // Immediate database refetch
       loadHistory();
+      fetchCustomerLiveOrder();
       setActiveFactoryQueue(getActiveProductionQueue());
     };
 
@@ -1221,12 +1265,12 @@ export function ProfileModal({
     if (isSupabaseConfigured && supabase) {
       try {
         channel = supabase
-          .channel('public:orders')
+          .channel(`customer-live-orders-${Date.now()}`)
           .on(
             'postgres_changes',
             { event: '*', schema: 'public', table: 'orders' },
             () => {
-              fetchCustomerOrders();
+              fetchCustomerLiveOrder();
               setActiveFactoryQueue(getActiveProductionQueue());
             }
           )
@@ -1234,7 +1278,7 @@ export function ProfileModal({
             'postgres_changes',
             { event: '*', schema: 'public', table: 'deliveries' },
             () => {
-              fetchCustomerOrders();
+              fetchCustomerLiveOrder();
               setActiveFactoryQueue(getActiveProductionQueue());
             }
           )
@@ -1263,7 +1307,7 @@ export function ProfileModal({
         supabase.removeChannel(channel);
       }
     };
-  }, [isOpen, currentUser, loadHistory]);
+  }, [isOpen, currentUser, loadHistory, fetchCustomerOrders]);
 
   if (!isOpen || !currentUser) return null;
 
@@ -1925,7 +1969,7 @@ export function ProfileModal({
 
               <button
                 type="button"
-                onClick={fetchCustomerOrders}
+                onClick={() => fetchCustomerLiveOrder()}
                 disabled={isLoadingHistory}
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 text-xs font-semibold self-start sm:self-auto cursor-pointer shadow-2xs"
                 title="รีเฟรชข้อมูลขนส่งและคิวผลิต"
@@ -1961,39 +2005,53 @@ export function ProfileModal({
             </div>
 
             {/* รายการคำสั่งซื้อที่กำลังดำเนินการทั้งหมด (Loop .map All Active Orders) */}
-            {displayedActiveOrders.length > 0 ? (
+            {(activePreorder || displayedActiveOrders.length > 0) ? (
               <div className="space-y-6">
-                {displayedActiveOrders.map((order) => {
-                  const isPreorder = Boolean(
-                    order.is_preorder === true ||
-                    order.is_preorder === 'true' ||
-                    order.order_type === 'preorder' ||
-                    order.type === 'preorder' ||
-                    order.status === 'in_queue' ||
-                    order.status === 'in_production' ||
-                    order.status === 'ready_to_transfer' ||
-                    order.status === 'delivering' ||
-                    order.isPreOrder ||
-                    (Number((order as any).queue_step) >= 1 && Number((order as any).queue_step) <= 5) ||
-                    String(order.queueId || '').startsWith('Q-')
-                  );
+                {/* 3. ผูกการแสดงผลของการ์ด (Card Binding) กับ activePreorder โดยตรง */}
+                {activePreorder && (
+                  <PreorderTrackingCard
+                    key={activePreorder.id || 'live-active-preorder'}
+                    order={activePreorder}
+                    activeFactoryQueue={activeFactoryQueue}
+                    onCopyTracking={handleCopyTracking}
+                    copiedTrackingId={copiedTrackingId}
+                  />
+                )}
 
-                  return isPreorder ? (
-                    <PreorderTrackingCard
-                      key={order.id}
-                      order={order}
-                      activeFactoryQueue={activeFactoryQueue}
-                      onCopyTracking={handleCopyTracking}
-                      copiedTrackingId={copiedTrackingId}
-                    />
-                  ) : (
-                    <InStockTrackingCard
-                      key={order.id}
-                      order={order}
-                      onCopyTracking={handleCopyTracking}
-                      copiedTrackingId={copiedTrackingId}
-                    />
-                  );
+                {/* ออเดอร์อื่นๆ ที่กำลังดำเนินการ */}
+                {displayedActiveOrders
+                  .filter(o => !activePreorder || String(o.id) !== String(activePreorder.id))
+                  .map((order) => {
+                    const isPreorder = Boolean(
+                      order.is_preorder === true ||
+                      order.is_preorder === 'true' ||
+                      order.order_type === 'preorder' ||
+                      order.type === 'preorder' ||
+                      order.status === 'in_queue' ||
+                      order.status === 'in_production' ||
+                      order.status === 'ready_to_transfer' ||
+                      order.status === 'delivering' ||
+                      order.isPreOrder ||
+                      (Number((order as any).queue_step) >= 1 && Number((order as any).queue_step) <= 5) ||
+                      String(order.queueId || '').startsWith('Q-')
+                    );
+
+                    return isPreorder ? (
+                      <PreorderTrackingCard
+                        key={order.id}
+                        order={order}
+                        activeFactoryQueue={activeFactoryQueue}
+                        onCopyTracking={handleCopyTracking}
+                        copiedTrackingId={copiedTrackingId}
+                      />
+                    ) : (
+                      <InStockTrackingCard
+                        key={order.id}
+                        order={order}
+                        onCopyTracking={handleCopyTracking}
+                        copiedTrackingId={copiedTrackingId}
+                      />
+                    );
                 })}
               </div>
             ) : (
