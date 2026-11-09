@@ -510,6 +510,57 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
   const loadOrders = fetchOrdersFromSupabase;
   const reloadOrders = fetchOrdersFromSupabase;
 
+  // 1. ฟังก์ชันดึงข้อมูลสดสำหรับเมนูจัดการคิวผลิต (fetchQueueOrders - เรียง created_at เก่าไปใหม่)
+  const fetchQueueOrders = React.useCallback(async () => {
+    setIsFetchingOrders(true);
+    try {
+      if (!isSupabaseConfigured || !supabase) {
+        await fetchOrdersFromSupabase();
+        return;
+      }
+      const { data, error } = await supabase
+        .from('orders')
+        .select('*')
+        .order('created_at', { ascending: true }); // เรียงตามลำดับคิวเก่าไปใหม่
+
+      if (error) {
+        console.error("Error fetching queue orders from Supabase:", error);
+        return;
+      }
+
+      if (data) {
+        let mergedList = [...data];
+        try {
+          const { data: delivData } = await supabase.from('deliveries').select('*');
+          if (delivData && delivData.length > 0) {
+            const delivMap: Record<string, any> = {};
+            for (const d of delivData) {
+              if (d.order_id) delivMap[String(d.order_id)] = d;
+            }
+            mergedList = mergedList.map((ord: any) => {
+              const d = delivMap[String(ord.id)];
+              if (!d) return ord;
+              return {
+                ...ord,
+                tracking_number: ord.tracking_number || d.tracking_number || ord.shipment_no || ord.shipmentNo || d.shipment_no || '',
+                shipping_carrier: ord.shipping_carrier || d.shipping_carrier || d.carrier_name || ord.carrier_name || '',
+                carrier_name: ord.carrier_name || d.carrier_name || d.shipping_carrier || ord.shipping_carrier || '',
+                driver_phone: ord.driver_phone || d.driver_phone || '',
+                delivery_status: ord.delivery_status || d.delivery_status || '',
+              };
+            });
+          }
+        } catch {}
+
+        setAdminOrders(mergedList);
+      }
+    } catch (err) {
+      console.error("Error fetching queue orders:", err);
+    } finally {
+      setIsFetchingOrders(false);
+    }
+  }, [fetchOrdersFromSupabase]);
+
   const reloadPreOrders = React.useCallback(async () => {
     try {
       const data = await supabasePreOrders.list();
@@ -1880,60 +1931,38 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
   // Single Source of Truth:
   // เมนู "จัดการคิวผลิตและจัดส่ง" (Pre-order Queue)
   // ดึงรายการสินค้าพรีออเดอร์ที่ได้รับการอนุมัติแล้วมาแสดงผลในระบบคิวทันที
-  // เงื่อนไข: isPreorder && order.status !== 'completed' && order.status !== 'cancelled' && order.status !== 'pending_verification'
+  // ส่วนที่ 1: เมนู "จัดการคิวผลิตและจัดส่ง" (Queue Management)
+  // เงื่อนไขการกรองเพื่อแสดงในตารางคิวผลิต:
+  // นำข้อมูลมากรองเฉพาะพรีออเดอร์ที่ "ยังดำเนินการไม่เสร็จสิ้น" (order.status !== 'completed' && order.status !== 'cancelled')
   const sortedQueueOrders = React.useMemo(() => {
-    const preOrderOrders = adminOrders.filter(ord => {
-      if (!ord) return false;
-      if (ord.is_deleted === true || ord.is_deleted === 'true') return false;
+    const activePreorders = (adminOrders || []).filter(order => {
+      if (!order) return false;
+      if (order.is_deleted === true || order.is_deleted === 'true') return false;
 
-      const s = String(ord.status || '').toLowerCase().trim();
-      const os = String(ord.order_status || '').toLowerCase().trim();
-      const ps = String(ord.payment_status || '').toLowerCase().trim();
-      const ds = String(ord.delivery_status || '').toLowerCase().trim();
-
-      // 1. เงื่อนไข: status อยู่ใน ['in_queue', 'in_production', 'ready_to_transfer', 'delivering', 'molding', 'assembling'] หรือเป็นออเดอร์ประเภทพรีออเดอร์ที่อนุมัติแล้ว
-      const queueStatuses = [
-        'in_queue', 
-        'in_production', 
-        'ready_to_transfer',
-        'delivering',
-        'molding', 
-        'assembling', 
-        'queue_received', 
-        'manufacturing', 
-        'ready_for_shipping', 
-        'ready_to_ship', 
-        'in_transit', 
-        'shipped'
-      ];
-      const hasQueueStatus = queueStatuses.includes(s) || queueStatuses.includes(os) || queueStatuses.includes(ds);
-
-      const isPreorder = hasQueueStatus || isPreorderOrder(ord) || Boolean(
-        ord.is_preorder === true ||
-        ord.is_preorder === 'true' ||
-        ord.order_type === 'preorder' ||
-        ord.order_type === 'pre_order' ||
-        ord.type === 'preorder' ||
-        ord.status === 'in_queue' ||
-        ord.status === 'in_production' ||
-        ord.status === 'ready_to_transfer' ||
-        ord.status === 'delivering' ||
-        Number(ord.queue_step) > 0 ||
-        (Array.isArray(ord.order_items) && ord.order_items.some((item: any) => item?.is_preorder)) ||
-        (Array.isArray(ord.items) && ord.items.some((item: any) => item?.is_preorder))
+      const isPre = Boolean(
+        order.is_preorder === true ||
+        order.is_preorder === 'true' ||
+        order.order_type === 'preorder' ||
+        order.order_type === 'pre_order' ||
+        order.type === 'preorder' ||
+        order.status === 'in_queue' ||
+        order.status === 'in_production' ||
+        order.status === 'ready_to_transfer' ||
+        order.status === 'delivering' ||
+        Number(order.queue_step) > 0 ||
+        isPreorderOrder(order)
       );
-      if (!isPreorder) return false;
 
-      // 2. นำมาแสดงในระบบคิวทันทีเมื่อเป็นพรีออเดอร์ และอยู่ในสถานะคิว/กำลังผลิต
-      // เงื่อนไข: order.status !== 'completed' && order.status !== 'cancelled' && order.status !== 'pending_verification'
+      // แสดงเฉพาะรายการที่ยังไม่จบงาน (ไม่ดึง completed หรือ cancelled มาแสดง)
+      const s = String(order.status || '').toLowerCase().trim();
+      const os = String(order.order_status || '').toLowerCase().trim();
       const isCompleted = s === 'completed' || s === 'delivered' || os === 'completed' || os === 'delivered';
-      const isCancelled = s === 'cancelled' || os === 'cancelled' || s === 'rejected' || ps === 'cancelled' || ps === 'rejected';
-      const isPending = s === 'pending_verification' || ps === 'pending_verification' || os === 'pending_verification';
+      const isCancelled = s === 'cancelled' || os === 'cancelled' || s === 'rejected';
 
-      return !isCompleted && !isCancelled && !isPending;
+      return isPre && !isCompleted && !isCancelled;
     });
 
-    const list = preOrderOrders.map((ord, idx) => {
+    const list = activePreorders.map((ord, idx) => {
       const qId = ord.queue_id || ord.queue_number || formatQueueId(ord, idx);
       const ordSt = (ord.order_status || ord.status || '').toLowerCase();
       const qStatus = (ord.queue_status || '').toLowerCase();
@@ -3854,7 +3883,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                   <button
                     type="button"
                     onClick={async () => {
-                      await fetchOrdersFromSupabase();
+                      await fetchQueueOrders();
                       triggerToast('รีเฟรชข้อมูลคิวผลิตสดจาก Supabase สำเร็จ');
                     }}
                     disabled={isFetchingOrders}
@@ -3881,7 +3910,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                     <button
                       type="button"
                       onClick={async () => {
-                        await fetchOrdersFromSupabase();
+                        await fetchQueueOrders();
                         triggerToast('รีเฟรชข้อมูลคิวผลิตสดจาก Supabase สำเร็จ');
                       }}
                       disabled={isFetchingOrders}

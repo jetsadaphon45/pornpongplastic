@@ -204,11 +204,38 @@ export const PreorderQueueCard: React.FC<TrackingCardProps> = ({
   copiedTrackingId
 }) => {
   const queueId = order.queueId || order.queue_number || order.queue_id || formatQueueId(order);
-  const qStep = Number(order.queue_step || order.stageNumber || 1);
-  const isCompleted = order.stageLabel === 'จัดส่งสำเร็จ' || order.raw_status === 'completed' || order.raw_status === 'delivered' || qStep === 5;
-  const stageNum = isCompleted ? 4 : Math.min(4, Math.max(1, qStep));
+  
+  // Read status & queue_step explicitly from database
+  const rawStatus = String(order.raw_status || order.status || (order as any).order_status || '').toLowerCase().trim();
+  const rawStep = Number(order.queue_step || (order as any).queue_stage || 0);
 
-  const stageLabel = isCompleted ? 'จัดส่งสำเร็จ' : order.stageLabel || (
+  // Exact 5-step mapping as specified:
+  // step 1 ('in_queue'): ไฮไลต์ 1. รับคิวผลิต
+  // step 2 ('in_production'): ไฮไลต์ 2. กำลังหลอมขึ้นรูป
+  // step 3 ('ready_to_transfer'): ไฮไลต์ 3. รอขนย้าย
+  // step 4 ('delivering'): ไฮไลต์ 4. อยู่ระหว่างจัดส่ง
+  // step 5 ('completed'): จัดส่งสำเร็จ
+  let qStep = 1;
+  if (rawStep >= 1 && rawStep <= 5) {
+    qStep = rawStep;
+  } else if (rawStatus === 'completed' || rawStatus === 'delivered' || order.stageLabel === 'จัดส่งสำเร็จ') {
+    qStep = 5;
+  } else if (rawStatus === 'delivering' || rawStatus === 'in_transit' || rawStatus === 'shipping') {
+    qStep = 4;
+  } else if (rawStatus === 'ready_to_transfer' || rawStatus === 'ready_for_shipping' || rawStatus === 'ready') {
+    qStep = 3;
+  } else if (rawStatus === 'in_production' || rawStatus === 'producing' || rawStatus === 'manufacturing' || rawStatus === 'molding') {
+    qStep = 2;
+  } else if (rawStatus === 'in_queue') {
+    qStep = 1;
+  } else {
+    qStep = Number(order.stageNumber || 1);
+  }
+
+  const isCompleted = qStep === 5 || rawStatus === 'completed' || rawStatus === 'delivered' || order.stageLabel === 'จัดส่งสำเร็จ';
+  const stageNum = isCompleted ? 5 : qStep;
+
+  const stageLabel = isCompleted ? 'จัดส่งสำเร็จเรียบร้อยแล้ว' : (
     stageNum === 1 ? '1. รับคิวผลิต' :
     stageNum === 2 ? '2. กำลังหลอมขึ้นรูป' :
     stageNum === 3 ? '3. รอขนย้าย' : '4. อยู่ระหว่างจัดส่ง'
@@ -472,11 +499,14 @@ export const InStockDeliveryCard: React.FC<TrackingCardProps> = ({
   onCopyTracking,
   copiedTrackingId
 }) => {
-  const isDelivered = order.stageLabel === 'จัดส่งสำเร็จ' || order.raw_status === 'completed' || order.raw_status === 'delivered';
-  const isShipping = order.stageLabel === 'อยู่ระหว่างจัดส่ง' || order.stageNumber === 4 || order.raw_status === 'delivering' || order.raw_status === 'in_transit';
+  const rawStatus = String(order.raw_status || order.status || (order as any).order_status || '').toLowerCase().trim();
+  const rawQStep = Number(order.queue_step || 0);
+
+  const isDelivered = rawStatus === 'completed' || rawStatus === 'delivered' || rawQStep === 5 || order.stageLabel === 'จัดส่งสำเร็จ';
+  const isShipping = !isDelivered && (rawStatus === 'delivering' || rawStatus === 'in_transit' || rawStatus === 'shipping' || order.stageLabel === 'อยู่ระหว่างจัดส่ง' || rawQStep === 4 || order.stageNumber === 4);
   const curStep = isDelivered ? 3 : isShipping ? 2 : 1;
 
-  const stageLabel = isDelivered ? 'จัดส่งสำเร็จ' : isShipping ? 'อยู่ระหว่างจัดส่ง' : 'เตรียมพัสดุ / รอจัดส่ง';
+  const stageLabel = isDelivered ? 'จัดส่งสำเร็จเรียบร้อยแล้ว' : isShipping ? 'อยู่ระหว่างจัดส่ง' : 'เตรียมพัสดุ / รอจัดส่ง';
 
   const carrier = order.carrierName || order.shipping_carrier || 'รถโรงงานพรพงศ์พลาสติก (สายส่งด่วน)';
   const driver = order.driverPhone || order.driver_phone || '089-456-7890';
@@ -675,6 +705,10 @@ export const InStockDeliveryCard: React.FC<TrackingCardProps> = ({
   );
 };
 
+// Aliases for Tracking Cards
+export const PreorderTrackingCard = PreorderQueueCard;
+export const InStockTrackingCard = InStockDeliveryCard;
+
 export function ProfileModal({ 
   isOpen, 
   onClose, 
@@ -709,6 +743,7 @@ export function ProfileModal({
   }, [isOpen, initialTab, targetOrderId]);
 
   // Orders and Pre-orders state
+  const [customerOrders, setCustomerOrders] = React.useState<any[]>([]);
   const [orders, setOrders] = React.useState<OrderItem[]>([]);
   const [preOrders, setPreOrders] = React.useState<PreOrderItem[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = React.useState(false);
@@ -725,8 +760,9 @@ export function ProfileModal({
     const os = String((o as any).order_status || '').toLowerCase().trim();
     const ds = String(o.delivery_status || '').toLowerCase().trim();
     const sl = String(o.stageLabel || '').toLowerCase().trim();
+    const qStep = Number((o as any).queue_step || 0);
 
-    // Must have completed/delivered status: status.eq.delivered or status.eq.completed
+    // Must have completed/delivered status: status.eq.delivered or status.eq.completed or queue_step 5
     return (
       s === 'delivered' ||
       s === 'completed' ||
@@ -735,19 +771,20 @@ export function ProfileModal({
       os === 'completed' ||
       ds === 'delivered' ||
       ds === 'completed' ||
-      sl === 'จัดส่งสำเร็จ'
+      sl === 'จัดส่งสำเร็จ' ||
+      qStep === 5
     );
   }, []);
 
-  // 1. Requirement 2: Completed Order History (Order History)
-  // Shows ONLY orders with status.eq.delivered or status.eq.completed
-  // Strictly excludes orders still in producing, ready_to_ship, in_transit, or pending
+  // 1. Requirement 2: Completed Order History (Order History Tab)
+  // Shows ALL orders with status.eq.delivered or status.eq.completed (or queue_step === 5)
   const completedOrders = React.useMemo(() => {
     return orders.filter(o => isOrderCompleted(o));
   }, [orders, isOrderCompleted]);
 
-  // 2. Active Orders for Customer Tracking View:
-  // Shows all orders belonging to this customer that are not completed and not cancelled
+  // 2. Requirement 2.A: แท็บ "ติดตามสถานะจัดส่ง" (Active Tracking):
+  // กรองเฉพาะรายการที่ "กำลังดำเนินการ":
+  // const activeList = (customerOrders || []).filter(o => o.status !== 'completed' && o.status !== 'cancelled');
   const activeOrders = React.useMemo(() => {
     return orders.filter(order => {
       if (!order) return false;
@@ -756,6 +793,7 @@ export function ProfileModal({
       const ds = String(order.delivery_status || '').toLowerCase().trim();
       const sl = String(order.stageLabel || '').toLowerCase().trim();
       const ps = String((order as any).payment_status || '').toLowerCase().trim();
+      const qStep = Number((order as any).queue_step || 0);
 
       const isCompleted =
         s === 'completed' ||
@@ -765,7 +803,8 @@ export function ProfileModal({
         os === 'delivered' ||
         ds === 'completed' ||
         ds === 'delivered' ||
-        sl === 'จัดส่งสำเร็จ';
+        sl === 'จัดส่งสำเร็จ' ||
+        qStep === 5;
 
       const isCancelled =
         s === 'cancelled' ||
@@ -780,6 +819,7 @@ export function ProfileModal({
     });
   }, [orders]);
 
+  const activeList = activeOrders;
   const activeTrackedOrders = activeOrders;
 
   // Filtered active orders based on search query
@@ -1074,6 +1114,37 @@ export function ProfileModal({
     }
   }, [currentUser, targetOrderId]);
 
+  // 1. ฟังก์ชันดึงออเดอร์ของลูกค้าที่ล็อกอินอยู่ (Customer Tracking):
+  // ดึงข้อมูลจากตาราง 'orders' โดยผูกกับอีเมลหรือเบอร์โทรของลูกค้า:
+  const fetchCustomerOrders = React.useCallback(async () => {
+    setIsLoadingHistory(true);
+    try {
+      if (isSupabaseConfigured && supabase) {
+        const userEmail = currentUser?.email?.trim() || '';
+        const userPhone = currentUser?.phone?.replace(/\D/g, '') || '';
+
+        let query = supabase.from('orders').select('*');
+        if (userEmail && userPhone) {
+          query = query.or(`customer_email.eq.${userEmail},customer_phone.eq.${userPhone},email.eq.${userEmail},phone.eq.${userPhone}`);
+        } else if (userEmail) {
+          query = query.or(`customer_email.eq.${userEmail},email.eq.${userEmail}`);
+        } else if (userPhone) {
+          query = query.or(`customer_phone.eq.${userPhone},phone.eq.${userPhone}`);
+        }
+
+        const { data: customerOrders, error } = await query.order('created_at', { ascending: false });
+        if (customerOrders) {
+          setCustomerOrders(customerOrders);
+        }
+      }
+      await loadHistory();
+    } catch (err) {
+      console.error('Error fetching customer orders:', err);
+    } finally {
+      setIsLoadingHistory(false);
+    }
+  }, [currentUser, loadHistory]);
+
   // Sync state with current user profile details when modal is triggered or user details change
   React.useEffect(() => {
     if (currentUser) {
@@ -1085,9 +1156,9 @@ export function ProfileModal({
     setErrors({});
     setIsEditing(false);
     if (isOpen) {
-      loadHistory();
+      fetchCustomerOrders();
     }
-  }, [currentUser, isOpen, loadHistory]);
+  }, [currentUser, isOpen, fetchCustomerOrders]);
 
   // Real-time synchronization for order delivery, approvals, and factory queue
   React.useEffect(() => {
@@ -1145,66 +1216,25 @@ export function ProfileModal({
     window.addEventListener('storage', handleSync);
     window.addEventListener('focus', handleSync);
 
-    // Supabase Realtime Channel Subscription for both orders and deliveries tables
+    // Supabase Realtime Channel Subscription for orders and deliveries tables
     let channel: any = null;
     if (isSupabaseConfigured && supabase) {
       try {
-        const channelName = `public:customer-profile-${currentUser?.id || 'guest'}-${Date.now()}`;
         channel = supabase
-          .channel(channelName)
+          .channel('public:orders')
           .on(
             'postgres_changes',
             { event: '*', schema: 'public', table: 'orders' },
-            (payload: any) => {
-              if (payload?.new?.id) {
-                const newStatus = String(payload.new.status || payload.new.order_status || payload.new.delivery_status || '').toLowerCase();
-                if (newStatus === 'delivered' || newStatus === 'completed') {
-                  setOrders(prev => prev.map(o => {
-                    if (String(o.id) === String(payload.new.id)) {
-                      return {
-                        ...o,
-                        status: 'จัดส่งสำเร็จ',
-                        raw_status: 'delivered',
-                        order_status: 'completed',
-                        delivery_status: 'delivered',
-                        stageNumber: 4,
-                        stageLabel: 'จัดส่งสำเร็จ',
-                        statusMessage: 'จัดส่งสำเร็จเรียบร้อยแล้ว - ขอบคุณที่ไว้วางใจใช้บริการพรพงศ์พลาสติก'
-                      };
-                    }
-                    return o;
-                  }));
-                }
-              }
-              loadHistory();
+            () => {
+              fetchCustomerOrders();
               setActiveFactoryQueue(getActiveProductionQueue());
             }
           )
           .on(
             'postgres_changes',
             { event: '*', schema: 'public', table: 'deliveries' },
-            (payload: any) => {
-              if (payload?.new?.order_id) {
-                const delivSt = String(payload.new.delivery_status || '').toLowerCase();
-                if (delivSt === 'delivered' || delivSt === 'completed') {
-                  setOrders(prev => prev.map(o => {
-                    if (String(o.id) === String(payload.new.order_id)) {
-                      return {
-                        ...o,
-                        status: 'จัดส่งสำเร็จ',
-                        raw_status: 'delivered',
-                        order_status: 'completed',
-                        delivery_status: 'delivered',
-                        stageNumber: 4,
-                        stageLabel: 'จัดส่งสำเร็จ',
-                        statusMessage: 'จัดส่งสำเร็จเรียบร้อยแล้ว - ขอบคุณที่ไว้วางใจใช้บริการพรพงศ์พลาสติก'
-                      };
-                    }
-                    return o;
-                  }));
-                }
-              }
-              loadHistory();
+            () => {
+              fetchCustomerOrders();
               setActiveFactoryQueue(getActiveProductionQueue());
             }
           )
@@ -1895,10 +1925,11 @@ export function ProfileModal({
 
               <button
                 type="button"
-                onClick={loadHistory}
+                onClick={fetchCustomerOrders}
                 disabled={isLoadingHistory}
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 text-xs font-semibold self-start sm:self-auto cursor-pointer shadow-2xs"
                 title="รีเฟรชข้อมูลขนส่งและคิวผลิต"
+                id="btn-refresh-customer-orders"
               >
                 <Loader2 size={13} className={isLoadingHistory ? 'animate-spin text-sky-600' : 'text-slate-400'} />
                 <span>รีเฟรชสถานะ</span>
@@ -1935,19 +1966,20 @@ export function ProfileModal({
                 {displayedActiveOrders.map((order) => {
                   const isPreorder = Boolean(
                     order.is_preorder === true ||
-                    order.is_preorder === "true" ||
-                    order.order_type === "preorder" ||
-                    order.type === "preorder" ||
-                    order.status === "in_queue" ||
-                    order.status === "in_production" ||
-                    order.status === "ready_to_transfer" ||
+                    order.is_preorder === 'true' ||
+                    order.order_type === 'preorder' ||
+                    order.type === 'preorder' ||
+                    order.status === 'in_queue' ||
+                    order.status === 'in_production' ||
+                    order.status === 'ready_to_transfer' ||
+                    order.status === 'delivering' ||
                     order.isPreOrder ||
-                    (Number((order as any).queue_step) >= 1 && Number((order as any).queue_step) <= 4) ||
-                    String(order.queueId || "").startsWith("Q-")
+                    (Number((order as any).queue_step) >= 1 && Number((order as any).queue_step) <= 5) ||
+                    String(order.queueId || '').startsWith('Q-')
                   );
 
                   return isPreorder ? (
-                    <PreorderQueueCard
+                    <PreorderTrackingCard
                       key={order.id}
                       order={order}
                       activeFactoryQueue={activeFactoryQueue}
@@ -1955,7 +1987,7 @@ export function ProfileModal({
                       copiedTrackingId={copiedTrackingId}
                     />
                   ) : (
-                    <InStockDeliveryCard
+                    <InStockTrackingCard
                       key={order.id}
                       order={order}
                       onCopyTracking={handleCopyTracking}
@@ -1965,18 +1997,18 @@ export function ProfileModal({
                 })}
               </div>
             ) : (
-              /* Empty State: หากยังไม่มีรายการติดตามหรือจัดส่ง */
+              /* Empty State: ถ้าไม่มีรายการค้างเลย ให้แสดงกล่องข้อความ: "ไม่มีรายการที่อยู่ระหว่างจัดส่งหรือผลิต" */
               <div className="py-14 px-4 text-center rounded-2xl border-2 border-dashed border-slate-200 bg-slate-50/60 flex flex-col items-center justify-center">
                 <div className="w-16 h-16 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-400 mb-3 shadow-inner">
                   <Truck size={28} className="text-slate-400" />
                 </div>
                 <h4 className="font-display font-extrabold text-slate-700 text-sm mb-1">
-                  {searchQuery ? "ไม่พบคำสั่งซื้อที่ค้นหา" : "ไม่มีรายการสินค้าที่กำลังผลิตหรือจัดส่งในขณะนี้"}
+                  {searchQuery ? "ไม่พบคำสั่งซื้อที่ค้นหา" : "ไม่มีรายการที่อยู่ระหว่างจัดส่งหรือผลิต"}
                 </h4>
                 <p className="text-xs text-slate-500 max-w-sm mb-5 leading-relaxed">
                   {searchQuery
                     ? `ไม่พบคำสั่งซื้อที่ตรงกับ "${searchQuery}" กรุณาตรวจสอบรหัสออเดอร์อีกครั้ง`
-                    : "เมื่อท่านสั่งซื้อเรือพลาสติก หรือสั่งจองแคมเปญล่วงหน้า บัตรติดตามคิวผลิต สถานะเตาหลอมเรซิ่น และข้อมูลรถขนส่งจะแสดงที่นี่แบบ Real-time"}
+                    : "คำสั่งซื้อทั้งหมดดำเนินการเสร็จสิ้นเรียบร้อยแล้ว หรือยังไม่มีคำสั่งซื้อใหม่ ท่านสามารถตรวจสอบรายการในแท็บประวัติคำสั่งซื้อสำเร็จได้"}
                 </p>
                 {searchQuery ? (
                   <button
