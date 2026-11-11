@@ -106,89 +106,10 @@ interface ItemToDelete {
   productName: string;
 }
 
-// Realistic mock orders demonstrating In-Stock vs Pre-Order flows
-const MOCK_ORDERS: OrderItem[] = [
-  {
-    id: "ORD-2026-9874",
-    queueId: "",
-    date: "12 มี.ค. 2026",
-    productName: "เรือพายพลาสติก ตราพรพงศ์ รุ่น 2.5 เมตร - ท้องเรือแบนสัญจรง่าย",
-    color: "สีน้ำเงินพรีเมียม (Royal Blue)",
-    amount: "4,900 บาท",
-    status: "จัดส่งสำเร็จ",
-    stageNumber: 4,
-    stageLabel: "จัดส่งสำเร็จ",
-    statusMessage: "จัดส่งสำเร็จเรียบร้อยแล้ว - ขอบคุณที่ไว้วางใจใช้บริการพรพงศ์พลาสติก",
-    shipmentNo: "TH-EX-291823",
-    carrierName: "รถโรงงานพรพงศ์พลาสติก (สายส่งตรง)",
-    driverPhone: "089-456-7890",
-    orderType: 'instock',
-    isPreOrder: false
-  },
-  {
-    id: "ORD-2026-4512",
-    queueId: "",
-    date: "04 ม.ค. 2026",
-    productName: "พายพลาสติกเกรดพรีเมียม ใบพายหนาเหนียวพิเศษ",
-    color: "สีเหลืองพาสเทล (Pastel Yellow)",
-    amount: "350 บาท",
-    status: "อยู่ระหว่างจัดส่ง",
-    stageNumber: 4,
-    stageLabel: "อยู่ระหว่างจัดส่ง",
-    statusMessage: "สินค้าพร้อมส่งอยู่ระหว่างจัดส่ง - ขนส่ง: Flash Express | เบอร์คนขับ/Tracking: 081-234-5678 / TH-EX-104928",
-    shipmentNo: "TH-EX-104928",
-    carrierName: "Flash Express",
-    driverPhone: "081-234-5678",
-    orderType: 'instock',
-    isPreOrder: false
-  },
-  {
-    id: "ORD-2026-3391",
-    queueId: "Q-2610-013",
-    date: "07 ต.ค. 2026",
-    productName: "เรือไฟเบอร์พลาสติก รุ่น 3 ที่นั่ง สั่งหลอมพิเศษ",
-    color: "สีส้มประกายมุก",
-    amount: "7,500 บาท",
-    status: "รอขนย้าย",
-    stageNumber: 3,
-    stageLabel: "รอขนย้าย",
-    statusMessage: "เรือผลิตเสร็จแล้ว - คาดว่าจะจัดส่งวันที่: พรุ่งนี้ 14:00 น.",
-    shipmentNo: "TH-EX-339101",
-    carrierName: "รถโรงงานพรพงศ์พลาสติก (สายส่งตรง)",
-    driverPhone: "089-456-7890",
-    estimatedDeliveryDate: "พรุ่งนี้ 14:00 น.",
-    orderType: 'preorder',
-    isPreOrder: true
-  },
-  {
-    id: "ORD-2026-1185",
-    queueId: "Q-2610-015",
-    date: "08 ต.ค. 2026",
-    productName: "เรือหัวแหลมกู้ภัยน้ำท่วม ตราพรพงศ์ รุ่น 2.8 เมตร",
-    color: "สีเขียวทหาร (Military Green)",
-    amount: "5,800 บาท",
-    status: "รับคิวผลิต",
-    stageNumber: 1,
-    stageLabel: "รับคิวผลิต",
-    statusMessage: "กำลังหลอมเรือตามสเปกที่คุณออกแบบ ทางโรงงานกำลังดำเนินการผลิตอย่างประณีต",
-    shipmentNo: "TH-EX-118520",
-    orderType: 'preorder',
-    isPreOrder: true
-  }
-];
+// Mock orders cleared - Customer view displays authentic data from Supabase orders table only
+const MOCK_ORDERS: OrderItem[] = [];
+const MOCK_PREORDERS: PreOrderItem[] = [];
 
-const MOCK_PREORDERS: PreOrderItem[] = [
-  {
-    id: "PRE-2026-0005",
-    date: "18 พ.ค. 2026",
-    productName: "เปิดจองล่วงหน้า เรือคายัคคู่ใจทัวร์ริ่ง ตราพรพงศ์ 1 บาร์โค้ด",
-    color: "สีส้มสลับเหลือง (Sun Hybrid)",
-    deposit: "2,500 บาท (มัดจำ)",
-    fullPrice: "14,500 บาท",
-    estDelivery: "ก.ค. 2026 (คิวรอบจัดส่งล็อตที่ 2)",
-    status: "ยืนยันเงินมัดจำ / กำลังเตรียมหลอมขึ้นรูป"
-  }
-];
 
 interface TrackingCardProps {
   order: any;
@@ -801,10 +722,9 @@ export function ProfileModal({
     return orders.filter(o => isOrderCompleted(o));
   }, [orders, isOrderCompleted]);
 
-  // 2. Requirement 2.A: แท็บ "ติดตามสถานะจัดส่ง" (Active Tracking):
-  // กรองเฉพาะรายการที่ "กำลังดำเนินการ":
-  // const activeList = (customerOrders || []).filter(o => o.status !== 'completed' && o.status !== 'cancelled');
-  const activeOrders = React.useMemo(() => {
+  // 2. Requirement: แท็บ "ติดตามสถานะจัดส่ง" (Active Tracking):
+  // กรองเฉพาะออเดอร์ที่ "กำลังดำเนินการอยู่จริง" มาแสดงในแท็บ "ติดตามสถานะจัดส่ง"
+  const activeTrackingOrders = React.useMemo(() => {
     return orders.filter(order => {
       if (!order) return false;
       const s = String(order.raw_status || order.status || '').toLowerCase().trim();
@@ -838,22 +758,22 @@ export function ProfileModal({
     });
   }, [orders]);
 
-  const activeList = activeOrders;
-  const activeTrackedOrders = activeOrders;
+  const activeOrders = activeTrackingOrders;
+  const activeTrackedOrders = activeTrackingOrders;
 
   // Filtered active orders based on search query
   const displayedActiveOrders = React.useMemo(() => {
-    if (!searchQuery.trim()) return activeOrders;
+    if (!searchQuery.trim()) return activeTrackingOrders;
     const q = searchQuery.toLowerCase().trim();
-    return activeOrders.filter(o =>
+    return activeTrackingOrders.filter(o =>
       String(o.id).toLowerCase().includes(q) ||
       String(o.queueId || '').toLowerCase().includes(q) ||
       String(o.productName || '').toLowerCase().includes(q)
     );
-  }, [activeOrders, searchQuery]);
+  }, [activeTrackingOrders, searchQuery]);
 
   // Badge notification count strictly reflects active ongoing orders
-  const shippingOrdersCount = activeOrders.length;
+  const shippingOrdersCount = activeTrackingOrders.length;
 
   const handleCopyTracking = (trackingNo: string) => {
     navigator.clipboard.writeText(trackingNo);
@@ -910,17 +830,22 @@ export function ProfileModal({
         deliveriesMap = delivs || {};
       }
 
-      // Merge local storage admin_orders to ensure newly placed local mock orders are present, while keeping live Supabase authoritative
+      // Clean up stale mock orders from local storage and prevent ghost mock data
       try {
-        const local = JSON.parse(localStorage.getItem('admin_orders') || '[]');
-        for (const loc of local) {
-          const locId = String(loc.id);
-          const existingIdx = fetchedOrders.findIndex((f: any) => String(f.id) === locId);
-          if (existingIdx >= 0) {
-            // Keep remote Supabase data authoritative so live admin updates reflect immediately without being masked by stale cache
-            fetchedOrders[existingIdx] = { ...loc, ...fetchedOrders[existingIdx] };
-          } else {
-            fetchedOrders.push(loc);
+        const rawLocal = localStorage.getItem('admin_orders');
+        if (rawLocal) {
+          const parsed = JSON.parse(rawLocal);
+          if (Array.isArray(parsed)) {
+            const sanitized = parsed.filter((o: any) => 
+              !String(o.id || '').includes('906896') && 
+              o.id !== 'ORD-2026-9874' && 
+              o.id !== 'ORD-2026-4512' && 
+              o.id !== 'ORD-2026-3391' && 
+              o.id !== 'ORD-2026-1185'
+            );
+            if (sanitized.length !== parsed.length) {
+              localStorage.setItem('admin_orders', JSON.stringify(sanitized));
+            }
           }
         }
       } catch {}
@@ -1116,13 +1041,7 @@ export function ProfileModal({
         rawOrder: p
       }));
 
-      const combinedPreOrders: PreOrderItem[] = [...mappedRemotePreOrders];
-      MOCK_PREORDERS.forEach(mock => {
-        if (!combinedPreOrders.some(p => p.id === mock.id)) {
-          combinedPreOrders.push(mock);
-        }
-      });
-      const activePreOrders = combinedPreOrders.filter(p => !deletedIds.includes(p.id));
+      const activePreOrders = mappedRemotePreOrders.filter(p => !deletedIds.includes(p.id));
       setPreOrders(activePreOrders);
 
     } catch (err) {
@@ -1137,48 +1056,65 @@ export function ProfileModal({
     setIsLoadingHistory(true);
     try {
       if (isSupabaseConfigured && supabase) {
-        // ดึงจากตาราง orders โดยตรงตามเบอร์โทรหรือ customer_id ของผู้ใช้ที่ล็อกอิน
-        const userPhone = currentUser?.phone || '0834322133';
-        const userEmail = currentUser?.email || 'jetsadaehon@gmail.com';
+        // ดึงจากตาราง orders โดยตรงตามเบอร์โทรหรือ customer_id หรือ email ของผู้ใช้ที่ล็อกอิน
+        const userPhone = currentUser?.phone;
+        const userEmail = currentUser?.email;
+        const userId = currentUser?.id;
 
         let query = supabase.from('orders').select('*');
         if ((currentUser as any)?.role === 'admin') {
           query = query.order('created_at', { ascending: false });
+        } else if (userId || userPhone || userEmail) {
+          const conditions: string[] = [];
+          if (userId && userId !== 'guest') conditions.push(`customer_id.eq.${userId}`);
+          if (userPhone) conditions.push(`customer_phone.eq.${userPhone}`, `phone.eq.${userPhone}`);
+          if (userEmail && userEmail !== 'guest@example.com') conditions.push(`customer_email.eq.${userEmail}`, `email.eq.${userEmail}`);
+          
+          if (conditions.length > 0) {
+            query = query.or(conditions.join(',')).order('created_at', { ascending: false });
+          } else {
+            query = query.order('created_at', { ascending: false });
+          }
         } else {
-          query = query
-            .or(`customer_phone.eq.${userPhone},customer_email.eq.${userEmail},phone.eq.${userPhone},email.eq.${userEmail}`)
-            .order('created_at', { ascending: false });
+          // Guest without login: try to fetch orders by stored guest order IDs
+          let guestOrderIds: string[] = [];
+          try {
+            guestOrderIds = JSON.parse(localStorage.getItem('pornpong_my_order_ids') || '[]');
+          } catch {}
+          if (guestOrderIds.length > 0) {
+            query = query.in('id', guestOrderIds).order('created_at', { ascending: false });
+          } else {
+            query = query.order('created_at', { ascending: false }).limit(10);
+          }
         }
 
         const { data, error } = await query;
+        const rawList = data || [];
+        setCustomerOrders(rawList);
 
-        if (data && data.length > 0) {
-          // หาออเดอร์พรีออเดอร์ที่ยังไม่เสร็จสิ้นล่าสุด
-          const active = data.find((o: any) => 
-            (o.is_preorder || o.order_type === 'preorder' || o.queue_id || o.queue_number || o.product_type === 'pre_order' || Number(o.queue_step) > 0) &&
-            o.order_status !== 'completed' && 
-            o.order_status !== 'cancelled' &&
-            o.status !== 'completed' &&
-            o.status !== 'cancelled'
-          );
-          setActivePreorder(active || data[0]);
-          setCustomerOrders(data);
+        if (rawList.length > 0) {
+          // หาออเดอร์พรีออเดอร์ที่ยังไม่เสร็จสิ้นล่าสุด (Active Preorder Only - ห้ามดึง completed / cancelled)
+          const active = rawList.find((o: any) => {
+            const st = String(o.order_status || o.status || '').toLowerCase().trim();
+            const qStep = Number(o.queue_step || 0);
+            const isCompleted = st === 'completed' || st === 'cancelled' || st === 'delivered' || st === 'จัดส่งสำเร็จ' || qStep === 5;
+            const isPre = o.is_preorder || o.order_type === 'preorder' || o.queue_id || o.queue_number || o.product_type === 'pre_order' || qStep > 0;
+            return isPre && !isCompleted;
+          });
+          setActivePreorder(active || null);
         } else {
-          // Fallback if specific or filter returned empty: fetch recent orders from Supabase
-          const { data: allData } = await supabase.from('orders').select('*').order('created_at', { ascending: false }).limit(20);
-          if (allData && allData.length > 0) {
-            const active = allData.find((o: any) => 
-              (o.is_preorder || o.order_type === 'preorder' || o.queue_id || o.queue_number || o.product_type === 'pre_order' || Number(o.queue_step) > 0) &&
-              o.order_status !== 'completed' && 
-              o.order_status !== 'cancelled'
-            );
-            setActivePreorder(active || allData[0]);
-          }
+          setActivePreorder(null);
+          setCustomerOrders([]);
         }
+      } else {
+        setActivePreorder(null);
+        setCustomerOrders([]);
       }
       await loadHistory();
     } catch (err) {
       console.error('Error fetching customer live order:', err);
+      setActivePreorder(null);
+      setCustomerOrders([]);
     } finally {
       setIsLoadingHistory(false);
     }
@@ -2005,63 +1941,49 @@ export function ProfileModal({
             </div>
 
             {/* รายการคำสั่งซื้อที่กำลังดำเนินการทั้งหมด (Loop .map All Active Orders) */}
-            {(activePreorder || displayedActiveOrders.length > 0) ? (
+            {displayedActiveOrders.length > 0 ? (
               <div className="space-y-6">
-                {/* 3. ผูกการแสดงผลของการ์ด (Card Binding) กับ activePreorder โดยตรง */}
-                {activePreorder && (
-                  <PreorderTrackingCard
-                    key={activePreorder.id || 'live-active-preorder'}
-                    order={activePreorder}
-                    activeFactoryQueue={activeFactoryQueue}
-                    onCopyTracking={handleCopyTracking}
-                    copiedTrackingId={copiedTrackingId}
-                  />
-                )}
+                {displayedActiveOrders.map((order) => {
+                  const isPreorder = Boolean(
+                    order.is_preorder === true ||
+                    order.is_preorder === 'true' ||
+                    order.order_type === 'preorder' ||
+                    order.type === 'preorder' ||
+                    order.status === 'in_queue' ||
+                    order.status === 'in_production' ||
+                    order.status === 'ready_to_transfer' ||
+                    order.status === 'delivering' ||
+                    order.isPreOrder ||
+                    (Number((order as any).queue_step) >= 1 && Number((order as any).queue_step) < 5) ||
+                    String(order.queueId || '').startsWith('Q-')
+                  );
 
-                {/* ออเดอร์อื่นๆ ที่กำลังดำเนินการ */}
-                {displayedActiveOrders
-                  .filter(o => !activePreorder || String(o.id) !== String(activePreorder.id))
-                  .map((order) => {
-                    const isPreorder = Boolean(
-                      order.is_preorder === true ||
-                      order.is_preorder === 'true' ||
-                      order.order_type === 'preorder' ||
-                      order.type === 'preorder' ||
-                      order.status === 'in_queue' ||
-                      order.status === 'in_production' ||
-                      order.status === 'ready_to_transfer' ||
-                      order.status === 'delivering' ||
-                      order.isPreOrder ||
-                      (Number((order as any).queue_step) >= 1 && Number((order as any).queue_step) <= 5) ||
-                      String(order.queueId || '').startsWith('Q-')
-                    );
-
-                    return isPreorder ? (
-                      <PreorderTrackingCard
-                        key={order.id}
-                        order={order}
-                        activeFactoryQueue={activeFactoryQueue}
-                        onCopyTracking={handleCopyTracking}
-                        copiedTrackingId={copiedTrackingId}
-                      />
-                    ) : (
-                      <InStockTrackingCard
-                        key={order.id}
-                        order={order}
-                        onCopyTracking={handleCopyTracking}
-                        copiedTrackingId={copiedTrackingId}
-                      />
-                    );
+                  return isPreorder ? (
+                    <PreorderTrackingCard
+                      key={order.id}
+                      order={order}
+                      activeFactoryQueue={activeFactoryQueue}
+                      onCopyTracking={handleCopyTracking}
+                      copiedTrackingId={copiedTrackingId}
+                    />
+                  ) : (
+                    <InStockTrackingCard
+                      key={order.id}
+                      order={order}
+                      onCopyTracking={handleCopyTracking}
+                      copiedTrackingId={copiedTrackingId}
+                    />
+                  );
                 })}
               </div>
             ) : (
-              /* Empty State: ถ้าไม่มีรายการค้างเลย ให้แสดงกล่องข้อความ: "ไม่มีรายการที่อยู่ระหว่างจัดส่งหรือผลิต" */
+              /* Empty State: ถ้าไม่มีรายการค้างเลย ให้แสดงกล่องข้อความ: "ไม่มีรายการที่อยู่ระหว่างผลิตหรือจัดส่ง" */
               <div className="py-14 px-4 text-center rounded-2xl border-2 border-dashed border-slate-200 bg-slate-50/60 flex flex-col items-center justify-center">
                 <div className="w-16 h-16 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-400 mb-3 shadow-inner">
                   <Truck size={28} className="text-slate-400" />
                 </div>
                 <h4 className="font-display font-extrabold text-slate-700 text-sm mb-1">
-                  {searchQuery ? "ไม่พบคำสั่งซื้อที่ค้นหา" : "ไม่มีรายการที่อยู่ระหว่างจัดส่งหรือผลิต"}
+                  {searchQuery ? "ไม่พบคำสั่งซื้อที่ค้นหา" : "ไม่มีรายการที่อยู่ระหว่างผลิตหรือจัดส่ง"}
                 </h4>
                 <p className="text-xs text-slate-500 max-w-sm mb-5 leading-relaxed">
                   {searchQuery
@@ -2081,9 +2003,10 @@ export function ProfileModal({
                     type="button"
                     onClick={() => setActiveSection("history")}
                     className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-brand-blue hover:bg-brand-blue-light text-white text-xs font-bold transition-all shadow-xs cursor-pointer active:scale-97"
+                    id="btn-goto-history-from-empty-tracking"
                   >
                     <ShoppingBag size={13} />
-                    <span>ดูประวัติการสั่งซื้อและจับจอง</span>
+                    <span>ดูประวัติการสั่งซื้อ</span>
                   </button>
                 )}
               </div>
