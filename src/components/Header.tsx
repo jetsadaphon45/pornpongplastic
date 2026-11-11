@@ -50,16 +50,24 @@ export default function Header({
   const totalCartItems = cart.reduce((sum, item) => sum + item.quantity, 0);
   const unreadNotificationsCount = notifications.filter(n => !n.isRead).length;
 
-  // Strict active orders state & tracking mode: 'producing' | 'shipping' | 'hidden'
+  // Strict active orders state & dynamic tracking button state
   const [activeOrders, setActiveOrders] = React.useState<any[]>([]);
+  const [activeUserOrders, setActiveUserOrders] = React.useState<any[]>([]);
+  const [trackingButtonLabel, setTrackingButtonLabel] = React.useState<string>('');
+  const [hasActivePreorder, setHasActivePreorder] = React.useState<boolean>(false);
+  const [hasActiveStock, setHasActiveStock] = React.useState<boolean>(false);
   const [trackingStatus, setTrackingStatus] = React.useState<'producing' | 'shipping' | 'hidden'>('hidden');
   const [isInTransitActive, setIsInTransitActive] = React.useState<boolean>(false);
 
   // Strict Active Order Check: Queries current user's active orders from Supabase 'orders' table
   const checkUserOrders = React.useCallback(async () => {
-    // If user is not logged in or has no identification, strictly hide the button
+    // 4. กรณีผู้ใช้ยังไม่ได้ล็อกอิน ให้ซ่อนปุ่มทันที
     if (!currentUser) {
       setActiveOrders([]);
+      setActiveUserOrders([]);
+      setTrackingButtonLabel('');
+      setHasActivePreorder(false);
+      setHasActiveStock(false);
       setTrackingStatus('hidden');
       setIsInTransitActive(false);
       return;
@@ -67,7 +75,8 @@ export default function Header({
 
     const cleanUserId = currentUser.id?.trim() || '';
     const cleanEmail = (currentUser.email || '').toLowerCase().trim();
-    const cleanPhone = (currentUser.phone || '').replace(/\D/g, '');
+    const cleanPhone = (currentUser.phone || '').trim();
+    const cleanDigitsPhone = cleanPhone.replace(/\D/g, '');
 
     // Deleted orders key from ProfileModal
     const deletedOrdersKey = `pornpong_deleted_orders_${cleanUserId || cleanEmail || 'guest'}`;
@@ -76,20 +85,37 @@ export default function Header({
       deletedIds = JSON.parse(localStorage.getItem(deletedOrdersKey) || '[]');
     } catch {}
 
-    // Only query if user has at least one valid identifier
+    // 1. ตรวจสอบและกรองออเดอร์ให้ตรงตัวบุคคล (User Specific Filter)
     const conditions: string[] = [];
-    if (cleanUserId && cleanUserId !== 'guest') conditions.push(`customer_id.eq.${cleanUserId}`);
-    if (cleanEmail && cleanEmail !== 'guest@example.com') conditions.push(`customer_email.eq.${cleanEmail}`);
-    if (cleanPhone) conditions.push(`customer_phone.eq.${cleanPhone}`);
+    if (cleanUserId && cleanUserId !== 'guest') {
+      conditions.push(`customer_id.eq.${cleanUserId}`);
+      conditions.push(`user_id.eq.${cleanUserId}`);
+    }
+    if (cleanEmail && cleanEmail !== 'guest@example.com') {
+      conditions.push(`customer_email.eq.${cleanEmail}`);
+      conditions.push(`email.eq.${cleanEmail}`);
+    }
+    if (cleanPhone) {
+      conditions.push(`customer_phone.eq.${cleanPhone}`);
+      conditions.push(`phone.eq.${cleanPhone}`);
+      if (cleanDigitsPhone && cleanDigitsPhone !== cleanPhone) {
+        conditions.push(`customer_phone.eq.${cleanDigitsPhone}`);
+        conditions.push(`phone.eq.${cleanDigitsPhone}`);
+      }
+    }
 
     if (conditions.length === 0) {
       setActiveOrders([]);
+      setActiveUserOrders([]);
+      setTrackingButtonLabel('');
+      setHasActivePreorder(false);
+      setHasActiveStock(false);
       setTrackingStatus('hidden');
       setIsInTransitActive(false);
       return;
     }
 
-    let rawOrders: any[] = [];
+    let userOrders: any[] = [];
     let deliveriesMap: Record<string, any> = {};
 
     if (isSupabaseConfigured && supabase) {
@@ -104,7 +130,7 @@ export default function Header({
         ]);
 
         if (!ordersRes.error && ordersRes.data) {
-          rawOrders = ordersRes.data;
+          userOrders = ordersRes.data;
         }
         deliveriesMap = dMap || {};
       } catch (err) {
@@ -112,65 +138,87 @@ export default function Header({
       }
     }
 
-    // Filter strictly for active orders (must be in pending/producing/shipping status and NOT finished)
-    const validActiveOrders = rawOrders.filter((ord: any) => {
-      const orderIdStr = String(ord.id).trim();
+    // 1. ตรวจสอบออเดอร์ที่ยังดำเนินการอยู่ (Active Orders) เฉพาะของสมาชิกที่เข้าสู่ระบบ
+    const activeOrdersList = userOrders.filter(order => {
+      const orderIdStr = String(order.id).trim();
       if (deletedIds.includes(orderIdStr)) return false;
 
-      const delivery = deliveriesMap[orderIdStr] || deliveriesMap[ord.id];
-      const delivStatus = String(delivery?.delivery_status || ord.delivery_status || '').toLowerCase().trim();
-      const ordStatus = String(ord.status || ord.order_status || ord.payment_status || '').toLowerCase().trim();
-      const qStage = Number(ord.queue_stage || delivery?.queue_stage || 0);
+      // ต้องเป็นออเดอร์ของสมาชิกคนนี้
+      const oPhone = String(order.customer_phone || order.phone || '').trim();
+      const oPhoneDigits = oPhone.replace(/\D/g, '');
+      const oEmail = String(order.customer_email || order.email || '').toLowerCase().trim();
+      const oCustId = String(order.customer_id || order.user_id || '').trim();
 
-      // Condition 1: Check if delivered / completed / cancelled (Finished -> EXCLUDE)
+      const isOwner = Boolean(
+        (cleanPhone && (oPhone === cleanPhone || (cleanDigitsPhone && oPhoneDigits === cleanDigitsPhone))) ||
+        (cleanEmail && oEmail === cleanEmail) ||
+        (cleanUserId && (oCustId === cleanUserId || oCustId === currentUser.id))
+      );
+
+      // ต้องยังไม่เสร็จสิ้น และยังไม่ถูกยกเลิก
+      const delivery = deliveriesMap[orderIdStr] || deliveriesMap[order.id];
+      const delivStatus = String(delivery?.delivery_status || order.delivery_status || '').toLowerCase().trim();
+      const status = String(order.order_status || order.status || '').toLowerCase().trim();
+      const qStep = Number(order.queue_step || 0);
+
       const isFinished = 
+        status === 'completed' || 
+        status === 'cancelled' || 
+        status === 'delivered' || 
+        status === 'จัดส่งสำเร็จ' || 
+        status === 'rejected' ||
         delivStatus === 'delivered' ||
         delivStatus === 'completed' ||
-        ordStatus === 'delivered' ||
-        ordStatus === 'completed' ||
         delivStatus === 'cancelled' ||
-        ordStatus === 'cancelled' ||
-        ordStatus === 'rejected';
+        qStep === 5;
 
-      if (isFinished) {
-        return false;
-      }
+      const isOngoing = Boolean(status || delivStatus) && !isFinished;
 
-      // Condition 2: Check if in active in-progress status
-      const activeKeywords = [
-        'pending_verification',
-        'paid',
-        'producing',
-        'ready_to_ship',
-        'in_transit',
-        'shipping',
-        'shipped',
-        'queue_received',
-        'manufacturing',
-        'ready_for_shipping',
-        'ready',
-        'processing',
-        'pending_deposit',
-        'awaitingdeposit',
-        'pending',
-        'confirmed'
-      ];
-
-      return activeKeywords.includes(delivStatus) || activeKeywords.includes(ordStatus) || (qStage >= 1 && qStage <= 4);
+      return isOwner && isOngoing;
     });
 
-    // Update activeOrders state directly
-    setActiveOrders(validActiveOrders);
+    // 2. แยกประเภทคำสั่งซื้อที่ค้างส่ง:
+    const isOrderPre = (order: any) => Boolean(
+      order.is_preorder === true || 
+      order.is_preorder === 'true' || 
+      order.order_type === 'preorder' || 
+      order.type === 'preorder' || 
+      order.queue_id || 
+      order.queue_number ||
+      order.product_type === 'pre_order' ||
+      (Number(order.queue_step) >= 1 && Number(order.queue_step) < 5) ||
+      isOrderPreOrder(order)
+    );
 
-    // If activeOrders.length === 0 or all orders completed/delivered, strictly hide the button
-    if (validActiveOrders.length === 0) {
+    const hasPre = activeOrdersList.some(order => isOrderPre(order));
+    const hasStk = activeOrdersList.some(order => !isOrderPre(order));
+
+    // 3. กำหนดชื่อปุ่มและสไตล์แบบ Dynamic:
+    let dynamicLabel = '';
+    if (hasPre && hasStk) {
+      dynamicLabel = 'ติดตามสถานะสินค้า';
+    } else if (hasPre) {
+      dynamicLabel = 'ติดตามคิวผลิต';
+    } else if (hasStk) {
+      dynamicLabel = 'ติดตามสถานะการส่ง';
+    }
+
+    setActiveUserOrders(activeOrdersList);
+    setActiveOrders(activeOrdersList);
+    setTrackingButtonLabel(dynamicLabel);
+    setHasActivePreorder(hasPre);
+    setHasActiveStock(hasStk);
+
+    // 4. ถ้า activeUserOrders.length === 0 ให้ซ่อนปุ่มนี้ออกจาก Navbar ไปเลย
+    if (activeOrdersList.length === 0 || !dynamicLabel) {
       setTrackingStatus('hidden');
       setIsInTransitActive(false);
       return;
     }
 
-    // Check if any order is currently in-transit / shipping
-    const isAnyInTransit = validActiveOrders.some((ord: any) => {
+    setTrackingStatus(hasPre ? 'producing' : 'shipping');
+
+    const isAnyInTransit = activeOrdersList.some((ord: any) => {
       const orderIdStr = String(ord.id).trim();
       const delivery = deliveriesMap[orderIdStr] || deliveriesMap[ord.id];
       const delivStatus = String(delivery?.delivery_status || ord.delivery_status || '').toLowerCase().trim();
@@ -183,28 +231,11 @@ export default function Header({
         ordStatus === 'in_transit' || 
         ordStatus === 'shipping' || 
         ordStatus === 'shipped' || 
-        qStage === 4
+        qStage === 4 ||
+        Number(ord.queue_step) === 4
       );
     });
     setIsInTransitActive(isAnyInTransit);
-
-    // 1. ตรวจสอบออเดอร์ล่าสุดของลูกค้า (latestOrder หรือ activeOrder):
-    const latestOrder = validActiveOrders[0];
-    const isPreorder = Boolean(
-      latestOrder?.is_preorder || 
-      latestOrder?.order_type === 'preorder' || 
-      latestOrder?.type === 'preorder' ||
-      latestOrder?.status === 'in_queue' ||
-      latestOrder?.status === 'in_production' ||
-      isOrderPreOrder(latestOrder)
-    );
-
-    // 2. กำหนดข้อความบนปุ่ม:
-    // - ถ้าเป็นสินค้าพรีออเดอร์ (isPreorder === true):
-    //   * แสดงข้อความ: "ติดตามคิวผลิต" (ไอคอนเตาหลอม/คิว)
-    // - ถ้าเป็นสินค้าพร้อมส่ง (isPreorder === false หรือ In-Stock):
-    //   * แสดงข้อความ: "ติดตามสถานะจัดส่ง" (ไอคอนกล่องพัสดุ/รถส่งของ)
-    setTrackingStatus(isPreorder ? 'producing' : 'shipping');
   }, [currentUser]);
 
   // Real-time synchronization for Header Tracking Status & Active Orders
@@ -366,7 +397,7 @@ export default function Header({
                 {item.label}
               </button>
             ))}
-            {Boolean(currentUser) && (
+            {Boolean(currentUser) && activeUserOrders.length > 0 && Boolean(trackingButtonLabel) && (
               <button
                 type="button"
                 onClick={() => {
@@ -376,14 +407,20 @@ export default function Header({
                 }}
                 className="px-3.5 py-1.5 text-xs font-bold rounded-full transition-all duration-200 cursor-pointer flex items-center gap-1.5 text-amber-800 bg-amber-50/90 hover:bg-amber-100 border border-amber-200/90 shadow-2xs hover:scale-102 active:scale-97 animate-in fade-in"
                 id="nav-track-queue"
-                title="ติดตามคิวผลิตเรือพรีออเดอร์และเตาหลอมโรงงาน Real-time"
+                title={`ติดตามสถานะคำสั่งซื้อ (${trackingButtonLabel}) Real-time`}
               >
                 <span className="relative flex h-2 w-2">
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
                   <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
                 </span>
-                <Flame size={14} className="text-amber-600 animate-pulse" />
-                <span>ติดตามคิวผลิต</span>
+                {hasActivePreorder && !hasActiveStock ? (
+                  <Flame size={14} className="text-amber-600 animate-pulse" />
+                ) : !hasActivePreorder && hasActiveStock ? (
+                  <Truck size={14} className="text-amber-600 animate-pulse" />
+                ) : (
+                  <Package size={14} className="text-amber-600 animate-pulse" />
+                )}
+                <span>{trackingButtonLabel}</span>
               </button>
             )}
           </nav>
@@ -604,7 +641,7 @@ export default function Header({
                 {item.label}
               </button>
             ))}
-            {Boolean(currentUser) && (
+            {Boolean(currentUser) && activeUserOrders.length > 0 && Boolean(trackingButtonLabel) && (
               <button
                 type="button"
                 onClick={() => {
@@ -621,11 +658,17 @@ export default function Header({
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
                     <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
                   </span>
-                  <Flame size={15} className="text-amber-600 animate-pulse" />
-                  <span>ติดตามคิวผลิต</span>
+                  {hasActivePreorder && !hasActiveStock ? (
+                    <Flame size={15} className="text-amber-600 animate-pulse" />
+                  ) : !hasActivePreorder && hasActiveStock ? (
+                    <Truck size={15} className="text-amber-600 animate-pulse" />
+                  ) : (
+                    <Package size={15} className="text-amber-600 animate-pulse" />
+                  )}
+                  <span>{trackingButtonLabel}</span>
                 </div>
                 <span className="text-[10px] bg-amber-200/70 text-amber-900 px-2 py-0.5 rounded-full font-mono font-bold">
-                  PRE-ORDER
+                  {hasActivePreorder && hasActiveStock ? 'ORDERS' : hasActivePreorder ? 'PRE-ORDER' : 'IN-STOCK'}
                 </span>
               </button>
             )}
