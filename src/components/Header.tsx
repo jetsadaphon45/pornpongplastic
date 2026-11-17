@@ -80,14 +80,14 @@ export default function Header({
     const cleanDigitsPhone = cleanPhone.replace(/\D/g, '');
 
     // 1. ตรวจสอบและกรองออเดอร์ให้ตรงตัวบุคคล (User Specific Filter)
+    const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     const conditions: string[] = [];
-    if (cleanUserId && cleanUserId !== 'guest') {
+    if (cleanUserId && UUID_REGEX.test(cleanUserId)) {
       conditions.push(`customer_id.eq.${cleanUserId}`);
       conditions.push(`user_id.eq.${cleanUserId}`);
     }
     if (cleanEmail && cleanEmail !== 'guest@example.com') {
       conditions.push(`customer_email.eq.${cleanEmail}`);
-      conditions.push(`email.eq.${cleanEmail}`);
     }
     if (cleanPhone) {
       conditions.push(`customer_phone.eq.${cleanPhone}`);
@@ -125,6 +125,14 @@ export default function Header({
 
         if (!ordersRes.error && ordersRes.data) {
           userOrders = ordersRes.data.map(normalizeOrder);
+        } else if (ordersRes.error) {
+          const { data: fallbackAll } = await supabase
+            .from('orders')
+            .select('*')
+            .order('created_at', { ascending: false });
+          if (fallbackAll) {
+            userOrders = fallbackAll.map(normalizeOrder);
+          }
         }
         deliveriesMap = dMap || {};
       } catch (err) {
@@ -184,18 +192,32 @@ export default function Header({
     });
 
     // 2. แยกประเภทคำสั่งซื้อที่ค้างส่ง:
-    const isOrderPre = (order: any) => Boolean(
-      order.is_preorder === true || 
-      order.is_preorder === 'true' || 
-      order.order_type === 'preorder' || 
-      order.product_type === 'preorder' ||
-      order.product_type === 'pre_order' ||
-      order.type === 'preorder' || 
-      order.queue_id || 
-      order.queue_number ||
-      (Number(order.queue_step) >= 1 && Number(order.queue_step) < 5) ||
-      isOrderPreOrder(order)
-    );
+    const isOrderPre = (order: any) => {
+      const explicitStock = Boolean(
+        order.is_preorder === false ||
+        order.is_preorder === 'false' ||
+        order.order_type === 'stock' ||
+        order.order_type === 'instock' ||
+        order.order_type === 'in_stock' ||
+        order.product_type === 'stock' ||
+        order.product_type === 'in_stock'
+      );
+      if (explicitStock) return false;
+
+      return Boolean(
+        order.is_preorder === true ||
+        order.is_preorder === 'true' ||
+        order.order_type === 'preorder' ||
+        order.order_type === 'pre_order' ||
+        order.product_type === 'preorder' ||
+        order.product_type === 'pre_order' ||
+        order.type === 'preorder' ||
+        order.queue_id ||
+        order.queue_number ||
+        (Number(order.queue_step) >= 1 && Number(order.queue_step) < 5) ||
+        isOrderPreOrder(order)
+      );
+    };
 
     const hasPre = activeOrdersList.some(order => isOrderPre(order));
     const hasStk = activeOrdersList.some(order => !isOrderPre(order));

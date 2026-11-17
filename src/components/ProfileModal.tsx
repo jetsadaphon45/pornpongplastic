@@ -1034,21 +1034,22 @@ export function ProfileModal({
         const userEmail = currentUser?.email;
         const userId = currentUser?.id;
 
+        const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
         let query = supabase.from('orders').select('*');
         if ((currentUser as any)?.role === 'admin') {
           query = query.order('created_at', { ascending: false });
         } else if (userId || userPhone || userEmail) {
           const conditions: string[] = [];
-          if (userId && userId !== 'guest') conditions.push(`customer_id.eq.${userId}`, `user_id.eq.${userId}`);
+          if (userId && UUID_REGEX.test(userId)) conditions.push(`customer_id.eq.${userId}`, `user_id.eq.${userId}`);
           if (userPhone) conditions.push(`customer_phone.eq.${userPhone}`, `phone.eq.${userPhone}`);
-          if (userEmail && userEmail !== 'guest@example.com') conditions.push(`customer_email.eq.${userEmail}`, `email.eq.${userEmail}`);
+          if (userEmail && userEmail !== 'guest@example.com') conditions.push(`customer_email.eq.${userEmail}`);
           
           if (conditions.length > 0) {
             query = query.or(conditions.join(',')).order('created_at', { ascending: false });
           } else {
             query = query.order('created_at', { ascending: false });
           }
-        } else if (targetOrderId) {
+        } else if (targetOrderId && UUID_REGEX.test(String(targetOrderId))) {
           query = query.eq('id', targetOrderId);
         } else {
           setActivePreorder(null);
@@ -1057,8 +1058,13 @@ export function ProfileModal({
           return;
         }
 
-        const { data } = await query;
-        const rawList = (data || [])
+        const { data, error: queryErr } = await query;
+        let finalRows = data || [];
+        if (queryErr) {
+          const { data: fallbackAll } = await supabase.from('orders').select('*').order('created_at', { ascending: false });
+          finalRows = fallbackAll || [];
+        }
+        const rawList = finalRows
           .map(normalizeOrder)
           .filter((o: any) => !(o.is_deleted === true || o.is_deleted === 'true'));
         setCustomerOrders(rawList);

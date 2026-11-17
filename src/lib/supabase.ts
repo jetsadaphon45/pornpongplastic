@@ -143,8 +143,8 @@ export function isOrderPreOrder(order: any): boolean {
   const title = String(order.product_name || order.item_name || order.name || order.productName || order.boat_size || order.boat_model_name || '').toLowerCase();
   if (title.includes('พรี') || title.includes('สั่งทำ') || title.includes('มัดจำ') || title.includes('preorder') || title.includes('pre-order') || title.includes('สั่งผลิต')) return true;
 
-  const notes = String(order.notes || '').toLowerCase();
-  if (notes.includes('พรี') || notes.includes('สั่งทำ') || notes.includes('มัดจำ') || notes.includes('preorder') || notes.includes('pre-order') || notes.includes('สั่งผลิต')) return true;
+  const notes = String(order.notes || order.production_notes || '').toLowerCase();
+  if (!notes.includes('in-stock / สินค้าพร้อมส่ง') && (notes.includes('พรี') || notes.includes('สั่งทำ') || notes.includes('มัดจำ') || notes.includes('preorder') || notes.includes('pre-order') || notes.includes('สั่งผลิต'))) return true;
 
   if (Array.isArray(order.order_items)) {
     const hasPre = order.order_items.some((item: any) => 
@@ -1686,9 +1686,12 @@ export async function updateOrderWithSchemaFallback(orderId: string, payload: Re
   if (!isSupabaseConfigured || !supabase) {
     return { data: null, error: new Error('Supabase is not configured') };
   }
+  const FORBIDDEN_UPDATE_KEYS = new Set(['id', 'address', 'email', 'notes']);
   const working: Record<string, any> = {};
   for (const [k, v] of Object.entries(payload)) {
-    if (v !== undefined) working[k] = v;
+    if (v !== undefined && !FORBIDDEN_UPDATE_KEYS.has(k)) {
+      working[k] = v;
+    }
   }
 
   let lastError: any = null;
@@ -2037,9 +2040,12 @@ export const supabaseOrders = {
       const cleanEmail = email?.toLowerCase().trim() || '';
       const cleanPhone = phone && phone !== 'ไม่ระบุ' ? phone.replace(/\D/g, '') : '';
 
+      const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      const isUuidUserId = UUID_REGEX.test(cleanUserId);
+
       let matchedRows: any[] = [];
 
-      if (cleanUserId) {
+      if (isUuidUserId) {
         const { data, error } = await supabase
           .from('orders')
           .select('*')
@@ -2051,7 +2057,7 @@ export const supabaseOrders = {
         }
       }
 
-      if (matchedRows.length === 0 && cleanUserId) {
+      if (matchedRows.length === 0 && isUuidUserId) {
         try {
           const { data: byUid, error: errUid } = await supabase
             .from('orders')
@@ -2813,7 +2819,8 @@ export const supabaseOrders = {
 
         const { error: fullErr } = await updateOrderWithSchemaFallback(resolvedOrderUuid, fullUpdatePayload);
         if (fullErr) {
-          console.warn('Schema-safe update in approve reported error:', fullErr.message);
+          console.error('Schema-safe update in approve reported error:', fullErr.message);
+          throw fullErr;
         }
 
         // 2. กรณี A (Pre-order): ตรวจสอบว่า order.id เป็น UUID จริงที่มีอยู่ในตาราง orders แล้วเท่านั้น

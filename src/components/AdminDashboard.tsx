@@ -1653,6 +1653,9 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
 
       // 3. เรียกใช้ supabaseOrders.approve เพื่อบันทึกสถานะลง Supabase + สร้างเลขคิว (กรณี A) หรือ ตัดสต็อกและปิดงาน (กรณี B)
       const result: any = await supabaseOrders.approve(targetOrderId, ord);
+      if (!result) {
+        throw new Error('ไม่สามารถอัปเดตสถานะการอนุมัติในฐานข้อมูลได้ กรุณาลองใหม่อีกครั้ง');
+      }
       const assignedQ = isPreorder
         ? ((typeof result === 'object' && result?.queueNumber) || ord.queue_number || ord.queue_id || formatQueueId(ord))
         : null;
@@ -2772,11 +2775,21 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
       if (order.is_deleted === true || order.is_deleted === 'true') return false;
 
       // 1. กรองสินค้าพรีออเดอร์ออก (ไม่ใช่ออเดอร์พรีออเดอร์)
-      const isPreorder = isPreorderOrder(order) || Boolean(
+      const isExplicitStock =
+        order.is_preorder === false ||
+        order.is_preorder === 'false' ||
+        order.order_type === 'stock' ||
+        order.order_type === 'instock' ||
+        order.order_type === 'in_stock' ||
+        order.product_type === 'stock' ||
+        order.product_type === 'in_stock';
+      const isPreorder = isExplicitStock ? false : (isPreorderOrder(order) || Boolean(
         order.is_preorder === true ||
         order.is_preorder === 'true' ||
         order.order_type === 'preorder' || 
         order.order_type === 'pre_order' || 
+        order.product_type === 'preorder' ||
+        order.product_type === 'pre_order' ||
         order.type === 'preorder' || 
         order.status === 'in_queue' || 
         order.status === 'in_production' ||
@@ -2786,7 +2799,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
         order.status === 'assembling' ||
         (Array.isArray(order.order_items) && order.order_items.some((item: any) => item?.is_preorder)) ||
         (Array.isArray(order.items) && order.items.some((item: any) => item?.is_preorder))
-      );
+      ));
       if (isPreorder) return false;
 
       const s = String(order.status || '').toLowerCase().trim();
@@ -2833,7 +2846,15 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
         const ps = String(order.payment_status || '').toLowerCase().trim();
 
         // ห้ามแสดงสินค้าพรีออเดอร์ในหน้า "คำสั่งซื้อสำเร็จ" เด็ดขาด
-        const isPre = Boolean(
+        const isExplicitStock =
+          order.is_preorder === false ||
+          order.is_preorder === 'false' ||
+          order.order_type === 'stock' ||
+          order.order_type === 'instock' ||
+          order.order_type === 'in_stock' ||
+          order.product_type === 'stock' ||
+          order.product_type === 'in_stock';
+        const isPre = isExplicitStock ? false : Boolean(
           order.is_preorder === true ||
           order.is_preorder === 'true' ||
           order.order_type === 'preorder' ||
