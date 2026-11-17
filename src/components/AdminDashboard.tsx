@@ -1569,6 +1569,13 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
           status_message: msg,
           updated_at: new Date().toISOString()
         }).eq('id', orderId);
+
+        if (order.is_preorder === true || order.order_type === 'preorder' || order.product_type === 'preorder') {
+          await supabase
+            .from('production_queues')
+            .update({ status: 'completed' })
+            .eq('order_id', orderId);
+        }
       } catch (err) {
         console.warn('Direct update orders in handleSelectDelivered failed:', err);
       }
@@ -2030,12 +2037,20 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
           order_status: newStatusData.status,
           is_preorder: true,
           order_type: 'preorder',
+          product_type: 'preorder',
           shipping_carrier: carrier,
           driver_phone: driver,
           tracking_number: tracking,
           estimated_delivery_date: estDate,
           updated_at: updatedAt
         });
+
+        await supabase
+          .from('production_queues')
+          .update({
+            status: newStatusData.queue_step === 5 ? 'completed' : newStatusData.status
+          })
+          .eq('order_id', orderIdStr);
       } catch (err) {
         console.warn('Failed to update orders table in handleUpdateQueueStatus:', err);
       }
@@ -2074,7 +2089,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
   };
 
   const handleUpdateStatus = async (item: any, targetStep: number, targetStatus: string) => {
-    const orderId = item.id || (item as any).order_id;
+    const orderId = item.id; // ต้องใช้ UUID (orders.id) เท่านั้น
     if (!orderId) return;
     const orderIdStr = String(orderId);
     const updatedAt = new Date().toISOString();
@@ -2083,7 +2098,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
 
     // อัปเดต UI ทันที
     setAdminOrders(prev => prev.map(row => 
-      (String(row.id) === orderIdStr || String(row.order_id) === orderIdStr) 
+      String(row.id) === orderIdStr
         ? normalizeOrder({ 
             ...row, 
             queue_step: targetStep, 
@@ -2099,12 +2114,12 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
         : row
     ));
 
-    // อัปเดตลง Supabase แบบ schema-safe
+    // อัปเดตลง Supabase ทั้งตาราง orders (.eq('id', order.id)) และ production_queues (.eq('order_id', order.id))
     if (isSupabaseConfigured && supabase) {
       try {
         await supabaseOrders.update(orderIdStr, {
-          order_status: targetStatus,
-          status: targetStatus,
+          order_status: isCompleted ? 'completed' : targetStatus,
+          status: isCompleted ? 'completed' : targetStatus,
           queue_step: targetStep,
           queue_stage: targetStep,
           is_preorder: true,
@@ -2116,6 +2131,20 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
         });
       } catch (err) {
         console.error("Error updating order status in Supabase:", err);
+      }
+
+      try {
+        const { error: pqErr } = await supabase
+          .from('production_queues')
+          .update({
+            status: isCompleted ? 'completed' : targetStatus
+          })
+          .eq('order_id', orderIdStr);
+        if (pqErr) {
+          console.warn('production_queues update warning in handleUpdateStatus:', pqErr.message);
+        }
+      } catch (pqCatchErr) {
+        console.warn('production_queues update exception in handleUpdateStatus:', pqCatchErr);
       }
 
       try {

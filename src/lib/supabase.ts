@@ -246,6 +246,23 @@ export async function getNextAvailableQueueNumber(): Promise<string> {
     } catch {}
 
     try {
+      const { data: pqData } = await supabase
+        .from('production_queues')
+        .select('queue_number');
+      if (pqData && Array.isArray(pqData)) {
+        for (const row of pqData) {
+          const qn = String(row.queue_number || '').trim().toUpperCase();
+          if (qn.startsWith(prefix)) {
+            const numPart = parseInt(qn.replace(prefix, ''), 10);
+            if (!isNaN(numPart) && numPart > maxNum) {
+              maxNum = numPart;
+            }
+          }
+        }
+      }
+    } catch {}
+
+    try {
       const { data: ordData } = await supabase
         .from('orders')
         .select('queue_number, queue_id');
@@ -1640,9 +1657,9 @@ export async function insertOrderWithSchemaFallback(payload: Record<string, any>
 
   let lastError: any = null;
   for (let attempt = 0; attempt < 18; attempt++) {
-    const { data, error } = await supabase.from('orders').insert([working]).select();
+    const { data, error } = await supabase.from('orders').insert([working]).select().single();
     if (!error) {
-      return { data, error: null };
+      return { data: data ? [data] : null, error: null };
     }
     lastError = error;
     const missingCol = extractMissingOrderColumn(error);
@@ -2573,6 +2590,18 @@ export const supabaseOrders = {
         ...(estDate ? { estimated_delivery_date: estDate } : {}),
         updated_at: new Date().toISOString()
       });
+
+      try {
+        await supabase
+          .from('production_queues')
+          .update({
+            status: currentStageInfo.status,
+            ...(queueNo ? { queue_number: queueNo } : {})
+          })
+          .eq('order_id', id);
+      } catch (pqErr) {
+        console.warn('production_queues update warning in updateQueueStage:', pqErr);
+      }
     }
 
     try {
@@ -2722,7 +2751,7 @@ export const supabaseOrders = {
 
   async approve(id: string, fallbackOrder?: any): Promise<boolean> {
     try {
-      const orderIdStr = String(id);
+      const targetOrderUuid = String(id).trim();
       let orderData: any = fallbackOrder ? normalizeOrder({ ...fallbackOrder }) : null;
 
       if (isSupabaseConfigured && supabase) {
@@ -2730,7 +2759,7 @@ export const supabaseOrders = {
           const { data } = await supabase
             .from('orders')
             .select('*')
-            .eq('id', id)
+            .eq('id', targetOrderUuid)
             .maybeSingle();
           if (data) {
             const nonNullData = Object.fromEntries(
@@ -2742,6 +2771,8 @@ export const supabaseOrders = {
           console.warn('Supabase fetch order in approve caught:', fetchErr);
         }
       }
+
+      const resolvedOrderUuid = String(orderData?.id || targetOrderUuid).trim();
 
       const explicitPre = Boolean(
         orderData?.is_preorder === true ||
@@ -2782,6 +2813,7 @@ export const supabaseOrders = {
         : 'การชำระเงินเสร็จสิ้น! คำสั่งซื้อสินค้าพร้อมส่ง (In-Stock) อนุมัติและตัดสต็อกสินค้าเรียบร้อยแล้ว';
 
       if (isSupabaseConfigured && supabase) {
+        // 1. Update orders table by UUID (id)
         const fullUpdatePayload: any = isPre ? {
           payment_status: 'approved',
           order_status: 'in_queue',
@@ -2812,12 +2844,50 @@ export const supabaseOrders = {
           updated_at: new Date().toISOString()
         };
 
-        const { error: fullErr } = await updateOrderWithSchemaFallback(id, fullUpdatePayload);
+        const { error: fullErr } = await updateOrderWithSchemaFallback(resolvedOrderUuid, fullUpdatePayload);
         if (fullErr) {
           console.warn('Schema-safe update in approve reported error:', fullErr.message);
         }
 
-        if (isPre) {
+        // 2. กรณี A (Pre-order): Insert ลงตาราง production_queues ด้วย UUID (orders.id) เท่านั้น
+        // กรณี B (In-stock): ห้าม insert ลงตาราง production_queues เด็ดขาด
+        if (isPre && assignedQueueNumber) {
+          try {
+            const queuePayload = {
+              order_id: resolvedOrderUuid, // UUID (orders.id)
+              queue_number: assignedQueueNumber, // NOT NULL
+              customer_name: orderData?.customer_name || orderData?.customerName || 'ลูกค้าพรีออเดอร์',
+              customer_phone: orderData?.customer_phone || orderData?.phone || '',
+              product_spec: `${orderData?.product_name || orderData?.productName || 'เรือพลาสติก'} (${orderData?.color || 'มาตรฐาน'})`,
+              status: 'in_queue'
+            };
+
+            const { data: existingPq } = await supabase
+              .from('production_queues')
+              .select('id')
+              .eq('order_id', resolvedOrderUuid)
+              .maybeSingle();
+
+            if (existingPq) {
+              const { error: pqUpdErr } = await supabase
+                .from('production_queues')
+                .update(queuePayload)
+                .eq('order_id', resolvedOrderUuid);
+              if (pqUpdErr) {
+                console.warn('production_queues update error in approve:', pqUpdErr.message);
+              }
+            } else {
+              const { error: pqInsErr } = await supabase
+                .from('production_queues')
+                .insert([queuePayload]);
+              if (pqInsErr) {
+                console.warn('production_queues insert error in approve:', pqInsErr.message);
+              }
+            }
+          } catch (pqCatchErr) {
+            console.warn('production_queues operation exception in approve:', pqCatchErr);
+          }
+
           try {
             await supabase
               .from('preorders')
@@ -2827,13 +2897,11 @@ export const supabaseOrders = {
                 order_status: nextOrderStatus,
                 queue_status: 'waiting_production',
                 is_deleted: false,
-                ...(assignedQueueNumber ? {
-                  queue_number: assignedQueueNumber,
-                  queue_id: assignedQueueNumber
-                } : {}),
+                queue_number: assignedQueueNumber,
+                queue_id: assignedQueueNumber,
                 updated_at: new Date().toISOString()
               })
-              .eq('id', id);
+              .eq('id', resolvedOrderUuid);
           } catch {}
         }
 
@@ -2842,7 +2910,7 @@ export const supabaseOrders = {
           const { error: deliveryErr } = await supabase
             .from('deliveries')
             .upsert({
-              order_id: orderIdStr,
+              order_id: resolvedOrderUuid,
               delivery_status: deliveryStatus,
               ...(isPre && assignedQueueNumber ? { queue_number: assignedQueueNumber } : {}),
               updated_at: new Date().toISOString()
@@ -2857,17 +2925,17 @@ export const supabaseOrders = {
       }
 
       if (!isPre) {
-        await supabaseProducts.deductStockForOrder({ ...(orderData || {}), id: orderIdStr });
+        await supabaseProducts.deductStockForOrder({ ...(orderData || {}), id: resolvedOrderUuid });
       }
 
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('pornpong-order-approved', {
-          detail: { orderId: orderIdStr, queueNumber: assignedQueueNumber, isPre, nextStatus: nextOrderStatus }
+          detail: { orderId: resolvedOrderUuid, queueNumber: assignedQueueNumber, isPre, nextStatus: nextOrderStatus }
         }));
         window.dispatchEvent(new Event('orders-updated'));
         window.dispatchEvent(new Event('orders_updated'));
         window.dispatchEvent(new CustomEvent('pornpong-delivery-updated', {
-          detail: { order_id: orderIdStr, delivery_status: isPre ? 'waiting_production' : 'completed' }
+          detail: { order_id: resolvedOrderUuid, delivery_status: isPre ? 'waiting_production' : 'completed' }
         }));
       }
 
