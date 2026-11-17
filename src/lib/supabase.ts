@@ -2777,13 +2777,13 @@ export const supabaseOrders = {
         }
       }
 
-      const nextStatus = isPre ? 'in_queue' : 'shipping';
-      const nextOrderStatus = isPre ? 'in_queue' : 'shipping';
+      const nextStatus = isPre ? 'in_queue' : 'preparing';
+      const nextOrderStatus = isPre ? 'in_queue' : 'preparing';
       const nextPaymentStatus = 'approved';
 
       const nextStatusMessage = isPre 
         ? `การชำระเงินเสร็จสิ้น! คำสั่งซื้อเป็นสินค้าสั่งผลิต (Pre-Order) ออกหมายเลขคิวผลิต [${assignedQueueNumber}] เรียบร้อยแล้ว ลำดับคิวการผลิตเริ่มต้นแล้ว โรงงานเริ่มกระบวนการผลิตทันที`
-        : 'การชำระเงินเสร็จสิ้น! คำสั่งซื้อสินค้าพร้อมส่ง (In-Stock) อนุมัติและตัดสต็อกสินค้าเรียบร้อยแล้ว อยู่ระหว่างเตรียมจัดส่ง';
+        : 'การชำระเงินเสร็จสิ้น! คำสั่งซื้อสินค้าพร้อมส่ง (In-Stock) อนุมัติและตัดสต็อกสินค้าเรียบร้อยแล้ว อยู่ในขั้นตอนรอจัดส่ง (Step 2)';
 
       if (isSupabaseConfigured && supabase) {
         // 1. Update orders table by UUID (id)
@@ -2804,16 +2804,17 @@ export const supabaseOrders = {
           updated_at: new Date().toISOString()
         } : {
           payment_status: 'approved',
-          order_status: 'shipping',
-          status: 'shipping',
+          order_status: 'preparing',
+          status: 'preparing',
           is_preorder: false,
           order_type: 'stock',
           product_type: 'stock',
           queue_id: null,
           queue_number: null,
+          delivery_step: 2,
+          delivery_status: 'ready_to_ship',
           status_message: nextStatusMessage,
           is_deleted: false,
-          delivery_status: 'shipping',
           updated_at: new Date().toISOString()
         };
 
@@ -2901,7 +2902,7 @@ export const supabaseOrders = {
         }
 
         try {
-          const deliveryStatus = isPre ? 'waiting_production' : 'shipping';
+          const deliveryStatus = isPre ? 'waiting_production' : 'ready_to_ship';
           const { error: deliveryErr } = await supabase
             .from('deliveries')
             .upsert({
@@ -2930,7 +2931,7 @@ export const supabaseOrders = {
         window.dispatchEvent(new Event('orders-updated'));
         window.dispatchEvent(new Event('orders_updated'));
         window.dispatchEvent(new CustomEvent('pornpong-delivery-updated', {
-          detail: { order_id: resolvedOrderUuid, delivery_status: isPre ? 'waiting_production' : 'shipping' }
+          detail: { order_id: resolvedOrderUuid, delivery_status: isPre ? 'waiting_production' : 'ready_to_ship' }
         }));
       }
 
