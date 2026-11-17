@@ -149,13 +149,25 @@ export default function Header({
         (cleanUserId && (oCustId === cleanUserId || oCustId === currentUser.id))
       );
 
-      // ต้องยังไม่เสร็จสิ้น และยังไม่ถูกยกเลิก
+      // ต้องผ่านการอนุมัติชำระเงินแล้ว (payment_status === 'approved') และยังไม่เสร็จสิ้น / ไม่ยกเลิก
       const delivery = deliveriesMap[orderIdStr] || deliveriesMap[order.id];
       const delivStatus = String(delivery?.delivery_status || order.delivery_status || '').toLowerCase().trim();
+      const os = String(order.order_status || '').toLowerCase().trim();
       const status = String(order.order_status || order.status || '').toLowerCase().trim();
+      const ps = String(order.payment_status || '').toLowerCase().trim();
       const qStep = Number(order.queue_step || 0);
 
+      const isApproved = ps === 'approved' || ps === 'verified' || ps === 'paid';
+      const isPendingOrder =
+        ps === 'pending' ||
+        ps === 'pending_verification' ||
+        os === 'pending_payment' ||
+        status === 'pending_payment' ||
+        status === 'pending_verification';
+
       const isFinished = 
+        os === 'completed' ||
+        os === 'cancelled' ||
         status === 'completed' || 
         status === 'cancelled' || 
         status === 'delivered' || 
@@ -166,7 +178,7 @@ export default function Header({
         delivStatus === 'cancelled' ||
         qStep === 5;
 
-      const isOngoing = Boolean(status || delivStatus) && !isFinished;
+      const isOngoing = isApproved && !isPendingOrder && !isFinished;
 
       return isOwner && isOngoing;
     });
@@ -176,10 +188,11 @@ export default function Header({
       order.is_preorder === true || 
       order.is_preorder === 'true' || 
       order.order_type === 'preorder' || 
+      order.product_type === 'preorder' ||
+      order.product_type === 'pre_order' ||
       order.type === 'preorder' || 
       order.queue_id || 
       order.queue_number ||
-      order.product_type === 'pre_order' ||
       (Number(order.queue_step) >= 1 && Number(order.queue_step) < 5) ||
       isOrderPreOrder(order)
     );

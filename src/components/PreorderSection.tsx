@@ -518,11 +518,18 @@ export default function PreorderSection({
         ? 'ไม่ติดสติกเกอร์ (+0 บาท)' 
         : `${activeStickerSetting.name} (+${activeStickerSetting.price.toLocaleString()} บาท)`;
 
+      const custId = currentUser?.id || null;
+      const custEmail = customerEmail.trim() || (currentUser?.email || 'guest@example.com');
+      const custPhone = customerPhone.trim();
+
       const payload = {
-        customer_id: currentUser?.id || null,
+        customer_id: custId,
+        user_id: custId,
         customer_name: customerName.trim(),
-        customer_email: customerEmail.trim() || (currentUser?.email || 'guest@example.com'),
-        customer_phone: customerPhone.trim(),
+        customer_email: custEmail,
+        email: custEmail,
+        customer_phone: custPhone,
+        phone: custPhone,
         boat_size: activeSizeConfig.name,
         boat_model_name: activeSizeConfig.shortName,
         selected_color: activeColorConfig.name,
@@ -530,11 +537,14 @@ export default function PreorderSection({
         custom_text: hasCustomText ? customText.trim() : '',
         total_price: totalPrice,
         status: 'pending_payment' as const,
-        payment_status: 'pending_verification',
+        payment_status: 'pending',
         order_status: 'pending_payment',
         is_preorder: true,
         order_type: 'preorder',
+        product_type: 'preorder',
         queue_id: null,
+        queue_number: null,
+        queue_step: 0,
         deposit_amount: depositAmount,
         quantity: quantity,
         address: customerAddress.trim(),
@@ -645,27 +655,20 @@ export default function PreorderSection({
       // }
       if (isSupabaseConfigured && supabase) {
         try {
-          const { error: updErr } = await supabase.from('orders').update({
+          await supabaseOrders.update(confirmedOrder.id, {
             status: 'pending_payment',
-            payment_status: 'pending_verification',
+            payment_status: 'pending',
             slip_url: finalSlipUrl,
             payment_slip_url: finalSlipUrl,
             order_status: 'pending_payment',
             is_preorder: true,
             order_type: 'preorder',
+            product_type: 'preorder',
             queue_id: null,
+            queue_number: null,
+            queue_step: 0,
             updated_at: new Date().toISOString()
-          }).eq('id', confirmedOrder.id);
-
-          if (updErr) {
-            console.warn('Orders update with extended columns failed, falling back to core columns:', updErr.message);
-            await supabase.from('orders').update({
-              order_status: 'pending_payment',
-              payment_status: 'pending_verification',
-              payment_slip_url: finalSlipUrl,
-              queue_id: null
-            }).eq('id', confirmedOrder.id);
-          }
+          });
         } catch (errDb: any) {
           console.warn('Could not update status in orders table:', errDb?.message);
         }
@@ -678,11 +681,14 @@ export default function PreorderSection({
       const updatedOrder = normalizeOrder({
         ...confirmedOrder,
         status: 'pending_payment',
-        payment_status: 'pending_verification',
+        payment_status: 'pending',
         order_status: 'pending_payment',
         is_preorder: true,
         order_type: 'preorder',
+        product_type: 'preorder',
         queue_id: null,
+        queue_number: null,
+        queue_step: 0,
         slip_url: finalSlipUrl,
         payment_slip_url: finalSlipUrl
       });
@@ -695,9 +701,10 @@ export default function PreorderSection({
       setConfirmedOrder((prev: any) => ({
         ...prev,
         status: 'pending_payment',
-        payment_status: 'pending_verification',
+        payment_status: 'pending',
         order_status: 'pending_payment',
         queue_id: null,
+        queue_number: null,
         slip_url: slipPreview || '',
         payment_slip_url: slipPreview || ''
       }));
@@ -865,7 +872,7 @@ export default function PreorderSection({
     (p) => p.status === 'preorder' || p.category === 'rowboat' || p.category === 'kayak' || p.price >= 5000
   );
 
-  // Requirement 2: Check if payment is approved (status moved to in_queue, paid, etc.)
+  // Requirement 2: Check if payment is approved (status moved to in_queue, approved, etc.)
   const isApproved = Boolean(
     confirmedOrder && (
       ['paid', 'in_queue', 'in_production', 'production_queue', 'producing', 'ready_to_ship', 'shipped', 'delivering', 'completed', 'verified', 'approved'].includes(String(confirmedOrder.status || '').toLowerCase().trim()) ||
@@ -876,6 +883,7 @@ export default function PreorderSection({
       String(confirmedOrder.status || '').toLowerCase().trim() !== 'pending_payment' &&
       String(confirmedOrder.status || '').toLowerCase().trim() !== 'pending_verification' &&
       String(confirmedOrder.status || '').toLowerCase().trim() !== 'pending' &&
+      String(confirmedOrder.payment_status || '').toLowerCase().trim() !== 'pending' &&
       String(confirmedOrder.payment_status || '').toLowerCase().trim() !== 'pending_verification'
     )
   );
@@ -889,6 +897,7 @@ export default function PreorderSection({
         confirmedOrder.status === 'pending_payment' ||
         confirmedOrder.order_status === 'pending_payment' ||
         confirmedOrder.status === 'pending_verification' ||
+        confirmedOrder.payment_status === 'pending' ||
         confirmedOrder.payment_status === 'pending_verification' ||
         confirmedOrder.order_status === 'pending_verification'
       ))

@@ -133,7 +133,7 @@ export function isOrderPreOrder(order: any): boolean {
   if (order.is_preorder === true || order.is_preorder === 'true' || order.isPreOrder === true || order.isPreOrder === 'true') return true;
   if (order.order_type === 'preorder' || order.order_type === 'pre_order' || order.type === 'preorder' || order.orderType === 'preorder' || order.orderType === 'pre_order' || order.product_type === 'pre_order' || order.product_type === 'preorder') return true;
   if (order.is_preorder === false || order.is_preorder === 'false' || order.isPreOrder === false || order.isPreOrder === 'false') return false;
-  if (order.order_type === 'stock' || order.order_type === 'instock' || order.order_type === 'in_stock' || order.orderType === 'stock' || order.orderType === 'instock' || order.product_type === 'in_stock') return false;
+  if (order.order_type === 'stock' || order.order_type === 'instock' || order.order_type === 'in_stock' || order.orderType === 'stock' || order.orderType === 'instock' || order.product_type === 'stock' || order.product_type === 'in_stock') return false;
   if (order.status === 'in_queue' || order.status === 'in_production' || order.order_status === 'in_queue' || order.order_status === 'in_production') return true;
 
   const idStr = String(order.id || '').toUpperCase();
@@ -1615,6 +1615,74 @@ export const supabaseDeliveries = {
   }
 };
 
+const extractMissingOrderColumn = (err: any): string | null => {
+  const msg = String(err?.message || err?.details || '');
+  // PostgREST PGRST204: "Could not find the 'xyz' column of 'orders' in the schema cache"
+  const pgrstMatch = msg.match(/Could not find the ['"]([a-zA-Z0-9_]+)['"] column/i);
+  if (pgrstMatch && pgrstMatch[1]) return pgrstMatch[1];
+  // Postgres 42703: column "xyz" of relation "orders" does not exist
+  const pgMatch = msg.match(/column\s+["']?([a-zA-Z0-9_]+)["']?\s+(?:of relation\s+["']?orders["']?\s+)?does not exist/i);
+  if (pgMatch && pgMatch[1]) return pgMatch[1];
+  // Postgres: column orders.xyz does not exist
+  const dotMatch = msg.match(/column\s+orders\.([a-zA-Z0-9_]+)\s+does not exist/i);
+  if (dotMatch && dotMatch[1]) return dotMatch[1];
+  return null;
+};
+
+export async function insertOrderWithSchemaFallback(payload: Record<string, any>): Promise<{ data: any[] | null; error: any }> {
+  if (!isSupabaseConfigured || !supabase) {
+    return { data: null, error: new Error('Supabase is not configured') };
+  }
+  const working: Record<string, any> = {};
+  for (const [k, v] of Object.entries(payload)) {
+    if (v !== undefined) working[k] = v;
+  }
+
+  let lastError: any = null;
+  for (let attempt = 0; attempt < 18; attempt++) {
+    const { data, error } = await supabase.from('orders').insert([working]).select();
+    if (!error) {
+      return { data, error: null };
+    }
+    lastError = error;
+    const missingCol = extractMissingOrderColumn(error);
+    if (missingCol && Object.prototype.hasOwnProperty.call(working, missingCol)) {
+      console.warn(`Supabase orders insert stripped unknown column "${missingCol}" and retrying...`);
+      delete working[missingCol];
+      continue;
+    }
+    break;
+  }
+  return { data: null, error: lastError };
+}
+
+export async function updateOrderWithSchemaFallback(orderId: string, payload: Record<string, any>): Promise<{ data: any[] | null; error: any }> {
+  if (!isSupabaseConfigured || !supabase) {
+    return { data: null, error: new Error('Supabase is not configured') };
+  }
+  const working: Record<string, any> = {};
+  for (const [k, v] of Object.entries(payload)) {
+    if (v !== undefined) working[k] = v;
+  }
+
+  let lastError: any = null;
+  for (let attempt = 0; attempt < 18; attempt++) {
+    const { data, error } = await supabase.from('orders').update(working).eq('id', orderId).select();
+    if (!error) {
+      return { data, error: null };
+    }
+    lastError = error;
+    const missingCol = extractMissingOrderColumn(error);
+    if (missingCol && Object.prototype.hasOwnProperty.call(working, missingCol)) {
+      console.warn(`Supabase orders update stripped unknown column "${missingCol}" and retrying...`);
+      delete working[missingCol];
+      continue;
+    }
+    break;
+  }
+  return { data: null, error: lastError };
+}
+
 export const supabaseOrders = {
   // Requirement 1: Query table 'orders' for active in-stock approved orders
   // .or('status.eq.ready_to_ship,status.eq.paid,status.eq.in_transit').order('created_at', { ascending: false })
@@ -1843,13 +1911,14 @@ export const supabaseOrders = {
       const rawData = (ordersRes.data || []).map(normalizeOrder);
 
       const data = rawData.filter((row: any) => {
+        if (row.is_deleted === true || row.is_deleted === 'true') return false;
         const s = String(row.order_status || '').toLowerCase().trim();
         const ps = String(row.payment_status || '').toLowerCase().trim();
 
         if (['waiting_payment', 'pending_payment', 'pending_verification', 'waiting_verify', 'waiting_approval'].includes(s)) return false;
-        if (['pending_verification', 'waiting_verify', 'waiting_approval', 'pending_deposit'].includes(ps)) return false;
+        if (['pending', 'pending_payment', 'pending_verification', 'waiting_verify', 'waiting_approval', 'pending_deposit'].includes(ps)) return false;
         if (['cancelled', 'payment_rejected', 'rejected'].includes(s) || ['cancelled', 'payment_rejected', 'rejected'].includes(ps)) return false;
-        if (s === 'pending' && ps !== 'verified' && ps !== 'paid') return false;
+        if (s === 'pending' && ps !== 'approved' && ps !== 'verified' && ps !== 'paid') return false;
 
         const approvedStatuses = [
           'paid',
@@ -1867,7 +1936,7 @@ export const supabaseOrders = {
           'completed',
           'delivered'
         ];
-        return approvedStatuses.includes(s) || ['verified', 'paid', 'approved', 'deposit_paid'].includes(ps);
+        return approvedStatuses.includes(s) || ['approved', 'verified', 'paid', 'deposit_paid'].includes(ps);
       });
 
       return data.map((row: any, idx: number) => {
@@ -2064,16 +2133,22 @@ export const supabaseOrders = {
 
   async create(item: {
     customer_id: string | null;
+    user_id?: string | null;
     customer_name: string;
     customer_email: string;
+    email?: string;
     customer_phone: string;
+    phone?: string;
     total_amount: number;
     payment_status?: string;
     order_status?: string;
     status?: string;
     order_type?: string;
+    product_type?: string;
     is_preorder?: boolean;
     queue_id?: string | null;
+    queue_number?: string | null;
+    queue_step?: number;
     created_at?: string;
     productName?: string;
     product_name?: string;
@@ -2082,22 +2157,37 @@ export const supabaseOrders = {
     address?: string;
     items?: Array<{ product_id?: string; product_name?: string; quantity: number }>;
   }): Promise<any> {
-    const isPre = Boolean(item.is_preorder === true || item.order_type === 'preorder' || item.order_type === 'pre_order');
+    const isPre = Boolean(
+      item.is_preorder === true ||
+      item.order_type === 'preorder' ||
+      item.order_type === 'pre_order' ||
+      item.product_type === 'preorder' ||
+      item.product_type === 'pre_order'
+    );
     const orderTypeVal = isPre ? 'preorder' : 'stock';
     const prodName = item.product_name || item.productName || 'เรือพลาสติกและอุปกรณ์';
+    const uid = item.user_id !== undefined ? item.user_id : item.customer_id;
+    const phoneVal = item.phone || item.customer_phone || '';
+    const emailVal = item.email || item.customer_email || 'guest@example.com';
 
     const fullPayload: any = {
       customer_id: item.customer_id,
+      user_id: uid,
       customer_name: item.customer_name,
-      customer_email: item.customer_email,
-      customer_phone: item.customer_phone,
+      customer_email: emailVal,
+      email: emailVal,
+      customer_phone: phoneVal,
+      phone: phoneVal,
       total_amount: Number(item.total_amount),
+      payment_status: 'pending',
       order_status: 'pending_payment',
       status: 'pending_payment',
-      payment_status: 'pending_verification',
       is_preorder: isPre,
       order_type: orderTypeVal,
+      product_type: orderTypeVal,
       queue_id: null,
+      queue_number: null,
+      queue_step: 0,
       product_name: prodName,
       color: item.color || 'คละสี',
       notes: item.notes || '',
@@ -2118,55 +2208,33 @@ export const supabaseOrders = {
     try {
       console.log('ORDER PAYLOAD', fullPayload);
 
-      // Attempt 1: full payload
-      const { data, error } = await supabase
-        .from('orders')
-        .insert([fullPayload])
-        .select();
-
+      const { data, error } = await insertOrderWithSchemaFallback(fullPayload);
       if (!error && data?.[0]) {
         storeOrderItemsInMemory(data[0]);
         return normalizeOrder({ ...fullPayload, ...data[0], items: item.items || [] });
       }
 
-      console.warn('Full insert failed, falling back to core + type columns:', error?.message);
-
-      // Attempt 2: core columns + order_status/is_preorder/order_type/queue_id
-      const midPayload: any = {
+      console.warn('Schema-safe insert failed, falling back to core columns:', error?.message);
+      const fallbackPayload: any = {
         customer_id: item.customer_id,
+        user_id: uid,
         customer_name: item.customer_name,
-        customer_email: item.customer_email,
-        customer_phone: item.customer_phone,
+        customer_email: emailVal,
+        email: emailVal,
+        customer_phone: phoneVal,
+        phone: phoneVal,
         total_amount: Number(item.total_amount),
+        payment_status: 'pending',
         order_status: 'pending_payment',
-        payment_status: 'pending_verification',
+        status: 'pending_payment',
         is_preorder: isPre,
         order_type: orderTypeVal,
-        queue_id: null
+        product_type: orderTypeVal,
+        queue_id: null,
+        queue_number: null,
+        queue_step: 0
       };
-      const { data: midData, error: midErr } = await supabase
-        .from('orders')
-        .insert([midPayload])
-        .select();
-
-      if (!midErr && midData?.[0]) {
-        storeOrderItemsInMemory(midData[0]);
-        return normalizeOrder({ ...fullPayload, ...midData[0], items: item.items || [] });
-      }
-
-      // Attempt 3: minimal core columns
-      const minPayload: any = {
-        customer_id: item.customer_id,
-        customer_name: item.customer_name,
-        customer_email: item.customer_email,
-        customer_phone: item.customer_phone,
-        total_amount: Number(item.total_amount),
-        order_status: 'pending_payment'
-      };
-      const { data: minData, error: minErr } = await supabase
-        .from('orders')
-        .insert([minPayload])
-        .select();
+      const { data: minData, error: minErr } = await insertOrderWithSchemaFallback(fallbackPayload);
 
       if (minErr) {
         console.error('Failed to insert order into Supabase:', minErr.message);
@@ -2185,9 +2253,12 @@ export const supabaseOrders = {
 
   async createCustomPreOrder(item: {
     customer_id?: string | null;
+    user_id?: string | null;
     customer_name: string;
     customer_email?: string;
+    email?: string;
     customer_phone: string;
+    phone?: string;
     selected_color: string;
     boat_size?: string;
     boat_model_name?: string;
@@ -2213,23 +2284,37 @@ export const supabaseOrders = {
       ? `${item.boat_model_name} (สี${item.selected_color})` 
       : `เรือพลาสติกสั่งทำพิเศษ ${sizeName} (สี${item.selected_color})`;
 
+    const cid = item.customer_id || null;
+    const uid = item.user_id !== undefined ? item.user_id : cid;
+    const emailVal = item.email || item.customer_email || 'guest@example.com';
+    const phoneVal = item.phone || item.customer_phone || '';
+
     const fullPayload: any = {
-      customer_id: item.customer_id || null,
+      customer_id: cid,
+      user_id: uid,
       customer_name: item.customer_name || 'ลูกค้าพรีออเดอร์',
-      customer_email: item.customer_email || 'guest@example.com',
-      customer_phone: item.customer_phone || '',
+      customer_email: emailVal,
+      email: emailVal,
+      customer_phone: phoneVal,
+      phone: phoneVal,
       selected_color: item.selected_color,
       boat_size: sizeName,
+      boat_model_name: item.boat_model_name || sizeName,
       sticker_option: stickerText,
       custom_text: item.custom_text || '',
       total_price: Number(item.total_price),
-      status: 'pending_payment',
+      deposit_amount: item.deposit_amount !== undefined ? Number(item.deposit_amount) : undefined,
+      quantity: item.quantity !== undefined ? Number(item.quantity) : 1,
       total_amount: Number(item.total_price),
-      payment_status: 'pending_verification',
+      payment_status: 'pending',
       order_status: 'pending_payment',
+      status: 'pending_payment',
       is_preorder: true,
       order_type: 'preorder',
+      product_type: 'preorder',
       queue_id: null,
+      queue_number: null,
+      queue_step: 0,
       product_name: prodName,
       color: item.selected_color,
       address: item.address || '',
@@ -2237,51 +2322,45 @@ export const supabaseOrders = {
       created_at: new Date().toISOString()
     };
 
-    // Attempt 1: full payload with custom columns (let DB generate ID or accept it cleanly)
-    const { data, error } = await supabase.from('orders').insert([fullPayload]).select();
+    const { data, error } = await insertOrderWithSchemaFallback(fullPayload);
     if (!error && data && data[0]) {
-      return normalizeOrder({ ...fullPayload, ...data[0] });
+      return normalizeOrder({ ...fullPayload, ...data[0], is_preorder: true, order_type: 'preorder', product_type: 'preorder' });
     }
 
-    console.warn('First insert attempt with custom columns failed, falling back to core columns:', error?.message);
-    const midPayload: any = {
-      customer_id: item.customer_id || null,
-      customer_name: item.customer_name,
-      customer_email: item.customer_email || 'guest@example.com',
-      customer_phone: item.customer_phone,
+    console.warn('Pre-order schema-safe insert failed, retrying core pre-order payload:', error?.message);
+    const corePayload: any = {
+      customer_id: cid,
+      user_id: uid,
+      customer_name: item.customer_name || 'ลูกค้าพรีออเดอร์',
+      customer_email: emailVal,
+      email: emailVal,
+      customer_phone: phoneVal,
+      phone: phoneVal,
       total_amount: Number(item.total_price),
-      payment_status: 'pending_verification',
+      payment_status: 'pending',
       order_status: 'pending_payment',
+      status: 'pending_payment',
       is_preorder: true,
       order_type: 'preorder',
-      queue_id: null
+      product_type: 'preorder',
+      queue_id: null,
+      queue_number: null,
+      queue_step: 0,
+      product_name: prodName,
+      notes: fullPayload.notes
     };
-    const { data: dataMid, error: errMid } = await supabase.from('orders').insert([midPayload]).select();
-    if (!errMid && dataMid && dataMid[0]) {
-      return normalizeOrder({ ...fullPayload, ...dataMid[0] });
-    }
-
-    const corePayload: any = {
-      customer_id: item.customer_id || null,
-      customer_name: item.customer_name,
-      customer_email: item.customer_email || 'guest@example.com',
-      customer_phone: item.customer_phone,
-      total_amount: Number(item.total_price),
-      payment_status: 'pending_verification',
-      order_status: 'pending_payment'
-    };
-    const { data: dataCore, error: errCore } = await supabase.from('orders').insert([corePayload]).select();
+    const { data: dataCore, error: errCore } = await insertOrderWithSchemaFallback(corePayload);
     if (!errCore && dataCore && dataCore[0]) {
-      return normalizeOrder({ ...fullPayload, ...dataCore[0] });
+      return normalizeOrder({ ...fullPayload, ...dataCore[0], is_preorder: true, order_type: 'preorder', product_type: 'preorder' });
     }
 
-    throw errCore || errMid || error || new Error('ไม่สามารถสร้างคำสั่งจองพรีออเดอร์ได้');
+    throw errCore || error || new Error('ไม่สามารถสร้างคำสั่งจองพรีออเดอร์ได้');
   },
 
   async update(id: string, item: any): Promise<boolean> {
     if (!isSupabaseConfigured || !supabase) return false;
     try {
-      const { error } = await supabase.from('orders').update(item).eq('id', id);
+      const { error } = await updateOrderWithSchemaFallback(id, item);
       if (error) {
         throw error;
       }
@@ -2415,28 +2494,21 @@ export const supabaseOrders = {
     try {
       if (isSupabaseConfigured && supabase) {
         const targetStatus = isDeliv ? 'delivered' : isShip ? 'in_transit' : status;
-        try {
-          await supabase.from('orders').update({
-            status: targetStatus,
-            order_status: mappedOrderStatus,
-            ...(isPending ? {} : { delivery_status: isDeliv ? 'delivered' : mappedOrderStatus }),
-            ...(!isPending && trackingNo ? {
-              shipment_no: trackingNo,
-              shipmentNo: trackingNo,
-              tracking_number: trackingNo
-            } : {}),
-            ...(carrier ? { shipping_carrier: carrier, carrier_name: carrier } : {}),
-            ...(driver ? { driver_phone: driver } : {}),
-            ...(estDate ? { estimated_delivery_date: estDate } : {}),
-            ...(queueNo ? { queue_number: queueNo } : {})
-          }).eq('id', id);
-        } catch {
-          await supabase.from('orders').update({
-            status: targetStatus,
-            order_status: mappedOrderStatus,
-            ...(isPending ? {} : { delivery_status: isDeliv ? 'delivered' : mappedOrderStatus })
-          }).eq('id', id);
-        }
+        await updateOrderWithSchemaFallback(id, {
+          status: targetStatus,
+          order_status: mappedOrderStatus,
+          ...(isPending ? {} : { delivery_status: isDeliv ? 'delivered' : mappedOrderStatus }),
+          ...(!isPending && trackingNo ? {
+            shipment_no: trackingNo,
+            shipmentNo: trackingNo,
+            tracking_number: trackingNo
+          } : {}),
+          ...(carrier ? { shipping_carrier: carrier, carrier_name: carrier } : {}),
+          ...(driver ? { driver_phone: driver } : {}),
+          ...(estDate ? { estimated_delivery_date: estDate } : {}),
+          ...(queueNo ? { queue_number: queueNo } : {}),
+          updated_at: new Date().toISOString()
+        });
       }
     } catch (e) {
       console.warn('Supabase updateStatus caught warning:', e);
@@ -2488,28 +2560,19 @@ export const supabaseOrders = {
     const queueNo = meta?.queue_number;
 
     if (isSupabaseConfigured && supabase) {
-      try {
-        await supabase.from('orders').update({
-          queue_step: stage,
-          queue_stage: stage,
-          queue_status: currentStageInfo.orderStatus,
-          order_status: currentStageInfo.orderStatus,
-          status: currentStageInfo.status,
-          ...(trackingNo ? { shipment_no: trackingNo, shipmentNo: trackingNo, tracking_number: trackingNo } : {}),
-          ...(queueNo ? { queue_number: queueNo } : {}),
-          ...(carrier ? { shipping_carrier: carrier, carrier_name: carrier } : {}),
-          ...(driver ? { driver_phone: driver } : {}),
-          ...(estDate ? { estimated_delivery_date: estDate } : {})
-        }).eq('id', id);
-      } catch (err: any) {
-        console.warn('Supabase updateQueueStage error:', err?.message);
-        try {
-          await supabase.from('orders').update({
-            order_status: currentStageInfo.orderStatus,
-            queue_step: stage
-          }).eq('id', id);
-        } catch {}
-      }
+      await updateOrderWithSchemaFallback(id, {
+        queue_step: stage,
+        queue_stage: stage,
+        queue_status: currentStageInfo.orderStatus,
+        order_status: currentStageInfo.orderStatus,
+        status: currentStageInfo.status,
+        ...(trackingNo ? { shipment_no: trackingNo, shipmentNo: trackingNo, tracking_number: trackingNo } : {}),
+        ...(queueNo ? { queue_number: queueNo, queue_id: queueNo } : {}),
+        ...(carrier ? { shipping_carrier: carrier, carrier_name: carrier } : {}),
+        ...(driver ? { driver_phone: driver } : {}),
+        ...(estDate ? { estimated_delivery_date: estDate } : {}),
+        updated_at: new Date().toISOString()
+      });
     }
 
     try {
@@ -2546,23 +2609,28 @@ export const supabaseOrders = {
 
   async listWaitingVerify(): Promise<any[]> {
     const isOrderExcludedFromPending = (rawOrder: any): boolean => {
+      if (rawOrder?.is_deleted === true || rawOrder?.is_deleted === 'true') return true;
       const order = normalizeOrder(rawOrder);
+      if (order.is_deleted === true || order.is_deleted === 'true') return true;
+
       const os = String(order.order_status || '').toLowerCase().trim();
+      const s = String(order.status || '').toLowerCase().trim();
       const ps = String(order.payment_status || '').toLowerCase().trim();
 
       const EXCLUDED_STATUSES = ['paid', 'in_queue', 'in_production', 'ready_to_transfer', 'delivering', 'production_queue', 'ready_to_ship', 'producing', 'completed', 'in_transit', 'shipping', 'delivered', 'cancelled', 'payment_rejected', 'rejected'];
       const EXCLUDED_PAYMENT_STATUSES = ['verified', 'paid', 'completed', 'approved', 'rejected', 'payment_rejected'];
 
-      if (EXCLUDED_STATUSES.includes(os) || EXCLUDED_PAYMENT_STATUSES.includes(ps)) {
+      if (EXCLUDED_STATUSES.includes(os) || EXCLUDED_STATUSES.includes(s) || EXCLUDED_PAYMENT_STATUSES.includes(ps)) {
         return true;
       }
 
-      if (os === 'pending_payment' || os === 'pending_verification' || ps === 'pending_verification') {
+      if (ps === 'pending' || os === 'pending_payment' || s === 'pending_payment' || os === 'pending_verification' || ps === 'pending_verification') {
         return false;
       }
 
       const isPending = ['waiting_verify', 'waiting_approval', 'pending', 'pending_payment', 'waiting_payment'].includes(ps) ||
-                        ['waiting_verify', 'waiting_approval', 'pending', 'waiting_payment', 'pending_payment'].includes(os);
+                        ['waiting_verify', 'waiting_approval', 'pending', 'waiting_payment', 'pending_payment'].includes(os) ||
+                        ['waiting_verify', 'waiting_approval', 'pending', 'waiting_payment', 'pending_payment'].includes(s);
       return !isPending;
     };
 
@@ -2574,7 +2642,7 @@ export const supabaseOrders = {
       const { data: pvData, error: pvErr } = await supabase
         .from('orders')
         .select('*')
-        .or('order_status.eq.pending_payment,order_status.eq.pending_verification,status.eq.pending_payment,status.eq.pending_verification,payment_status.eq.pending_verification')
+        .or('payment_status.eq.pending,order_status.eq.pending_payment,order_status.eq.pending_verification,status.eq.pending_payment,status.eq.pending_verification,payment_status.eq.pending_verification')
         .order('created_at', { ascending: false });
 
       if (pvErr) {
@@ -2634,12 +2702,15 @@ export const supabaseOrders = {
           payment_slip_url: slipUrl || row.slip_url || row.base64_slip || '',
           slip_url: row.slip_url || slipUrl || row.base64_slip || '',
           base64_slip: row.base64_slip || (slipUrl.startsWith('data:') ? slipUrl : ''),
-          customer_id: row.customer_id || null,
+          customer_id: row.customer_id || row.user_id || null,
+          user_id: row.user_id || row.customer_id || null,
           customer_name: row.customer_name || row.customerName || '',
-          customer_email: row.customer_email || 'guest@example.com',
-          customer_phone: row.customer_phone || '',
+          customer_email: row.customer_email || row.email || 'guest@example.com',
+          email: row.email || row.customer_email || 'guest@example.com',
+          customer_phone: row.customer_phone || row.phone || '',
+          phone: row.phone || row.customer_phone || '',
           total_amount: Number(row.total_amount || row.amount || 0),
-          payment_status: row.payment_status || 'pending_verification',
+          payment_status: row.payment_status || 'pending',
           created_at: row.created_at || row.date || ''
         });
       });
@@ -2662,7 +2733,10 @@ export const supabaseOrders = {
             .eq('id', id)
             .maybeSingle();
           if (data) {
-            orderData = normalizeOrder({ ...(orderData || {}), ...data });
+            const nonNullData = Object.fromEntries(
+              Object.entries(data).filter(([_, v]) => v !== null && v !== undefined)
+            );
+            orderData = normalizeOrder({ ...(orderData || {}), ...nonNullData });
           }
         } catch (fetchErr) {
           console.warn('Supabase fetch order in approve caught:', fetchErr);
@@ -2674,8 +2748,9 @@ export const supabaseOrders = {
         orderData?.is_preorder === 'true' ||
         orderData?.order_type === 'preorder' ||
         orderData?.order_type === 'pre_order' ||
-        orderData?.type === 'preorder' ||
-        orderData?.product_type === 'pre_order'
+        orderData?.product_type === 'preorder' ||
+        orderData?.product_type === 'pre_order' ||
+        orderData?.type === 'preorder'
       );
       const explicitStock = Boolean(
         orderData?.is_preorder === false ||
@@ -2683,6 +2758,7 @@ export const supabaseOrders = {
         orderData?.order_type === 'stock' ||
         orderData?.order_type === 'instock' ||
         orderData?.order_type === 'in_stock' ||
+        orderData?.product_type === 'stock' ||
         orderData?.product_type === 'in_stock'
       );
       const isPre = explicitPre ? true : explicitStock ? false : isOrderPreOrder(orderData);
@@ -2699,7 +2775,7 @@ export const supabaseOrders = {
 
       const nextStatus = isPre ? 'in_queue' : 'completed';
       const nextOrderStatus = isPre ? 'in_queue' : 'completed';
-      const nextPaymentStatus = isPre ? 'verified' : 'paid';
+      const nextPaymentStatus = 'approved';
 
       const nextStatusMessage = isPre 
         ? `การชำระเงินเสร็จสิ้น! คำสั่งซื้อเป็นสินค้าสั่งผลิต (Pre-Order) ออกหมายเลขคิวผลิต [${assignedQueueNumber}] เรียบร้อยแล้ว ลำดับคิวการผลิตเริ่มต้นแล้ว โรงงานเริ่มกระบวนการผลิตทันที`
@@ -2707,25 +2783,27 @@ export const supabaseOrders = {
 
       if (isSupabaseConfigured && supabase) {
         const fullUpdatePayload: any = isPre ? {
+          payment_status: 'approved',
           order_status: 'in_queue',
           status: 'in_queue',
+          is_preorder: true,
+          order_type: 'preorder',
+          product_type: 'preorder',
+          queue_id: assignedQueueNumber,
+          queue_number: assignedQueueNumber,
           queue_step: 1,
           queue_stage: 1,
           queue_status: 'waiting_production',
-          payment_status: 'verified',
-          order_type: 'preorder',
-          is_preorder: true,
-          queue_id: assignedQueueNumber,
-          queue_number: assignedQueueNumber,
           status_message: nextStatusMessage,
           is_deleted: false,
           updated_at: new Date().toISOString()
         } : {
+          payment_status: 'approved',
           order_status: 'completed',
           status: 'completed',
-          payment_status: 'paid',
-          order_type: 'stock',
           is_preorder: false,
+          order_type: 'stock',
+          product_type: 'stock',
           queue_id: null,
           queue_number: null,
           status_message: nextStatusMessage,
@@ -2734,35 +2812,9 @@ export const supabaseOrders = {
           updated_at: new Date().toISOString()
         };
 
-        const { error: fullErr } = await supabase
-          .from('orders')
-          .update(fullUpdatePayload)
-          .eq('id', id);
-
+        const { error: fullErr } = await updateOrderWithSchemaFallback(id, fullUpdatePayload);
         if (fullErr) {
-          console.warn('Full update payload failed in approve, retrying schema-safe payload:', fullErr.message);
-          const safePayload: any = isPre ? {
-            order_status: 'in_queue',
-            queue_step: 1,
-            queue_id: assignedQueueNumber,
-            is_preorder: true,
-            order_type: 'preorder',
-            updated_at: new Date().toISOString()
-          } : {
-            order_status: 'completed',
-            queue_id: null,
-            is_preorder: false,
-            order_type: 'stock',
-            updated_at: new Date().toISOString()
-          };
-          const { error: safeErr } = await supabase.from('orders').update(safePayload).eq('id', id);
-          if (safeErr) {
-            console.warn('Safe payload failed, retrying minimal order_status update:', safeErr.message);
-            await supabase
-              .from('orders')
-              .update(isPre ? { order_status: 'in_queue', queue_step: 1 } : { order_status: 'completed' })
-              .eq('id', id);
-          }
+          console.warn('Schema-safe update in approve reported error:', fullErr.message);
         }
 
         if (isPre) {
@@ -2897,30 +2949,17 @@ export const supabaseOrders = {
       const updatePayload = {
         payment_slip_url: finalSlipUrl,
         slip_url: finalSlipUrl,
-        status: 'pending_payment',
-        payment_status: 'pending_verification',
+        payment_status: 'pending',
         order_status: 'pending_payment',
+        status: 'pending_payment',
         queue_id: null,
+        queue_number: null,
         updated_at: new Date().toISOString()
       };
 
       if (isSupabaseConfigured && supabase) {
         try {
-          const { error: updErr } = await supabase
-            .from('orders')
-            .update(updatePayload)
-            .eq('id', orderId);
-          if (updErr) {
-            await supabase
-              .from('orders')
-              .update({
-                payment_slip_url: finalSlipUrl,
-                order_status: 'pending_payment',
-                payment_status: 'pending_verification',
-                queue_id: null
-              })
-              .eq('id', orderId);
-          }
+          await updateOrderWithSchemaFallback(orderId, updatePayload);
         } catch (e) {
           console.warn('Supabase orders update error in uploadSlip:', e);
         }
@@ -2932,7 +2971,7 @@ export const supabaseOrders = {
               payment_slip_url: finalSlipUrl, 
               slip_url: finalSlipUrl, 
               status: 'pending_payment',
-              payment_status: 'pending_verification',
+              payment_status: 'pending',
               order_status: 'pending_payment'
             })
             .eq('id', orderId);
@@ -2945,7 +2984,7 @@ export const supabaseOrders = {
               payment_slip_url: finalSlipUrl, 
               slip_url: finalSlipUrl, 
               status: 'pending_payment',
-              payment_status: 'pending_verification',
+              payment_status: 'pending',
               order_status: 'pending_payment'
             })
             .eq('id', orderId);

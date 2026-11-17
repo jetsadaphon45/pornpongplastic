@@ -54,9 +54,13 @@ export const isOrderStatusApproved = (ord: any): boolean => {
     return false;
   }
 
-  // 3. Approved screen MUST ONLY be shown when status is changed to 'paid', 'ready_to_ship', 'producing' or 'in_transit' (or 'completed')
+  // 3. Approved screen MUST ONLY be shown when status is changed to 'paid', 'in_queue', 'ready_to_ship', 'producing' or 'in_transit' (or 'completed')
   const approvedStatuses = [
     'paid',
+    'in_queue',
+    'in_production',
+    'ready_to_transfer',
+    'delivering',
     'ready_to_ship',
     'producing',
     'manufacturing',
@@ -235,15 +239,17 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, o
       // 2. Toast notification
       triggerToast('🎉 การชำระเงินเสร็จสิ้น! แอดมินอนุมัติเรียบร้อยแล้ว');
 
+      const nextPayStatus = updatedData?.payment_status || 'approved';
+
       // 3. Update active order state
       setActiveOrder((prev: any) => ({
         ...prev,
         ...(updatedData || {}),
-        payment_status: 'paid',
+        payment_status: nextPayStatus,
         status: nextStatus,
         order_status: nextStatus
       }));
-      setCurrentPaymentStatus('paid');
+      setCurrentPaymentStatus(nextPayStatus);
       setCurrentOrderStatus(nextStatus);
       if (updatedData?.payment_slip_url || updatedData?.slip_url) {
         setUploadedSlipUrl(updatedData.payment_slip_url || updatedData.slip_url);
@@ -365,7 +371,7 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, o
             .maybeSingle();
           const approvedDeliveryStatuses = ['ready_to_ship', 'ready_for_shipping', 'manufacturing', 'producing', 'in_transit', 'shipped', 'delivered', 'completed'];
           if (delivData && delivData.delivery_status && approvedDeliveryStatuses.includes(String(delivData.delivery_status).toLowerCase())) {
-            triggerApprovalSuccess({ ...data, status: delivData.delivery_status, payment_status: 'verified' });
+            triggerApprovalSuccess({ ...data, status: delivData.delivery_status, payment_status: 'approved' });
             return;
           }
         }
@@ -422,7 +428,7 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, o
               if (updated && approvedDeliveryStatuses.includes(dStatus)) {
                 triggerApprovalSuccess({
                   status: updated.delivery_status || 'ready_to_ship',
-                  payment_status: 'verified'
+                  payment_status: 'approved'
                 });
               }
             }
@@ -508,29 +514,32 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, o
         setUploadedSlipUrl(slipUrl);
       }
 
-      // Update to order_status = 'pending_payment' and queue_id = null until admin approves
+      // Update to payment_status = 'pending', order_status = 'pending_payment', status = 'pending_payment' and queue_id = null, queue_number = null until admin approves
       hasTriggeredApprovalRef.current = false;
-      setCurrentPaymentStatus('pending_verification');
+      setCurrentPaymentStatus('pending');
       setCurrentOrderStatus('pending_payment');
 
       if (isSupabaseConfigured) {
         try {
           if (supabase) {
             const { error: updErr } = await supabase.from('orders').update({
-              status: 'pending_payment',
-              payment_status: 'pending_verification',
+              payment_status: 'pending',
               order_status: 'pending_payment',
+              status: 'pending_payment',
               queue_id: null,
+              queue_number: null,
               payment_slip_url: slipUrl,
               slip_url: slipUrl,
               updated_at: new Date().toISOString()
             }).eq('id', activeOrder.id);
             if (updErr) {
               await supabase.from('orders').update({
+                payment_status: 'pending',
                 order_status: 'pending_payment',
-                payment_status: 'pending_verification',
+                status: 'pending_payment',
                 payment_slip_url: slipUrl,
-                queue_id: null
+                queue_id: null,
+                queue_number: null
               }).eq('id', activeOrder.id);
             }
           }
@@ -543,10 +552,11 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, o
 
       setActiveOrder((prev: any) => ({
         ...prev,
-        status: 'pending_payment',
-        payment_status: 'pending_verification',
+        payment_status: 'pending',
         order_status: 'pending_payment',
+        status: 'pending_payment',
         queue_id: null,
+        queue_number: null,
         payment_slip_url: slipUrl,
         slip_url: slipUrl
       }));
@@ -556,14 +566,15 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, o
     } catch (err: any) {
       console.error('Failed to submit slip:', err);
       setUploadedSlipUrl(slipPreview || '');
-      setCurrentPaymentStatus('pending_verification');
+      setCurrentPaymentStatus('pending');
       setCurrentOrderStatus('pending_payment');
       setActiveOrder((prev: any) => ({
         ...prev,
-        status: 'pending_payment',
+        payment_status: 'pending',
         order_status: 'pending_payment',
-        payment_status: 'pending_verification',
-        queue_id: null
+        status: 'pending_payment',
+        queue_id: null,
+        queue_number: null
       }));
       triggerToast('ระบบได้รับหลักฐานการชำระเงินเรียบร้อยแล้ว');
       setStep('verifying');

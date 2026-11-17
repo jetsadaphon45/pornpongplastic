@@ -718,7 +718,7 @@ export function ProfileModal({
   }, [orders, isOrderCompleted]);
 
   // 2. Requirement: แท็บ "ติดตามสถานะจัดส่ง" (Active Tracking):
-  // กรองเฉพาะออเดอร์ที่ "กำลังดำเนินการอยู่จริง" มาแสดงในแท็บ "ติดตามสถานะจัดส่ง"
+  // ดึงเฉพาะออเดอร์ที่ผ่านการอนุมัติแล้ว (payment_status === 'approved') และยังไม่เสร็จสิ้น/ยกเลิก
   const activeTrackingOrders = React.useMemo(() => {
     return orders.filter(order => {
       if (!order) return false;
@@ -728,6 +728,14 @@ export function ProfileModal({
       const sl = String(order.stageLabel || '').toLowerCase().trim();
       const ps = String((order as any).payment_status || '').toLowerCase().trim();
       const qStep = Number((order as any).queue_step || 0);
+
+      const isApproved = ps === 'approved' || ps === 'verified' || ps === 'paid';
+      const isPendingOrder =
+        ps === 'pending' ||
+        ps === 'pending_verification' ||
+        os === 'pending_payment' ||
+        s === 'pending_payment' ||
+        s === 'pending_verification';
 
       const isCompleted =
         s === 'completed' ||
@@ -749,7 +757,7 @@ export function ProfileModal({
         ps === 'cancelled' ||
         ps === 'rejected';
 
-      return !isCompleted && !isCancelled;
+      return isApproved && !isPendingOrder && !isCompleted && !isCancelled;
     });
   }, [orders]);
 
@@ -845,12 +853,13 @@ export function ProfileModal({
         const uPhone = String(currentUser.phone || '').replace(/\D/g, '');
         const uName = String(currentUser.name || '').trim().toLowerCase();
 
-        const oIdClean = String(o.customer_id || '').trim();
+        const oIdClean = String(o.customer_id || o.user_id || '').trim();
+        const oUidClean = String(o.user_id || o.customer_id || '').trim();
         const oEmail = String(o.customer_email || o.email || '').toLowerCase().trim();
         const oPhone = String(o.customer_phone || o.phone || '').replace(/\D/g, '');
         const oName = String(o.customerName || o.customer_name || '').trim().toLowerCase();
 
-        if (uId && uId !== 'guest' && oIdClean === uId) return true;
+        if (uId && uId !== 'guest' && (oIdClean === uId || oUidClean === uId)) return true;
         if (uEmail && uEmail !== 'guest@example.com' && (oEmail === uEmail || oEmail.includes(uEmail) || uEmail.includes(oEmail))) return true;
         if (uPhone && oPhone && (uPhone === oPhone || uPhone.endsWith(oPhone) || oPhone.endsWith(uPhone))) return true;
         if (uName && oName && (uName === oName || uName.includes(oName) || oName.includes(uName))) return true;
@@ -867,6 +876,8 @@ export function ProfileModal({
           o.is_preorder === true || 
           o.is_preorder === 'true' || 
           o.order_type === 'preorder' || 
+          o.product_type === 'preorder' ||
+          o.product_type === 'pre_order' ||
           ['in_queue', 'in_production', 'ready_to_transfer', 'delivering', 'molding', 'assembling'].includes(String(o.status || '').toLowerCase()) ||
           ['in_queue', 'in_production', 'ready_to_transfer', 'delivering', 'molding', 'assembling'].includes(String(o.order_status || '').toLowerCase()) ||
           Number(o.queue_step || 0) > 0
@@ -892,8 +903,9 @@ export function ProfileModal({
 
         const isDelivered = delivStatus === 'delivered' || delivStatus === 'completed' || ordStatus === 'delivered' || ordStatus === 'completed' || qStep === 5;
         const isShipping = delivStatus === 'in_transit' || delivStatus === 'shipping' || ordStatus === 'in_transit' || ordStatus === 'delivering' || ordStatus === 'shipped' || ordStatus === 'shipping' || o.queue_stage === 4 || qStep === 4;
-        const isPendingVerif = ordStatus === 'pending_payment' || ordStatus === 'pending_verification' || (o.status || '').toLowerCase() === 'pending_payment' || (o.payment_status || '').toLowerCase() === 'pending_verification' || (ordStatus === 'pending' && (o.payment_status || '').toLowerCase() !== 'verified');
-        const isWaitingPayment = ordStatus === 'waiting_payment' || ((o.payment_status || '').toLowerCase() === 'pending' && !ordStatus);
+        const isApprovedPay = payStatus === 'approved' || payStatus === 'verified' || payStatus === 'paid';
+        const isPendingVerif = !isApprovedPay && (ordStatus === 'pending_payment' || ordStatus === 'pending_verification' || (o.status || '').toLowerCase() === 'pending_payment' || payStatus === 'pending' || payStatus === 'pending_verification' || ordStatus === 'pending');
+        const isWaitingPayment = !isApprovedPay && (ordStatus === 'waiting_payment' || (payStatus === 'pending' && !ordStatus));
 
         if (isDelivered) {
           stageNumber = 4;
@@ -1027,7 +1039,7 @@ export function ProfileModal({
           query = query.order('created_at', { ascending: false });
         } else if (userId || userPhone || userEmail) {
           const conditions: string[] = [];
-          if (userId && userId !== 'guest') conditions.push(`customer_id.eq.${userId}`);
+          if (userId && userId !== 'guest') conditions.push(`customer_id.eq.${userId}`, `user_id.eq.${userId}`);
           if (userPhone) conditions.push(`customer_phone.eq.${userPhone}`, `phone.eq.${userPhone}`);
           if (userEmail && userEmail !== 'guest@example.com') conditions.push(`customer_email.eq.${userEmail}`, `email.eq.${userEmail}`);
           
@@ -1045,20 +1057,22 @@ export function ProfileModal({
           return;
         }
 
-        const { data, error } = await query;
+        const { data } = await query;
         const rawList = (data || [])
           .map(normalizeOrder)
           .filter((o: any) => !(o.is_deleted === true || o.is_deleted === 'true'));
         setCustomerOrders(rawList);
 
         if (rawList.length > 0) {
-          // หาออเดอร์พรีออเดอร์ที่ยังไม่เสร็จสิ้นล่าสุด (Active Preorder Only - ห้ามดึง completed / cancelled)
+          // หาออเดอร์พรีออเดอร์ที่ผ่านการอนุมัติและยังไม่เสร็จสิ้นล่าสุด (Active Approved Preorder Only)
           const active = rawList.find((o: any) => {
             const st = String(o.order_status || o.status || '').toLowerCase().trim();
+            const ps = String(o.payment_status || '').toLowerCase().trim();
             const qStep = Number(o.queue_step || 0);
+            const isApproved = ps === 'approved' || ps === 'verified' || ps === 'paid';
             const isCompleted = st === 'completed' || st === 'cancelled' || st === 'delivered' || st === 'จัดส่งสำเร็จ' || qStep === 5;
-            const isPre = o.is_preorder || o.order_type === 'preorder' || o.queue_id || o.queue_number || o.product_type === 'pre_order' || qStep > 0;
-            return isPre && !isCompleted;
+            const isPre = o.is_preorder === true || o.order_type === 'preorder' || o.product_type === 'preorder' || o.queue_id || o.queue_number || qStep > 0;
+            return isPre && isApproved && !isCompleted;
           });
           setActivePreorder(active || null);
         } else {
@@ -1899,6 +1913,8 @@ export function ProfileModal({
                     order.is_preorder === true ||
                     order.is_preorder === 'true' ||
                     order.order_type === 'preorder' ||
+                    (order as any).product_type === 'preorder' ||
+                    (order as any).product_type === 'pre_order' ||
                     order.type === 'preorder' ||
                     order.status === 'in_queue' ||
                     order.status === 'in_production' ||
