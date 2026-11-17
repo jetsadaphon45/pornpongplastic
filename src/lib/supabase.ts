@@ -2591,16 +2591,18 @@ export const supabaseOrders = {
         updated_at: new Date().toISOString()
       });
 
-      try {
-        await supabase
-          .from('production_queues')
-          .update({
-            status: currentStageInfo.status,
-            ...(queueNo ? { queue_number: queueNo } : {})
-          })
-          .eq('order_id', id);
-      } catch (pqErr) {
-        console.warn('production_queues update warning in updateQueueStage:', pqErr);
+      if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(id).trim())) {
+        try {
+          await supabase
+            .from('production_queues')
+            .update({
+              status: currentStageInfo.status,
+              ...(queueNo ? { queue_number: queueNo } : {})
+            })
+            .eq('order_id', String(id).trim());
+        } catch (pqErr) {
+          console.warn('production_queues update warning in updateQueueStage:', pqErr);
+        }
       }
     }
 
@@ -2849,45 +2851,66 @@ export const supabaseOrders = {
           console.warn('Schema-safe update in approve reported error:', fullErr.message);
         }
 
-        // 2. กรณี A (Pre-order): Insert ลงตาราง production_queues ด้วย UUID (orders.id) เท่านั้น
+        // 2. กรณี A (Pre-order): ตรวจสอบว่า order.id เป็น UUID จริงที่มีอยู่ในตาราง orders แล้วเท่านั้น
+        // ก่อนเขียนลง production_queues (ใช้ .update() หากมีแถวอยู่แล้ว, ใช้ .insert() เฉพาะเมื่อยังไม่มี)
         // กรณี B (In-stock): ห้าม insert ลงตาราง production_queues เด็ดขาด
-        if (isPre && assignedQueueNumber) {
+        const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        if (isPre && assignedQueueNumber && UUID_REGEX.test(resolvedOrderUuid)) {
           try {
-            const queuePayload = {
-              order_id: resolvedOrderUuid, // UUID (orders.id)
-              queue_number: assignedQueueNumber, // NOT NULL
-              customer_name: orderData?.customer_name || orderData?.customerName || 'ลูกค้าพรีออเดอร์',
-              customer_phone: orderData?.customer_phone || orderData?.phone || '',
-              product_spec: `${orderData?.product_name || orderData?.productName || 'เรือพลาสติก'} (${orderData?.color || 'มาตรฐาน'})`,
-              status: 'in_queue'
-            };
-
-            const { data: existingPq } = await supabase
-              .from('production_queues')
-              .select('id')
-              .eq('order_id', resolvedOrderUuid)
+            const { data: verifiedOrderRow, error: verifyErr } = await supabase
+              .from('orders')
+              .select('id, customer_name, customer_phone, phone, product_name, color')
+              .eq('id', resolvedOrderUuid)
               .maybeSingle();
 
-            if (existingPq) {
-              const { error: pqUpdErr } = await supabase
+            if (!verifyErr && verifiedOrderRow?.id && UUID_REGEX.test(String(verifiedOrderRow.id))) {
+              const realOrderUuid = String(verifiedOrderRow.id);
+              const queuePayload = {
+                order_id: realOrderUuid, // UUID จริงจาก orders.id เท่านั้น ห้ามใช้ ORD-... หรือ AAFE...
+                queue_number: assignedQueueNumber, // NOT NULL
+                customer_name: verifiedOrderRow.customer_name || orderData?.customer_name || orderData?.customerName || 'ลูกค้าพรีออเดอร์',
+                customer_phone: verifiedOrderRow.customer_phone || verifiedOrderRow.phone || orderData?.customer_phone || orderData?.phone || '',
+                product_spec: `${verifiedOrderRow.product_name || orderData?.product_name || orderData?.productName || 'เรือพลาสติก'} (${verifiedOrderRow.color || orderData?.color || 'มาตรฐาน'})`,
+                status: 'in_queue'
+              };
+
+              const { data: existingPq } = await supabase
                 .from('production_queues')
-                .update(queuePayload)
-                .eq('order_id', resolvedOrderUuid);
-              if (pqUpdErr) {
-                console.warn('production_queues update error in approve:', pqUpdErr.message);
+                .select('id')
+                .eq('order_id', realOrderUuid)
+                .maybeSingle();
+
+              if (existingPq) {
+                const { error: pqUpdErr } = await supabase
+                  .from('production_queues')
+                  .update({
+                    queue_number: queuePayload.queue_number,
+                    customer_name: queuePayload.customer_name,
+                    customer_phone: queuePayload.customer_phone,
+                    product_spec: queuePayload.product_spec,
+                    status: 'in_queue'
+                  })
+                  .eq('order_id', realOrderUuid);
+                if (pqUpdErr) {
+                  console.warn('production_queues update error in approve:', pqUpdErr.message);
+                }
+              } else {
+                const { error: pqInsErr } = await supabase
+                  .from('production_queues')
+                  .insert([queuePayload]);
+                if (pqInsErr) {
+                  console.warn('production_queues insert error in approve:', pqInsErr.message);
+                }
               }
             } else {
-              const { error: pqInsErr } = await supabase
-                .from('production_queues')
-                .insert([queuePayload]);
-              if (pqInsErr) {
-                console.warn('production_queues insert error in approve:', pqInsErr.message);
-              }
+              console.warn('Skipped production_queues write: order.id does not exist in orders table as UUID:', resolvedOrderUuid);
             }
           } catch (pqCatchErr) {
             console.warn('production_queues operation exception in approve:', pqCatchErr);
           }
+        }
 
+        if (isPre) {
           try {
             await supabase
               .from('preorders')

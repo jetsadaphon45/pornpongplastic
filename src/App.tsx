@@ -150,6 +150,37 @@ export default function App() {
     window.dispatchEvent(new Event('pushstate-changed'));
   };
 
+  // ล้างข้อมูลค้างใน localStorage ที่เกี่ยวกับ orders และ queues ออกทั้งหมดทันทีที่เปิดหน้าเว็บ
+  React.useEffect(() => {
+    try {
+      const explicitKeys = [
+        'pornpong_orders',
+        'pornpong_local_orders',
+        'pornpong_preorders',
+        'pornpong_queues',
+        'pornpong_production_queues',
+        'pornpong_active_queue',
+        'pornpong_active_production_queue',
+        'orders',
+        'queues',
+        'production_queues'
+      ];
+      explicitKeys.forEach((k) => localStorage.removeItem(k));
+      for (let i = localStorage.length - 1; i >= 0; i--) {
+        const key = localStorage.key(i);
+        if (!key) continue;
+        const kLower = key.toLowerCase();
+        if (
+          (kLower.includes('order') || kLower.includes('queue')) &&
+          kLower !== 'pre_order_settings' &&
+          !kLower.startsWith('pornpong_cfg_')
+        ) {
+          localStorage.removeItem(key);
+        }
+      }
+    } catch {}
+  }, []);
+
   // ตรวจจับ Password Recovery จาก Supabase Auth เพื่อนำทางสู่หน้า /reset-password อัตโนมัติ
   React.useEffect(() => {
     if (!supabase) return;

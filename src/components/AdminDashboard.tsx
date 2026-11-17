@@ -1570,11 +1570,14 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
           updated_at: new Date().toISOString()
         }).eq('id', orderId);
 
-        if (order.is_preorder === true || order.order_type === 'preorder' || order.product_type === 'preorder') {
+        if (
+          (order.is_preorder === true || order.order_type === 'preorder' || order.product_type === 'preorder') &&
+          /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(orderId))
+        ) {
           await supabase
             .from('production_queues')
             .update({ status: 'completed' })
-            .eq('order_id', orderId);
+            .eq('order_id', String(orderId));
         }
       } catch (err) {
         console.warn('Direct update orders in handleSelectDelivered failed:', err);
@@ -2045,12 +2048,14 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
           updated_at: updatedAt
         });
 
-        await supabase
-          .from('production_queues')
-          .update({
-            status: newStatusData.queue_step === 5 ? 'completed' : newStatusData.status
-          })
-          .eq('order_id', orderIdStr);
+        if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(orderIdStr)) {
+          await supabase
+            .from('production_queues')
+            .update({
+              status: newStatusData.queue_step === 5 ? 'completed' : newStatusData.status
+            })
+            .eq('order_id', orderIdStr);
+        }
       } catch (err) {
         console.warn('Failed to update orders table in handleUpdateQueueStatus:', err);
       }
@@ -2133,18 +2138,20 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
         console.error("Error updating order status in Supabase:", err);
       }
 
-      try {
-        const { error: pqErr } = await supabase
-          .from('production_queues')
-          .update({
-            status: isCompleted ? 'completed' : targetStatus
-          })
-          .eq('order_id', orderIdStr);
-        if (pqErr) {
-          console.warn('production_queues update warning in handleUpdateStatus:', pqErr.message);
+      if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(orderIdStr)) {
+        try {
+          const { error: pqErr } = await supabase
+            .from('production_queues')
+            .update({
+              status: isCompleted ? 'completed' : targetStatus
+            })
+            .eq('order_id', orderIdStr);
+          if (pqErr) {
+            console.warn('production_queues update warning in handleUpdateStatus:', pqErr.message);
+          }
+        } catch (pqCatchErr) {
+          console.warn('production_queues update exception in handleUpdateStatus:', pqCatchErr);
         }
-      } catch (pqCatchErr) {
-        console.warn('production_queues update exception in handleUpdateStatus:', pqCatchErr);
       }
 
       try {
