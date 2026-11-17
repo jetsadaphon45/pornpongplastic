@@ -47,6 +47,7 @@ export const normalizeOrder = (raw) => {
     raw.deposit_amount ||
     raw.deposit ||
     (typeof raw.notes === 'string' && /พรีออเดอร์|custom pre-order|สั่งผลิต|สั่งทำ|มัดจำ|preorder|pre-order/i.test(raw.notes)) ||
+    (typeof raw.production_notes === 'string' && /พรีออเดอร์|custom pre-order|สั่งผลิต|สั่งทำ|มัดจำ|preorder|pre-order/i.test(raw.production_notes)) ||
     (typeof (raw.product_name || raw.productName) === 'string' && /พรีออเดอร์|สั่งผลิต|สั่งทำ|preorder|pre-order/i.test(raw.product_name || raw.productName)) ||
     (Array.isArray(raw.items) && raw.items.some((i) => i?.is_preorder === true || i?.status === 'preorder')) ||
     (Array.isArray(raw.order_items) && raw.order_items.some((i) => i?.is_preorder === true || i?.status === 'preorder'))
@@ -57,6 +58,8 @@ export const normalizeOrder = (raw) => {
   const resolvedCustomerId = raw.customer_id ?? raw.user_id ?? null;
   const resolvedPhone = raw.customer_phone || raw.phone || '';
   const resolvedEmail = raw.customer_email || raw.email || '';
+  const resolvedAddress = raw.shipping_address || raw.address || '';
+  const resolvedNotes = raw.production_notes || raw.notes || '';
   const resolvedQueue = isPreorder ? (raw.queue_id || raw.queue_number || null) : null;
 
   return {
@@ -74,6 +77,9 @@ export const normalizeOrder = (raw) => {
     customer_phone: resolvedPhone,
     phone: resolvedPhone,
     customer_email: resolvedEmail,
-    email: resolvedEmail,
+    shipping_address: resolvedAddress,
+    address: resolvedAddress,
+    production_notes: resolvedNotes,
+    notes: resolvedNotes,
   };
 };

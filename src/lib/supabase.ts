@@ -1650,9 +1650,12 @@ export async function insertOrderWithSchemaFallback(payload: Record<string, any>
   if (!isSupabaseConfigured || !supabase) {
     return { data: null, error: new Error('Supabase is not configured') };
   }
+  const FORBIDDEN_INSERT_KEYS = new Set(['id', 'address', 'email', 'notes']);
   const working: Record<string, any> = {};
   for (const [k, v] of Object.entries(payload)) {
-    if (v !== undefined) working[k] = v;
+    if (v !== undefined && !FORBIDDEN_INSERT_KEYS.has(k)) {
+      working[k] = v;
+    }
   }
 
   let lastError: any = null;
@@ -1662,6 +1665,12 @@ export async function insertOrderWithSchemaFallback(payload: Record<string, any>
       return { data: data ? [data] : null, error: null };
     }
     lastError = error;
+    const code = String((error as any)?.code || '');
+    const status = Number((error as any)?.status || 0);
+    // ห้ามวนลูป retry หากเกิด Conflict (409 / 23505) หรือ FK constraint (23503)
+    if (status === 409 || code === '23505' || code === '23503') {
+      break;
+    }
     const missingCol = extractMissingOrderColumn(error);
     if (missingCol && Object.prototype.hasOwnProperty.call(working, missingCol)) {
       console.warn(`Supabase orders insert stripped unknown column "${missingCol}" and retrying...`);
@@ -2153,7 +2162,6 @@ export const supabaseOrders = {
     user_id?: string | null;
     customer_name: string;
     customer_email: string;
-    email?: string;
     customer_phone: string;
     phone?: string;
     total_amount: number;
@@ -2166,11 +2174,12 @@ export const supabaseOrders = {
     queue_id?: string | null;
     queue_number?: string | null;
     queue_step?: number;
-    created_at?: string;
     productName?: string;
     product_name?: string;
     color?: string;
+    production_notes?: string;
     notes?: string;
+    shipping_address?: string;
     address?: string;
     items?: Array<{ product_id?: string; product_name?: string; quantity: number }>;
   }): Promise<any> {
@@ -2183,32 +2192,39 @@ export const supabaseOrders = {
     );
     const orderTypeVal = isPre ? 'preorder' : 'stock';
     const prodName = item.product_name || item.productName || 'เรือพลาสติกและอุปกรณ์';
-    const uid = item.user_id !== undefined ? item.user_id : item.customer_id;
     const phoneVal = item.phone || item.customer_phone || '';
-    const emailVal = item.email || item.customer_email || 'guest@example.com';
+    const emailVal = item.customer_email || 'guest@example.com';
 
-    const fullPayload: any = {
-      customer_id: item.customer_id,
-      user_id: uid,
-      customer_name: item.customer_name,
+    const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const rawCid = item.customer_id ? String(item.customer_id).trim() : '';
+    const rawUid = item.user_id ? String(item.user_id).trim() : rawCid;
+    const safeCustomerId = UUID_REGEX.test(rawCid) ? rawCid : null;
+    const safeUserId = UUID_REGEX.test(rawUid) ? rawUid : safeCustomerId;
+
+    const uniqueOrderId = `ORD-${Date.now()}-${Math.floor(Math.random() * 1000).toString().padStart(3, '0')}`;
+
+    const cleanPayload: any = {
+      order_id: uniqueOrderId,
+      customer_id: safeCustomerId,
+      user_id: safeUserId,
+      customer_name: item.customer_name || 'ลูกค้า',
       customer_email: emailVal,
-      email: emailVal,
       customer_phone: phoneVal,
       phone: phoneVal,
+      shipping_address: item.shipping_address || item.address || '',
+      production_notes: item.production_notes || item.notes || '',
+      product_name: prodName,
+      color: item.color || 'คละสี',
       total_amount: Number(item.total_amount),
-      payment_status: 'pending',
-      order_status: 'pending_payment',
-      status: 'pending_payment',
       is_preorder: isPre,
       order_type: orderTypeVal,
       product_type: orderTypeVal,
+      payment_status: 'pending',
+      order_status: 'pending_payment',
+      status: 'pending_payment',
       queue_id: null,
       queue_number: null,
-      queue_step: 0,
-      product_name: prodName,
-      color: item.color || 'คละสี',
-      notes: item.notes || '',
-      address: item.address || ''
+      queue_step: 0
     };
 
     const storeOrderItemsInMemory = (createdRow: any) => {
@@ -2223,43 +2239,16 @@ export const supabaseOrders = {
     }
 
     try {
-      console.log('ORDER PAYLOAD', fullPayload);
+      console.log('ORDER PAYLOAD', cleanPayload);
 
-      const { data, error } = await insertOrderWithSchemaFallback(fullPayload);
-      if (!error && data?.[0]) {
+      const { data, error } = await insertOrderWithSchemaFallback(cleanPayload);
+      if (error) {
+        console.error('Failed to insert order into Supabase:', error.message);
+        throw error;
+      }
+      if (data?.[0]) {
         storeOrderItemsInMemory(data[0]);
-        return normalizeOrder({ ...fullPayload, ...data[0], items: item.items || [] });
-      }
-
-      console.warn('Schema-safe insert failed, falling back to core columns:', error?.message);
-      const fallbackPayload: any = {
-        customer_id: item.customer_id,
-        user_id: uid,
-        customer_name: item.customer_name,
-        customer_email: emailVal,
-        email: emailVal,
-        customer_phone: phoneVal,
-        phone: phoneVal,
-        total_amount: Number(item.total_amount),
-        payment_status: 'pending',
-        order_status: 'pending_payment',
-        status: 'pending_payment',
-        is_preorder: isPre,
-        order_type: orderTypeVal,
-        product_type: orderTypeVal,
-        queue_id: null,
-        queue_number: null,
-        queue_step: 0
-      };
-      const { data: minData, error: minErr } = await insertOrderWithSchemaFallback(fallbackPayload);
-
-      if (minErr) {
-        console.error('Failed to insert order into Supabase:', minErr.message);
-        throw minErr;
-      }
-      if (minData?.[0]) {
-        storeOrderItemsInMemory(minData[0]);
-        return normalizeOrder({ ...fullPayload, ...minData[0], items: item.items || [] });
+        return normalizeOrder({ ...cleanPayload, ...data[0], items: item.items || [] });
       }
       return null;
     } catch (err: any) {
@@ -2273,7 +2262,6 @@ export const supabaseOrders = {
     user_id?: string | null;
     customer_name: string;
     customer_email?: string;
-    email?: string;
     customer_phone: string;
     phone?: string;
     selected_color: string;
@@ -2285,7 +2273,9 @@ export const supabaseOrders = {
     status?: string;
     deposit_amount?: number;
     quantity?: number;
+    shipping_address?: string;
     address?: string;
+    production_notes?: string;
     notes?: string;
   }): Promise<any> {
     if (!isSupabaseConfigured || !supabase) {
@@ -2301,77 +2291,52 @@ export const supabaseOrders = {
       ? `${item.boat_model_name} (สี${item.selected_color})` 
       : `เรือพลาสติกสั่งทำพิเศษ ${sizeName} (สี${item.selected_color})`;
 
-    const cid = item.customer_id || null;
-    const uid = item.user_id !== undefined ? item.user_id : cid;
-    const emailVal = item.email || item.customer_email || 'guest@example.com';
-    const phoneVal = item.phone || item.customer_phone || '';
+    const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const rawCid = item.customer_id ? String(item.customer_id).trim() : '';
+    const rawUid = item.user_id ? String(item.user_id).trim() : rawCid;
+    const safeCustomerId = UUID_REGEX.test(rawCid) ? rawCid : null;
+    const safeUserId = UUID_REGEX.test(rawUid) ? rawUid : safeCustomerId;
 
-    const fullPayload: any = {
-      customer_id: cid,
-      user_id: uid,
+    const emailVal = item.customer_email || 'guest@example.com';
+    const phoneVal = item.phone || item.customer_phone || '';
+    const uniqueOrderId = `ORD-${Date.now()}-${Math.floor(Math.random() * 1000).toString().padStart(3, '0')}`;
+    const defaultNotes = `[Custom Pre-Order] ขนาด: ${sizeName} | สี: ${item.selected_color} | สติกเกอร์: ${stickerText} | ข้อความสกรีน: ${item.custom_text || '-'} | จำนวน: ${item.quantity || 1} ลำ` + (item.deposit_amount ? ` | มัดจำ: ${Number(item.deposit_amount).toLocaleString()} บาท` : '');
+
+    const cleanPayload: any = {
+      order_id: uniqueOrderId,
+      customer_id: safeCustomerId,
+      user_id: safeUserId,
       customer_name: item.customer_name || 'ลูกค้าพรีออเดอร์',
       customer_email: emailVal,
-      email: emailVal,
       customer_phone: phoneVal,
       phone: phoneVal,
-      selected_color: item.selected_color,
-      boat_size: sizeName,
-      boat_model_name: item.boat_model_name || sizeName,
-      sticker_option: stickerText,
-      custom_text: item.custom_text || '',
-      total_price: Number(item.total_price),
-      deposit_amount: item.deposit_amount !== undefined ? Number(item.deposit_amount) : undefined,
-      quantity: item.quantity !== undefined ? Number(item.quantity) : 1,
-      total_amount: Number(item.total_price),
-      payment_status: 'pending',
-      order_status: 'pending_payment',
-      status: 'pending_payment',
-      is_preorder: true,
-      order_type: 'preorder',
-      product_type: 'preorder',
-      queue_id: null,
-      queue_number: null,
-      queue_step: 0,
+      shipping_address: item.shipping_address || item.address || '',
+      production_notes: item.production_notes || item.notes || defaultNotes,
       product_name: prodName,
       color: item.selected_color,
-      address: item.address || '',
-      notes: `[Custom Pre-Order] ขนาด: ${sizeName} | สี: ${item.selected_color} | สติกเกอร์: ${stickerText} | ข้อความสกรีน: ${item.custom_text || '-'} | จำนวน: ${item.quantity || 1} ลำ`,
-      created_at: new Date().toISOString()
-    };
-
-    const { data, error } = await insertOrderWithSchemaFallback(fullPayload);
-    if (!error && data && data[0]) {
-      return normalizeOrder({ ...fullPayload, ...data[0], is_preorder: true, order_type: 'preorder', product_type: 'preorder' });
-    }
-
-    console.warn('Pre-order schema-safe insert failed, retrying core pre-order payload:', error?.message);
-    const corePayload: any = {
-      customer_id: cid,
-      user_id: uid,
-      customer_name: item.customer_name || 'ลูกค้าพรีออเดอร์',
-      customer_email: emailVal,
-      email: emailVal,
-      customer_phone: phoneVal,
-      phone: phoneVal,
       total_amount: Number(item.total_price),
-      payment_status: 'pending',
-      order_status: 'pending_payment',
-      status: 'pending_payment',
       is_preorder: true,
       order_type: 'preorder',
       product_type: 'preorder',
+      payment_status: 'pending',
+      order_status: 'pending_payment',
+      status: 'pending_payment',
       queue_id: null,
       queue_number: null,
-      queue_step: 0,
-      product_name: prodName,
-      notes: fullPayload.notes
+      queue_step: 0
     };
-    const { data: dataCore, error: errCore } = await insertOrderWithSchemaFallback(corePayload);
-    if (!errCore && dataCore && dataCore[0]) {
-      return normalizeOrder({ ...fullPayload, ...dataCore[0], is_preorder: true, order_type: 'preorder', product_type: 'preorder' });
+
+    console.log('ORDER PAYLOAD (PREORDER)', cleanPayload);
+
+    const { data, error } = await insertOrderWithSchemaFallback(cleanPayload);
+    if (error) {
+      throw error;
+    }
+    if (data && data[0]) {
+      return normalizeOrder({ ...cleanPayload, ...data[0], is_preorder: true, order_type: 'preorder', product_type: 'preorder' });
     }
 
-    throw errCore || error || new Error('ไม่สามารถสร้างคำสั่งจองพรีออเดอร์ได้');
+    throw new Error('ไม่สามารถสร้างคำสั่งจองพรีออเดอร์ได้');
   },
 
   async update(id: string, item: any): Promise<boolean> {

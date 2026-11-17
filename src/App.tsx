@@ -446,9 +446,10 @@ export default function App() {
         user_id: customerId,
         customer_name: orderDetails.fullName,
         customer_email: customerEmail,
-        email: customerEmail,
         customer_phone: orderDetails.phone,
         phone: orderDetails.phone,
+        shipping_address: orderDetails.address,
+        production_notes: `${orderDetails.notes || ''} [${isPreOrder ? 'Pre-Order / สั่งผลิต' : 'In-Stock / สินค้าพร้อมส่ง'}]`.trim(),
         total_amount: totalSum,
         status: 'pending_payment',
         payment_status: 'pending',
@@ -462,12 +463,8 @@ export default function App() {
         queue_id: null,
         queue_number: null,
         queue_step: 0,
-        address: orderDetails.address,
-        items: structuredItems,
-        notes: `${orderDetails.notes || ''} [${isPreOrder ? 'Pre-Order / สั่งผลิต' : 'In-Stock / สินค้าพร้อมส่ง'}]`
+        items: structuredItems
       };
-
-      console.log('ORDER PAYLOAD', payload);
 
       const createdOrder = await supabaseOrders.create(payload);
       if (!createdOrder) {

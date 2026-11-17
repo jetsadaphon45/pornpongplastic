@@ -527,7 +527,6 @@ export default function PreorderSection({
         user_id: custId,
         customer_name: customerName.trim(),
         customer_email: custEmail,
-        email: custEmail,
         customer_phone: custPhone,
         phone: custPhone,
         boat_size: activeSizeConfig.name,
@@ -547,8 +546,8 @@ export default function PreorderSection({
         queue_step: 0,
         deposit_amount: depositAmount,
         quantity: quantity,
-        address: customerAddress.trim(),
-        notes: `[ขนาด: ${activeSizeConfig.name}][สี: ${activeColorConfig.name}${colorExtraCost > 0 ? ` (+฿${colorExtraCost})` : ''}][สติกเกอร์: ${activeStickerSetting.name}] ` + (customerNotes.trim() ? `หมายเหตุ: ${customerNotes.trim()}` : '')
+        shipping_address: customerAddress.trim(),
+        production_notes: `[ขนาด: ${activeSizeConfig.name}][สี: ${activeColorConfig.name}${colorExtraCost > 0 ? ` (+฿${colorExtraCost})` : ''}][สติกเกอร์: ${activeStickerSetting.name}]` + (hasCustomText ? `[สกรีน: ${customText.trim()}]` : '') + `[จำนวน: ${quantity} ลำ]` + (customerNotes.trim() ? ` หมายเหตุ: ${customerNotes.trim()}` : '')
       };
 
       const result = await supabaseOrders.createCustomPreOrder(payload);
