@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { Product, UserAddress } from '../types';
+import { normalizeOrder } from '../utils/orderHelper.js';
 
 const supabaseUrl =
   import.meta.env.VITE_SUPABASE_URL ||
@@ -17,6 +18,11 @@ export const isSupabaseConfigured = !!(supabaseUrl && supabaseAnonKey);
 export const supabase = isSupabaseConfigured
   ? createClient(supabaseUrl, supabaseAnonKey)
   : null;
+
+// Session in-memory guards (never persisted to localStorage for orders/queues)
+const stockDeductedOrderIds = new Set<string>();
+const inMemoryOrderItems = new Map<string, any[]>();
+let inMemoryActiveProductionQueueId = '';
 
 // -------------------------------------------------------------
 // END-TO-END PRODUCTION & DELIVERY QUEUE CONSTANTS & HELPERS
@@ -123,9 +129,11 @@ export const IN_STOCK_STAGES: InStockStageInfo[] = [
 // Comprehensive helper to determine whether an order is a Pre-Order / Made-to-Order
 export function isOrderPreOrder(order: any): boolean {
   if (!order) return false;
-  // 1. เช็กจากฟิลด์สถานะและประเภท
+  // 1. เช็กจากฟิลด์สถานะและประเภทอย่างชัดเจนก่อน
   if (order.is_preorder === true || order.is_preorder === 'true' || order.isPreOrder === true || order.isPreOrder === 'true') return true;
   if (order.order_type === 'preorder' || order.order_type === 'pre_order' || order.type === 'preorder' || order.orderType === 'preorder' || order.orderType === 'pre_order' || order.product_type === 'pre_order' || order.product_type === 'preorder') return true;
+  if (order.is_preorder === false || order.is_preorder === 'false' || order.isPreOrder === false || order.isPreOrder === 'false') return false;
+  if (order.order_type === 'stock' || order.order_type === 'instock' || order.order_type === 'in_stock' || order.orderType === 'stock' || order.orderType === 'instock' || order.product_type === 'in_stock') return false;
   if (order.status === 'in_queue' || order.status === 'in_production' || order.order_status === 'in_queue' || order.order_status === 'in_production') return true;
 
   const idStr = String(order.id || '').toUpperCase();
@@ -255,51 +263,29 @@ export async function getNextAvailableQueueNumber(): Promise<string> {
     } catch {}
   }
 
-  // 2. Check localStorage admin_orders
-  try {
-    const local = JSON.parse(localStorage.getItem('admin_orders') || '[]');
-    if (Array.isArray(local)) {
-      for (const o of local) {
-        const qn = String(o.queue_number || o.queue_id || '').trim().toUpperCase();
-        if (qn.startsWith(prefix)) {
-          const numPart = parseInt(qn.replace(prefix, ''), 10);
-          if (!isNaN(numPart) && numPart > maxNum) {
-            maxNum = numPart;
-          }
-        }
-      }
-    }
-  } catch {}
-
   const nextNum = maxNum + 1;
   return `${prefix}${String(nextNum).padStart(3, '0')}`;
 }
 
 
 export function getActiveProductionQueue(orders?: any[]): string {
-  if (typeof window !== 'undefined') {
-    const saved = localStorage.getItem('pornpong_active_production_queue_id');
-    if (saved && /^Q-\d{4}-\d{3}$/i.test(saved.trim())) {
-      return saved.trim().toUpperCase();
-    }
-  }
   if (orders && orders.length > 0) {
-    const stage2 = orders.find((o: any) => o.queue_stage === 2 || o.order_status === 'manufacturing');
+    const stage2 = orders.find((o: any) => Number(o.queue_step || o.queue_stage) === 2 || o.order_status === 'in_production' || o.order_status === 'manufacturing');
     if (stage2) {
       return formatQueueId(stage2);
     }
-    const firstActive = orders.find((o: any) => o.queue_stage !== 4 && o.order_status !== 'completed' && o.order_status !== 'delivered');
+    const firstActive = orders.find((o: any) => Number(o.queue_step || o.queue_stage) < 4 && o.order_status !== 'completed' && o.order_status !== 'delivered');
     if (firstActive) {
       return formatQueueId(firstActive);
     }
   }
-  return 'Q-2610-012';
+  return inMemoryActiveProductionQueueId || '';
 }
 
 export function setActiveProductionQueue(queueId: string): void {
+  const clean = queueId.trim().toUpperCase();
+  inMemoryActiveProductionQueueId = clean;
   if (typeof window !== 'undefined') {
-    const clean = queueId.trim().toUpperCase();
-    localStorage.setItem('pornpong_active_production_queue_id', clean);
     window.dispatchEvent(new CustomEvent('pornpong-queue-updated', {
       detail: { activeQueueId: clean }
     }));
@@ -589,6 +575,130 @@ export const supabaseProducts = {
       return false;
     }
     return true;
+  },
+
+  async deductStockForOrder(order: any): Promise<void> {
+    if (!order) return;
+    const orderIdStr = String(order.id || '');
+    if (orderIdStr && stockDeductedOrderIds.has(orderIdStr)) {
+      return; // Prevent duplicate deduction for the same order in this session
+    }
+
+    // 1. Gather ordered items & quantities
+    const itemsToDeduct: Array<{ id?: string; name?: string; quantity: number }> = [];
+
+    const pushFromArr = (arr: any[]) => {
+      for (const it of arr) {
+        if (!it) continue;
+        const qty = Number(it.quantity || it.qty || 1);
+        const prodId = it.product_id || it.productId || it.product?.id || (it.product ? undefined : it.id);
+        const prodName = it.product_name || it.productName || it.name || it.product?.name || '';
+        if (prodId || prodName) {
+          itemsToDeduct.push({ id: prodId ? String(prodId) : undefined, name: String(prodName || ''), quantity: qty > 0 ? qty : 1 });
+        }
+      }
+    };
+
+    if (Array.isArray(order.items) && order.items.length > 0) {
+      pushFromArr(order.items);
+    } else if (Array.isArray(order.order_items) && order.order_items.length > 0) {
+      pushFromArr(order.order_items);
+    } else if (orderIdStr && inMemoryOrderItems.has(orderIdStr)) {
+      const memItems = inMemoryOrderItems.get(orderIdStr) || [];
+      if (memItems.length > 0) {
+        pushFromArr(memItems);
+      }
+    }
+
+    // Fallback: parse product_name / productName e.g. "เรือพาย x2, ไม้พาย x1"
+    if (itemsToDeduct.length === 0) {
+      const summary = String(order.product_name || order.productName || order.item_name || order.details || '').trim();
+      if (summary) {
+        const parts = summary.split(',').map(p => p.trim()).filter(Boolean);
+        for (const part of parts) {
+          const match = part.match(/^(.+?)\s*[xX×]\s*(\d+)$/);
+          if (match) {
+            itemsToDeduct.push({ name: match[1].trim(), quantity: Math.max(1, Number(match[2])) });
+          } else {
+            itemsToDeduct.push({ name: part, quantity: Math.max(1, Number(order.quantity || 1)) });
+          }
+        }
+      }
+    }
+
+    if (itemsToDeduct.length === 0) return;
+
+    try {
+      const currentProducts = await this.list();
+      const sortedByNameLen = [...currentProducts].sort((a, b) => b.name.length - a.name.length);
+      const updatedCache = [...currentProducts];
+
+      for (const reqItem of itemsToDeduct) {
+        const reqNameLower = (reqItem.name || '').toLowerCase().trim();
+        const targetIndex = updatedCache.findIndex(p => {
+          if (reqItem.id && (String(p.id) === reqItem.id || String(p.sku) === reqItem.id || String(p.model_id) === reqItem.id)) {
+            return true;
+          }
+          if (!reqNameLower) return false;
+          const pNameLower = p.name.toLowerCase().trim();
+          return pNameLower === reqNameLower || reqNameLower.includes(pNameLower) || pNameLower.includes(reqNameLower);
+        });
+
+        // If exact didn't hit cleanly, try sortedByNameLen for longest substring match
+        let matchedProd = targetIndex >= 0 ? updatedCache[targetIndex] : undefined;
+        if (!matchedProd && reqNameLower) {
+          matchedProd = sortedByNameLen.find(p => {
+            const pNameLower = p.name.toLowerCase().trim();
+            return reqNameLower.includes(pNameLower) || pNameLower.includes(reqNameLower);
+          });
+        }
+
+        if (!matchedProd) continue;
+
+        const curQty = Number(matchedProd.stockQuantity ?? (matchedProd.status === 'instock' ? 12 : 0));
+        const newQty = Math.max(0, curQty - reqItem.quantity);
+        const newStatus = newQty <= 0 ? 'outofstock' : matchedProd.status;
+
+        const cacheIdx = updatedCache.findIndex(p => p.id === matchedProd!.id);
+        if (cacheIdx >= 0) {
+          updatedCache[cacheIdx] = {
+            ...updatedCache[cacheIdx],
+            stockQuantity: newQty,
+            status: newStatus as any,
+            inStock: newStatus !== 'outofstock'
+          };
+        }
+
+        if (isSupabaseConfigured && supabase && matchedProd.id) {
+          try {
+            const { error } = await supabase
+              .from('products')
+              .update({
+                stock_quantity: newQty,
+                ...(newQty <= 0 ? { status: 'outofstock' } : {})
+              })
+              .eq('id', matchedProd.id);
+            if (error) {
+              console.warn('Supabase stock deduction warning:', error.message);
+            }
+          } catch (updErr) {
+            console.warn('Supabase stock deduction exception:', updErr);
+          }
+        }
+      }
+
+      saveLocalStoredProducts(updatedCache);
+
+      if (orderIdStr) {
+        stockDeductedOrderIds.add(orderIdStr);
+      }
+
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('products-updated'));
+      }
+    } catch (err) {
+      console.warn('deductStockForOrder error:', err);
+    }
   }
 };
 
@@ -1350,34 +1460,25 @@ export interface DeliveryRecord {
 export const supabaseDeliveries = {
   async getByOrderId(orderId: string): Promise<DeliveryRecord | null> {
     const cleanId = String(orderId).trim();
-    if (!cleanId) return null;
-    if (isSupabaseConfigured && supabase) {
-      try {
-        const { data, error } = await supabase
-          .from('deliveries')
-          .select('*')
-          .eq('order_id', cleanId)
-          .order('updated_at', { ascending: false })
-          .limit(1);
-        if (!error && data && data.length > 0) return data[0];
-      } catch (err: any) {
-        console.warn('Could not query delivery by order_id from Supabase:', err?.message);
-      }
-    }
-    // Fallback to local storage (latest 1 item)
+    if (!cleanId || !isSupabaseConfigured || !supabase) return null;
     try {
-      const stored: DeliveryRecord[] = JSON.parse(localStorage.getItem('admin_deliveries') || '[]');
-      return stored.find(d => String(d.order_id).trim() === cleanId) || null;
-    } catch {
-      return null;
+      const { data, error } = await supabase
+        .from('deliveries')
+        .select('*')
+        .eq('order_id', cleanId)
+        .order('updated_at', { ascending: false })
+        .limit(1);
+      if (!error && data && data.length > 0) return data[0];
+    } catch (err: any) {
+      console.warn('Could not query delivery by order_id from Supabase:', err?.message);
     }
+    return null;
   },
 
   async getAll(): Promise<Record<string, DeliveryRecord>> {
     const map: Record<string, DeliveryRecord> = {};
     if (isSupabaseConfigured && supabase) {
       try {
-        // Order by updated_at descending so the most recent delivery record comes first
         const { data, error } = await supabase
           .from('deliveries')
           .select('*')
@@ -1386,7 +1487,6 @@ export const supabaseDeliveries = {
         if (!error && data) {
           data.forEach((row: any) => {
             const key = String(row.order_id || '').trim();
-            // Keep strictly only 1 latest record per order_id
             if (key && !map[key]) {
               map[key] = row;
             }
@@ -1396,18 +1496,6 @@ export const supabaseDeliveries = {
         console.warn('Could not fetch deliveries from Supabase:', err?.message);
       }
     }
-
-    // Merge from local storage, keeping strictly only 1 latest record per order_id
-    try {
-      const stored: DeliveryRecord[] = JSON.parse(localStorage.getItem('admin_deliveries') || '[]');
-      stored.forEach(d => {
-        const key = String(d.order_id || '').trim();
-        if (key && !map[key]) {
-          map[key] = d;
-        }
-      });
-    } catch {}
-
     return map;
   },
 
@@ -1509,14 +1597,6 @@ export const supabaseDeliveries = {
       }
     }
 
-    // Persist immediately in local storage admin_deliveries with deduplication
-    try {
-      const stored: DeliveryRecord[] = JSON.parse(localStorage.getItem('admin_deliveries') || '[]');
-      const filtered = stored.filter(d => String(d.order_id).trim() !== orderId);
-      filtered.unshift({ ...payload, created_at: new Date().toISOString() });
-      localStorage.setItem('admin_deliveries', JSON.stringify(filtered));
-    } catch {}
-
     // Dispatch real-time events for instant UI synchronization
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('pornpong-delivery-updated', {
@@ -1580,92 +1660,32 @@ export const supabaseOrders = {
     };
 
     if (!isSupabaseConfigured || !supabase) {
-      try {
-        const local = JSON.parse(localStorage.getItem('admin_orders') || '[]');
-        return (local || [])
-          .filter((o: any) => {
-            if (o.is_deleted === true || o.is_deleted === 'true') return false;
-            const isPre = isOrderPreOrder(o) || o.product_type === 'pre_order' || o.order_type === 'pre_order';
-            if (isPre) return false;
-            const s = String(o.status || '').toLowerCase().trim();
-            const os = String(o.order_status || '').toLowerCase().trim();
-            if (s === 'producing' || os === 'producing') return false;
-            return ['ready_to_ship', 'paid', 'in_transit'].includes(s) || ['ready_to_ship', 'paid', 'in_transit'].includes(os);
-          })
-          .sort((a: any, b: any) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime())
-          .map(o => formatRow(o));
-      } catch {
-        return [];
-      }
+      return [];
     }
 
     try {
-      // Requirement 2: Query table 'orders' for active in-stock approved orders
-      // .eq('product_type', 'in_stock')
-      // .or('status.eq.ready_to_ship,status.eq.paid,status.eq.in_transit')
-      // .or('is_deleted.is.null,is_deleted.eq.false')
-      // .order('created_at', { ascending: false })
       const [ordersRes, deliveriesMap] = await Promise.all([
         supabase
           .from('orders')
           .select('*')
-          .eq('product_type', 'in_stock')
-          .or('status.eq.ready_to_ship,status.eq.paid,status.eq.in_transit')
           .or('is_deleted.is.null,is_deleted.eq.false')
           .order('created_at', { ascending: false }),
         supabaseDeliveries.getAll()
       ]);
 
-      let data = ordersRes.data || [];
+      const data = ordersRes.data || [];
 
-      // Merge local storage approved in-stock orders
-      try {
-        const local = JSON.parse(localStorage.getItem('admin_orders') || '[]');
-        for (const loc of local) {
-          if (loc.is_deleted === true || loc.is_deleted === 'true') continue;
-          const isPre = isOrderPreOrder(loc) || loc.product_type === 'pre_order' || loc.order_type === 'pre_order';
-          if (isPre) continue;
-          const s = String(loc.status || '').toLowerCase().trim();
-          const os = String(loc.order_status || '').toLowerCase().trim();
-          const ps = String(loc.payment_status || '').toLowerCase().trim();
-          if (s === 'pending_verification' || s === 'pending' || ps === 'pending_verification' || ps === 'pending' || s === 'producing' || os === 'producing') continue;
-          if (['ready_to_ship', 'paid', 'in_transit'].includes(s) || ['ready_to_ship', 'paid', 'in_transit'].includes(os) || ps === 'paid') {
-            if (!data.some((r: any) => String(r.id) === String(loc.id))) {
-              data.push(loc);
-            }
-          }
-        }
-      } catch {}
-
-      // Filter: status in ready_to_ship, paid, in_transit; strictly exclude pre_order, producing, and pending
-      const filtered = data.filter((row: any) => {
+      const filtered = data.map(normalizeOrder).filter((row: any) => {
         if (row.is_deleted === true || row.is_deleted === 'true') return false;
-        const s = String(row.status || '').toLowerCase().trim();
-        const os = String(row.order_status || '').toLowerCase().trim();
+        const s = String(row.order_status || '').toLowerCase().trim();
         const ps = String(row.payment_status || '').toLowerCase().trim();
-        const prodType = String(row.product_type || row.order_type || row.orderType || '').toLowerCase().trim();
-        
-        // CRITICAL: ห้ามนำออเดอร์ที่มี status === 'producing' หรือ product_type === 'pre_order' ไปแสดงในหน้า "คำสั่งซื้อสำเร็จ" เด็ดขาด
-        if (s === 'producing' || os === 'producing' || prodType === 'pre_order' || prodType === 'preorder' || isOrderPreOrder(row)) {
+        if (row.is_preorder || s === 'producing') return false;
+        if (['pending_payment', 'pending_verification', 'pending', 'waiting_payment'].includes(s) || ['pending_verification', 'pending'].includes(ps)) {
           return false;
         }
-
-        if (row.product_type && row.product_type !== 'in_stock' && row.product_type !== 'instock') {
-          return false;
-        }
-
-        // ห้ามดึงรายการที่มี status = 'pending_verification' หรือ 'pending' มาแสดงในหน้านี้เด็ดขาด
-        if (s === 'pending_verification' || s === 'pending' || s === 'waiting_payment' ||
-            os === 'pending_verification' || os === 'pending' ||
-            ps === 'pending_verification' || ps === 'pending') {
-          return false;
-        }
-        return ['ready_to_ship', 'paid', 'in_transit'].includes(s) || 
-               ['ready_to_ship', 'paid', 'in_transit'].includes(os) || 
-               ps === 'paid';
+        return ['ready_to_ship', 'paid', 'in_transit'].includes(s) || ps === 'paid';
       });
 
-      // Sort by created_at descending (.order('created_at', { ascending: false }))
       filtered.sort((a: any, b: any) => {
         const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
         const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
@@ -1675,7 +1695,7 @@ export const supabaseOrders = {
       return filtered.map((row: any) => {
         const orderIdStr = String(row.id).trim();
         const delivery = deliveriesMap[orderIdStr] || deliveriesMap[row.id];
-        return formatRow(row, delivery);
+        return normalizeOrder(formatRow(row, delivery));
       });
     } catch (err: any) {
       console.warn('listActiveInStock error:', err?.message);
@@ -1683,25 +1703,9 @@ export const supabaseOrders = {
     }
   },
 
-  // Requirement 3: Update Query Filter หน้า "จัดการคิวผลิตและจัดส่ง" (แท็บ 1. รับคิวผลิต)
-  // .eq('product_type', 'pre_order')
-  // .eq('status', 'producing')
-  // .eq('queue_status', 'waiting_production')
-  // .or('is_deleted.is.null,is_deleted.eq.false')
   async listQueueWaitingProduction(): Promise<any[]> {
     if (!isSupabaseConfigured || !supabase) {
-      try {
-        const local = JSON.parse(localStorage.getItem('admin_orders') || '[]');
-        return (local || []).filter((o: any) => {
-          if (o.is_deleted === true || o.is_deleted === 'true') return false;
-          const isPre = o.product_type === 'pre_order' || o.order_type === 'pre_order' || isOrderPreOrder(o);
-          const s = String(o.status || '').toLowerCase().trim();
-          const qs = String(o.queue_status || '').toLowerCase().trim();
-          return isPre && s === 'producing' && (qs === 'waiting_production' || !qs || o.queue_stage === 1);
-        });
-      } catch {
-        return [];
-      }
+      return [];
     }
 
     try {
@@ -1709,31 +1713,31 @@ export const supabaseOrders = {
         supabase
           .from('orders')
           .select('*')
-          .eq('product_type', 'pre_order')
-          .eq('status', 'producing')
-          .eq('queue_status', 'waiting_production')
           .or('is_deleted.is.null,is_deleted.eq.false')
           .order('created_at', { ascending: true }),
         supabaseDeliveries.getAll()
       ]);
 
-      const data = ordersRes.data || [];
+      const data = (ordersRes.data || []).map(normalizeOrder).filter((o: any) => {
+        if (o.is_deleted === true || o.is_deleted === 'true') return false;
+        const os = String(o.order_status || '').toLowerCase().trim();
+        const qStep = Number(o.queue_step || 0);
+        return o.is_preorder && !['pending_payment', 'pending_verification', 'completed', 'cancelled', 'delivered', 'rejected'].includes(os) && (qStep <= 1 || os === 'in_queue' || os === 'producing');
+      });
+
       return data.map((row: any, idx: number) => {
         const orderIdStr = String(row.id).trim();
         const delivery = deliveriesMap[orderIdStr] || deliveriesMap[row.id];
         const qNum = delivery?.queue_number || row.queue_number || row.queue_id || formatQueueId(row, idx);
-        return {
+        return normalizeOrder({
           ...row,
           queue_number: qNum,
           queue_id: qNum,
-          queue_stage: 1,
-          queue_status: 'waiting_production',
-          status: 'producing',
-          order_status: 'producing',
-          product_type: 'pre_order',
-          order_type: 'preorder',
-          payment_status: row.payment_status || 'deposit_paid'
-        };
+          queue_stage: Number(row.queue_step || row.queue_stage || 1),
+          queue_step: Number(row.queue_step || 1),
+          queue_status: row.queue_status || 'waiting_production',
+          payment_status: row.payment_status || 'verified'
+        });
       });
     } catch (err: any) {
       console.warn('listQueueWaitingProduction error:', err?.message);
@@ -1741,24 +1745,9 @@ export const supabaseOrders = {
     }
   },
 
-  // Requirement 1: Query table 'orders' for active in-progress orders (Deliveries Tracking Tab)
-  // .or('status.eq.pending_verification,status.eq.ready_to_ship,status.eq.producing,status.eq.in_transit')
   async listActiveTracking(): Promise<any[]> {
     if (!isSupabaseConfigured || !supabase) {
-      try {
-        const local = JSON.parse(localStorage.getItem('admin_orders') || '[]');
-        return (local || []).filter((o: any) => {
-          if (o.is_deleted === true || o.is_deleted === 'true') return false;
-          const s = String(o.status || '').toLowerCase().trim();
-          const os = String(o.order_status || '').toLowerCase().trim();
-          const ds = String(o.delivery_status || '').toLowerCase().trim();
-          if (s === 'delivered' || s === 'completed' || os === 'delivered' || os === 'completed' || ds === 'delivered' || ds === 'completed') return false;
-          return ['pending_verification', 'ready_to_ship', 'producing', 'in_transit'].includes(s) ||
-                 ['ready_to_ship', 'producing', 'in_transit'].includes(os);
-        });
-      } catch {
-        return [];
-      }
+      return [];
     }
 
     try {
@@ -1766,32 +1755,30 @@ export const supabaseOrders = {
         supabase
           .from('orders')
           .select('*')
-          .or('status.eq.pending_verification,status.eq.ready_to_ship,status.eq.producing,status.eq.in_transit')
           .or('is_deleted.is.null,is_deleted.eq.false')
           .order('created_at', { ascending: false }),
         supabaseDeliveries.getAll()
       ]);
 
-      const data = (ordersRes.data || []).filter((row: any) => {
+      const data = (ordersRes.data || []).map(normalizeOrder).filter((row: any) => {
         if (row.is_deleted === true || row.is_deleted === 'true') return false;
-        const s = String(row.status || '').toLowerCase().trim();
-        const os = String(row.order_status || '').toLowerCase().trim();
+        const s = String(row.order_status || '').toLowerCase().trim();
         const ds = String(row.delivery_status || '').toLowerCase().trim();
-        if (s === 'delivered' || s === 'completed' || os === 'delivered' || os === 'completed' || ds === 'delivered' || ds === 'completed') return false;
-        return true;
+        if (s === 'delivered' || s === 'completed' || s === 'cancelled' || ds === 'delivered' || ds === 'completed' || Number(row.queue_step || 0) === 5) return false;
+        return ['pending_payment', 'pending_verification', 'in_queue', 'in_production', 'ready_to_transfer', 'delivering', 'ready_to_ship', 'producing', 'in_transit'].includes(s);
       });
 
       return data.map((row: any) => {
         const orderIdStr = String(row.id).trim();
         const delivery = deliveriesMap[orderIdStr] || deliveriesMap[row.id];
-        return {
+        return normalizeOrder({
           ...row,
           shipping_carrier: delivery?.shipping_carrier || row.shipping_carrier || row.carrier_name || '',
           driver_phone: delivery?.driver_phone || row.driver_phone || '',
           tracking_number: delivery?.tracking_number || row.tracking_number || row.shipmentNo || row.shipment_no || '',
           estimated_delivery_date: delivery?.estimated_delivery_date || row.estimated_delivery_date || '',
-          delivery_status: delivery?.delivery_status || row.delivery_status || row.status || ''
-        };
+          delivery_status: delivery?.delivery_status || row.delivery_status || row.order_status || ''
+        });
       });
     } catch (err: any) {
       console.warn('listActiveTracking error:', err?.message);
@@ -1799,21 +1786,9 @@ export const supabaseOrders = {
     }
   },
 
-  // Query table 'orders' for completed orders: .or('status.eq.delivered,status.eq.completed')
   async listCompleted(): Promise<any[]> {
     if (!isSupabaseConfigured || !supabase) {
-      try {
-        const local = JSON.parse(localStorage.getItem('admin_orders') || '[]');
-        return (local || []).filter((o: any) => {
-          if (o.is_deleted === true || o.is_deleted === 'true') return false;
-          const s = String(o.status || '').toLowerCase().trim();
-          const os = String(o.order_status || '').toLowerCase().trim();
-          const ds = String(o.delivery_status || '').toLowerCase().trim();
-          return s === 'delivered' || s === 'completed' || os === 'delivered' || os === 'completed' || ds === 'delivered' || ds === 'completed';
-        });
-      } catch {
-        return [];
-      }
+      return [];
     }
 
     try {
@@ -1821,7 +1796,7 @@ export const supabaseOrders = {
         supabase
           .from('orders')
           .select('*')
-          .or('status.eq.delivered,status.eq.completed')
+          .or('order_status.eq.completed,status.eq.delivered,status.eq.completed')
           .or('is_deleted.is.null,is_deleted.eq.false')
           .order('created_at', { ascending: false }),
         supabaseDeliveries.getAll()
@@ -1834,16 +1809,16 @@ export const supabaseOrders = {
         const carrier = delivery?.shipping_carrier || row.shipping_carrier || row.carrier_name || '';
         const driver = delivery?.driver_phone || row.driver_phone || '';
         const tracking = delivery?.tracking_number || row.tracking_number || row.shipmentNo || row.shipment_no || '';
-        return {
+        return normalizeOrder({
           ...row,
           delivery_status: 'delivered',
-          status: 'delivered',
-          order_status: 'delivered',
+          status: 'completed',
+          order_status: 'completed',
           tracking_number: tracking,
           shipmentNo: tracking,
           shipping_carrier: carrier,
           driver_phone: driver
-        };
+        });
       });
     } catch (err: any) {
       console.warn('listCompleted error:', err?.message);
@@ -1853,23 +1828,10 @@ export const supabaseOrders = {
 
   async list(): Promise<any[]> {
     if (!isSupabaseConfigured || !supabase) {
-      try {
-        const local = JSON.parse(localStorage.getItem('admin_orders') || '[]');
-        return (local || []).filter((row: any) => {
-          const s = String(row.status || '').toLowerCase().trim();
-          const ps = String(row.payment_status || '').toLowerCase().trim();
-          if (['waiting_payment', 'pending_verification', 'waiting_verify', 'waiting_approval'].includes(s)) return false;
-          if (['pending_verification', 'waiting_verify', 'waiting_approval', 'pending_deposit'].includes(ps)) return false;
-          if (['cancelled', 'payment_rejected', 'rejected'].includes(s) || ['cancelled', 'payment_rejected', 'rejected'].includes(ps)) return false;
-          return true;
-        });
-      } catch {
-        return [];
-      }
+      return [];
     }
 
     try {
-      // JOIN orders with separate deliveries table
       const [ordersRes, deliveriesMap] = await Promise.all([
         supabase
           .from('orders')
@@ -1878,36 +1840,23 @@ export const supabaseOrders = {
         supabaseDeliveries.getAll()
       ]);
 
-      let rawData = ordersRes.data || [];
-
-      // Merge local storage approved orders so newly approved orders appear immediately
-      try {
-        const local = JSON.parse(localStorage.getItem('admin_orders') || '[]');
-        for (const loc of local) {
-          const s = String(loc.status || '').toLowerCase().trim();
-          if (['ready_to_ship', 'producing', 'paid', 'in_transit', 'completed', 'delivered'].includes(s)) {
-            if (!rawData.some((r: any) => String(r.id) === String(loc.id))) {
-              rawData.push(loc);
-            }
-          }
-        }
-      } catch {}
+      const rawData = (ordersRes.data || []).map(normalizeOrder);
 
       const data = rawData.filter((row: any) => {
-        const s = String(row.status || '').toLowerCase().trim();
-        const os = String(row.order_status || '').toLowerCase().trim();
+        const s = String(row.order_status || '').toLowerCase().trim();
         const ps = String(row.payment_status || '').toLowerCase().trim();
 
-        // Strictly exclude pending/unapproved states
-        if (['waiting_payment', 'pending_verification', 'waiting_verify', 'waiting_approval'].includes(s)) return false;
+        if (['waiting_payment', 'pending_payment', 'pending_verification', 'waiting_verify', 'waiting_approval'].includes(s)) return false;
         if (['pending_verification', 'waiting_verify', 'waiting_approval', 'pending_deposit'].includes(ps)) return false;
         if (['cancelled', 'payment_rejected', 'rejected'].includes(s) || ['cancelled', 'payment_rejected', 'rejected'].includes(ps)) return false;
         if (s === 'pending' && ps !== 'verified' && ps !== 'paid') return false;
 
-        // Must match approved statuses per requirement
         const approvedStatuses = [
           'paid',
           'in_queue',
+          'in_production',
+          'ready_to_transfer',
+          'delivering',
           'ready_to_ship',
           'producing',
           'manufacturing',
@@ -1918,33 +1867,32 @@ export const supabaseOrders = {
           'completed',
           'delivered'
         ];
-        return approvedStatuses.includes(s) || approvedStatuses.includes(os) || ['verified', 'paid', 'approved', 'deposit_paid'].includes(ps);
+        return approvedStatuses.includes(s) || ['verified', 'paid', 'approved', 'deposit_paid'].includes(ps);
       });
 
       return data.map((row: any, idx: number) => {
         const orderIdStr = String(row.id).trim();
         const delivery = deliveriesMap[orderIdStr] || deliveriesMap[row.id];
 
-        const isPre = isOrderPreOrder(row);
-        const orderType = isPre ? 'preorder' : 'instock';
+        const isPre = row.is_preorder;
         const queueNum = isPre
           ? (delivery?.queue_number || row.queue_number || row.queue_id || formatQueueId(row, idx))
-          : (delivery?.queue_number || row.queue_number || row.queue_id || '');
+          : (row.queue_number || row.queue_id || null);
         const carrier = delivery?.shipping_carrier || row.shipping_carrier || row.carrier_name || '';
         const driver = delivery?.driver_phone || row.driver_phone || '';
         const tracking = delivery?.tracking_number || row.tracking_number || row.shipmentNo || row.shipment_no || '';
         const estDeliveryDate = delivery?.estimated_delivery_date || row.estimated_delivery_date || '';
         const delivStatus = (delivery?.delivery_status || '').toLowerCase();
-        const ordStatus = (row.order_status || row.status || '').toLowerCase();
+        const ordStatus = String(row.order_status || '').toLowerCase();
 
         let qStage: 1 | 2 | 3 | 4 = 1;
         if (delivStatus === 'delivered' || delivStatus === 'completed' || ordStatus === 'delivered' || ordStatus === 'completed') {
           qStage = 4;
-        } else if (delivStatus === 'in_transit' || ordStatus === 'in_transit' || ordStatus === 'shipped' || ordStatus === 'shipping') {
+        } else if (delivStatus === 'in_transit' || ordStatus === 'delivering' || ordStatus === 'in_transit' || ordStatus === 'shipped' || ordStatus === 'shipping') {
           qStage = 4;
-        } else if (delivStatus === 'ready_for_shipping' || ordStatus === 'ready_for_shipping' || ordStatus === 'ready') {
+        } else if (delivStatus === 'ready_for_shipping' || ordStatus === 'ready_to_transfer' || ordStatus === 'ready_for_shipping' || ordStatus === 'ready') {
           qStage = 3;
-        } else if (delivStatus === 'manufacturing' || ordStatus === 'manufacturing' || ordStatus === 'processing' || ordStatus === 'paid') {
+        } else if (delivStatus === 'manufacturing' || ordStatus === 'in_production' || ordStatus === 'manufacturing' || ordStatus === 'processing' || ordStatus === 'paid') {
           qStage = 2;
         } else {
           qStage = 1;
@@ -1952,15 +1900,10 @@ export const supabaseOrders = {
 
         const stageKey = qStage === 4 ? 'in_transit' : qStage === 3 ? 'ready_for_shipping' : qStage === 2 ? 'manufacturing' : 'queue_received';
 
-        return {
+        return normalizeOrder({
           ...row,
-          order_type: orderType,
-          orderType: orderType,
-          is_preorder: isPre,
-          isPreOrder: isPre,
-          // Joined delivery fields: In-stock items bypass production queue (no queue_number)
-          queue_number: isPre ? queueNum : (queueNum || undefined),
-          queue_id: isPre ? queueNum : (queueNum || ''),
+          queue_number: isPre ? queueNum : undefined,
+          queue_id: isPre ? queueNum : null,
           shipping_carrier: carrier,
           carrier_name: carrier,
           driver_phone: driver,
@@ -1969,30 +1912,22 @@ export const supabaseOrders = {
           shipment_no: tracking,
           estimated_delivery_date: estDeliveryDate,
           delivery_status: delivStatus || ordStatus,
-
-          // Standard order fields:
           id: row.id,
           customerName: row.customer_name || row.customerName || '',
           date: row.created_at ? new Date(row.created_at).toISOString().split('T')[0] : '',
           productName: row.productName || row.product_name || 'เรือพลาสติกและอุปกรณ์',
           color: row.color || 'คละสี',
           amount: Number(row.total_amount || row.amount || 0),
-          status: delivStatus === 'delivered' ? 'Delivered' : (row.status || (ordStatus === 'completed' || ordStatus === 'delivered' ? 'Delivered' : ordStatus === 'shipping' || ordStatus === 'in_transit' ? 'Shipping' : row.payment_status || 'Pending')),
-          order_status: delivStatus === 'delivered' ? 'completed' : (row.order_status || (row.status === 'Delivered' ? 'completed' : row.status === 'Shipping' ? 'shipping' : 'pending')),
           status_message: row.status_message || '',
-          
-          // Queue System Fields:
           queue_stage: row.queue_stage || qStage,
           queue_status: row.queue_status || stageKey,
-
-          // Exact fields:
           customer_id: row.customer_id || null,
           customer_name: row.customer_name || row.customerName || '',
           customer_email: row.customer_email || 'guest@example.com',
           total_amount: Number(row.total_amount || row.amount || 0),
-          payment_status: row.payment_status || (row.status === 'Delivered' ? 'paid' : 'pending'),
+          payment_status: row.payment_status || (ordStatus === 'completed' ? 'paid' : 'pending'),
           created_at: row.created_at || row.date || ''
-        };
+        });
       });
     } catch (e: any) {
       console.warn('Orders fetch caught error:', e.message);
@@ -2009,7 +1944,6 @@ export const supabaseOrders = {
 
       let matchedRows: any[] = [];
 
-      // 1. Direct query by customer_id
       if (cleanUserId) {
         const { data, error } = await supabase
           .from('orders')
@@ -2022,7 +1956,6 @@ export const supabaseOrders = {
         }
       }
 
-      // 2. Query user_id column if distinct or no matches yet
       if (matchedRows.length === 0 && cleanUserId) {
         try {
           const { data: byUid, error: errUid } = await supabase
@@ -2034,12 +1967,9 @@ export const supabaseOrders = {
           if (!errUid && byUid && byUid.length > 0) {
             matchedRows = byUid;
           }
-        } catch {
-          // column may not exist, safe fallback
-        }
+        } catch {}
       }
 
-      // 3. Query customer_email if still no matches
       if (matchedRows.length === 0 && cleanEmail) {
         const { data: byEmail, error: errEmail } = await supabase
           .from('orders')
@@ -2052,7 +1982,6 @@ export const supabaseOrders = {
         }
       }
 
-      // 4. Fallback filter
       if (matchedRows.length === 0) {
         const all = await this.list();
         return all.filter((o: any) => {
@@ -2063,33 +1992,32 @@ export const supabaseOrders = {
         });
       }
 
-      // Fetch deliveries to JOIN with matched user orders
       const deliveriesMap = await supabaseDeliveries.getAll();
 
-      return matchedRows.map((row: any, idx: number) => {
+      return matchedRows.map((rawRow: any, idx: number) => {
+        const row = normalizeOrder(rawRow);
         const orderIdStr = String(row.id).trim();
         const delivery = deliveriesMap[orderIdStr] || deliveriesMap[row.id];
 
-        const isPre = isOrderPreOrder(row);
-        const orderType = isPre ? 'preorder' : 'instock';
+        const isPre = row.is_preorder;
         const queueNum = isPre
           ? (delivery?.queue_number || row.queue_number || row.queue_id || formatQueueId(row, idx))
-          : (delivery?.queue_number || row.queue_number || row.queue_id || '');
+          : (row.queue_number || row.queue_id || null);
         const carrier = delivery?.shipping_carrier || row.shipping_carrier || row.carrier_name || '';
         const driver = delivery?.driver_phone || row.driver_phone || '';
         const tracking = delivery?.tracking_number || row.tracking_number || row.shipmentNo || row.shipment_no || '';
         const estDeliveryDate = delivery?.estimated_delivery_date || row.estimated_delivery_date || '';
         const delivStatus = (delivery?.delivery_status || '').toLowerCase();
-        const ordStatus = (row.order_status || row.status || '').toLowerCase();
+        const ordStatus = String(row.order_status || '').toLowerCase();
 
         let qStage: 1 | 2 | 3 | 4 = 1;
         if (delivStatus === 'delivered' || delivStatus === 'completed' || ordStatus === 'delivered' || ordStatus === 'completed') {
           qStage = 4;
-        } else if (delivStatus === 'in_transit' || ordStatus === 'in_transit' || ordStatus === 'shipped' || ordStatus === 'shipping') {
+        } else if (delivStatus === 'in_transit' || ordStatus === 'delivering' || ordStatus === 'in_transit' || ordStatus === 'shipped' || ordStatus === 'shipping') {
           qStage = 4;
-        } else if (delivStatus === 'ready_for_shipping' || ordStatus === 'ready_for_shipping' || ordStatus === 'ready') {
+        } else if (delivStatus === 'ready_for_shipping' || ordStatus === 'ready_to_transfer' || ordStatus === 'ready_for_shipping' || ordStatus === 'ready') {
           qStage = 3;
-        } else if (delivStatus === 'manufacturing' || ordStatus === 'manufacturing' || ordStatus === 'processing' || ordStatus === 'paid') {
+        } else if (delivStatus === 'manufacturing' || ordStatus === 'in_production' || ordStatus === 'manufacturing' || ordStatus === 'processing' || ordStatus === 'paid') {
           qStage = 2;
         } else {
           qStage = 1;
@@ -2097,16 +2025,11 @@ export const supabaseOrders = {
 
         const stageKey = qStage === 4 ? 'in_transit' : qStage === 3 ? 'ready_for_shipping' : qStage === 2 ? 'manufacturing' : 'queue_received';
 
-        return {
+        return normalizeOrder({
           ...row,
           id: row.id,
-          order_type: orderType,
-          orderType: orderType,
-          is_preorder: isPre,
-          isPreOrder: isPre,
-          // Joined deliveries table fields: in-stock items bypass production queue
-          queue_number: isPre ? queueNum : (queueNum || undefined),
-          queue_id: isPre ? queueNum : (queueNum || ''),
+          queue_number: isPre ? queueNum : undefined,
+          queue_id: isPre ? queueNum : null,
           shipping_carrier: carrier,
           carrier_name: carrier,
           driver_phone: driver,
@@ -2115,29 +2038,23 @@ export const supabaseOrders = {
           shipment_no: tracking,
           estimated_delivery_date: estDeliveryDate,
           delivery_status: delivStatus || ordStatus,
-
           customerName: row.customer_name || row.customerName || '',
           date: row.created_at ? new Date(row.created_at).toISOString().split('T')[0] : '',
           productName: row.productName || row.product_name || 'เรือพลาสติกและอุปกรณ์',
           color: row.color || 'คละสี',
           amount: Number(row.total_amount || row.amount || 0),
-          status: delivStatus === 'delivered' ? 'Delivered' : (row.status || (ordStatus === 'completed' || ordStatus === 'delivered' ? 'Delivered' : ordStatus === 'shipping' || ordStatus === 'in_transit' ? 'Shipping' : row.payment_status || 'Pending')),
           payment_slip_url: row.payment_slip_url || '',
           status_message: row.status_message || '',
-          
-          // Queue fields:
           queue_stage: row.queue_stage || qStage,
           queue_status: row.queue_status || stageKey,
-
           customer_id: row.customer_id || row.user_id || cleanUserId,
           customer_name: row.customer_name || row.customerName || '',
           customer_email: row.customer_email || cleanEmail,
           customer_phone: row.customer_phone || '',
           total_amount: Number(row.total_amount || row.amount || 0),
-          payment_status: row.payment_status || row.status || 'pending',
-          order_status: delivStatus === 'delivered' ? 'completed' : (row.order_status || 'waiting_payment'),
+          payment_status: row.payment_status || 'pending',
           created_at: row.created_at || row.date || ''
-        };
+        });
       });
     } catch (e: any) {
       console.warn('Orders listByUserId caught error:', e.message);
@@ -2153,35 +2070,113 @@ export const supabaseOrders = {
     total_amount: number;
     payment_status?: string;
     order_status?: string;
+    status?: string;
+    order_type?: string;
+    is_preorder?: boolean;
+    queue_id?: string | null;
     created_at?: string;
     productName?: string;
+    product_name?: string;
     color?: string;
+    notes?: string;
+    address?: string;
+    items?: Array<{ product_id?: string; product_name?: string; quantity: number }>;
   }): Promise<any> {
-    if (!isSupabaseConfigured || !supabase) return null;
+    const isPre = Boolean(item.is_preorder === true || item.order_type === 'preorder' || item.order_type === 'pre_order');
+    const orderTypeVal = isPre ? 'preorder' : 'stock';
+    const prodName = item.product_name || item.productName || 'เรือพลาสติกและอุปกรณ์';
+
+    const fullPayload: any = {
+      customer_id: item.customer_id,
+      customer_name: item.customer_name,
+      customer_email: item.customer_email,
+      customer_phone: item.customer_phone,
+      total_amount: Number(item.total_amount),
+      order_status: 'pending_payment',
+      status: 'pending_payment',
+      payment_status: 'pending_verification',
+      is_preorder: isPre,
+      order_type: orderTypeVal,
+      queue_id: null,
+      product_name: prodName,
+      color: item.color || 'คละสี',
+      notes: item.notes || '',
+      address: item.address || ''
+    };
+
+    const storeOrderItemsInMemory = (createdRow: any) => {
+      const orderIdStr = String(createdRow?.id || '');
+      if (orderIdStr && Array.isArray(item.items) && item.items.length > 0) {
+        inMemoryOrderItems.set(orderIdStr, item.items);
+      }
+    };
+
+    if (!isSupabaseConfigured || !supabase) {
+      throw new Error('ระบบไม่ได้เชื่อมต่อฐานข้อมูล Supabase');
+    }
+
     try {
-      const insertPayload = {
+      console.log('ORDER PAYLOAD', fullPayload);
+
+      // Attempt 1: full payload
+      const { data, error } = await supabase
+        .from('orders')
+        .insert([fullPayload])
+        .select();
+
+      if (!error && data?.[0]) {
+        storeOrderItemsInMemory(data[0]);
+        return normalizeOrder({ ...fullPayload, ...data[0], items: item.items || [] });
+      }
+
+      console.warn('Full insert failed, falling back to core + type columns:', error?.message);
+
+      // Attempt 2: core columns + order_status/is_preorder/order_type/queue_id
+      const midPayload: any = {
         customer_id: item.customer_id,
         customer_name: item.customer_name,
         customer_email: item.customer_email,
         customer_phone: item.customer_phone,
         total_amount: Number(item.total_amount),
-        status: 'pending_verification',
+        order_status: 'pending_payment',
         payment_status: 'pending_verification',
-        order_status: 'pending_verification'
+        is_preorder: isPre,
+        order_type: orderTypeVal,
+        queue_id: null
       };
-
-      console.log('ORDER PAYLOAD', insertPayload);
-
-      const { data, error } = await supabase
+      const { data: midData, error: midErr } = await supabase
         .from('orders')
-        .insert([insertPayload])
+        .insert([midPayload])
         .select();
 
-      if (error) {
-        console.error('Failed to insert order into Supabase:', error.message);
-        throw error;
+      if (!midErr && midData?.[0]) {
+        storeOrderItemsInMemory(midData[0]);
+        return normalizeOrder({ ...fullPayload, ...midData[0], items: item.items || [] });
       }
-      return data?.[0];
+
+      // Attempt 3: minimal core columns
+      const minPayload: any = {
+        customer_id: item.customer_id,
+        customer_name: item.customer_name,
+        customer_email: item.customer_email,
+        customer_phone: item.customer_phone,
+        total_amount: Number(item.total_amount),
+        order_status: 'pending_payment'
+      };
+      const { data: minData, error: minErr } = await supabase
+        .from('orders')
+        .insert([minPayload])
+        .select();
+
+      if (minErr) {
+        console.error('Failed to insert order into Supabase:', minErr.message);
+        throw minErr;
+      }
+      if (minData?.[0]) {
+        storeOrderItemsInMemory(minData[0]);
+        return normalizeOrder({ ...fullPayload, ...minData[0], items: item.items || [] });
+      }
+      return null;
     } catch (err: any) {
       console.error('Failed to create order in Supabase:', err.message);
       throw err;
@@ -2205,7 +2200,10 @@ export const supabaseOrders = {
     address?: string;
     notes?: string;
   }): Promise<any> {
-    const orderId = 'ORD-PRE-' + Date.now().toString().slice(-6);
+    if (!isSupabaseConfigured || !supabase) {
+      throw new Error('ระบบไม่ได้เชื่อมต่อฐานข้อมูล Supabase');
+    }
+
     const stickerText = typeof item.sticker_option === 'boolean' 
       ? (item.sticker_option ? 'ติดสติกเกอร์ลายพิเศษ (+300 บาท)' : 'ไม่ติดสติกเกอร์ (+0 บาท)')
       : String(item.sticker_option);
@@ -2216,7 +2214,6 @@ export const supabaseOrders = {
       : `เรือพลาสติกสั่งทำพิเศษ ${sizeName} (สี${item.selected_color})`;
 
     const fullPayload: any = {
-      id: orderId,
       customer_id: item.customer_id || null,
       customer_name: item.customer_name || 'ลูกค้าพรีออเดอร์',
       customer_email: item.customer_email || 'guest@example.com',
@@ -2226,11 +2223,13 @@ export const supabaseOrders = {
       sticker_option: stickerText,
       custom_text: item.custom_text || '',
       total_price: Number(item.total_price),
-      status: 'pending_verification',
-      // Compatibility columns for existing orders view:
+      status: 'pending_payment',
       total_amount: Number(item.total_price),
       payment_status: 'pending_verification',
-      order_status: 'pending_verification',
+      order_status: 'pending_payment',
+      is_preorder: true,
+      order_type: 'preorder',
+      queue_id: null,
       product_name: prodName,
       color: item.selected_color,
       address: item.address || '',
@@ -2238,63 +2237,45 @@ export const supabaseOrders = {
       created_at: new Date().toISOString()
     };
 
-    let resultOrder = { ...fullPayload };
-
-    if (isSupabaseConfigured && supabase) {
-      try {
-        // Attempt 1: full payload with custom columns
-        const { data, error } = await supabase.from('orders').insert([fullPayload]).select();
-        if (!error && data && data[0]) {
-          resultOrder = data[0];
-        } else if (error) {
-          console.warn('First insert attempt with custom columns failed, falling back to core columns:', error.message);
-          // Attempt 2: fallback to core schema if custom columns don't exist yet
-          const corePayload: any = {
-            customer_id: item.customer_id || null,
-            customer_name: item.customer_name,
-            customer_email: item.customer_email || 'guest@example.com',
-            customer_phone: item.customer_phone,
-            total_amount: Number(item.total_price),
-            payment_status: 'pending_deposit',
-            order_status: 'pending_deposit'
-          };
-          const { data: dataCore, error: errCore } = await supabase.from('orders').insert([corePayload]).select();
-          if (!errCore && dataCore && dataCore[0]) {
-            resultOrder = { ...resultOrder, ...dataCore[0] };
-          }
-        }
-      } catch (err: any) {
-        console.warn('Failed to insert custom pre-order into Supabase table orders:', err.message);
-      }
+    // Attempt 1: full payload with custom columns (let DB generate ID or accept it cleanly)
+    const { data, error } = await supabase.from('orders').insert([fullPayload]).select();
+    if (!error && data && data[0]) {
+      return normalizeOrder({ ...fullPayload, ...data[0] });
     }
 
-    // Save locally for instant reactivity in Admin Dashboard & Order History
-    try {
-      const localOrders = JSON.parse(localStorage.getItem('admin_orders') || '[]');
-      localOrders.unshift(resultOrder);
-      localStorage.setItem('admin_orders', JSON.stringify(localOrders));
+    console.warn('First insert attempt with custom columns failed, falling back to core columns:', error?.message);
+    const midPayload: any = {
+      customer_id: item.customer_id || null,
+      customer_name: item.customer_name,
+      customer_email: item.customer_email || 'guest@example.com',
+      customer_phone: item.customer_phone,
+      total_amount: Number(item.total_price),
+      payment_status: 'pending_verification',
+      order_status: 'pending_payment',
+      is_preorder: true,
+      order_type: 'preorder',
+      queue_id: null
+    };
+    const { data: dataMid, error: errMid } = await supabase.from('orders').insert([midPayload]).select();
+    if (!errMid && dataMid && dataMid[0]) {
+      return normalizeOrder({ ...fullPayload, ...dataMid[0] });
+    }
 
-      const localPreorders = JSON.parse(localStorage.getItem('admin_preorders') || '[]');
-      localPreorders.unshift({
-        id: resultOrder.id || orderId,
-        customerName: item.customer_name,
-        phone: item.customer_phone,
-        email: item.customer_email,
-        date: new Date().toISOString().split('T')[0],
-        productName: `เรือสั่งทำพิเศษ (สี${item.selected_color})`,
-        color: item.selected_color,
-        quantity: item.quantity || 1,
-        deposit: item.deposit_amount || 1000,
-        fullPrice: item.total_price,
-        estDelivery: 'ภายใน 5-7 วันทำการ',
-        status: 'pending_deposit',
-        address: item.address || '',
-        notes: fullPayload.notes
-      });
-      localStorage.setItem('admin_preorders', JSON.stringify(localPreorders));
-    } catch {}
+    const corePayload: any = {
+      customer_id: item.customer_id || null,
+      customer_name: item.customer_name,
+      customer_email: item.customer_email || 'guest@example.com',
+      customer_phone: item.customer_phone,
+      total_amount: Number(item.total_price),
+      payment_status: 'pending_verification',
+      order_status: 'pending_payment'
+    };
+    const { data: dataCore, error: errCore } = await supabase.from('orders').insert([corePayload]).select();
+    if (!errCore && dataCore && dataCore[0]) {
+      return normalizeOrder({ ...fullPayload, ...dataCore[0] });
+    }
 
-    return resultOrder;
+    throw errCore || errMid || error || new Error('ไม่สามารถสร้างคำสั่งจองพรีออเดอร์ได้');
   },
 
   async update(id: string, item: any): Promise<boolean> {
@@ -2329,15 +2310,6 @@ export const supabaseOrders = {
         }
       }
 
-      // Sync local storage for immediate persistence
-      try {
-        const local = JSON.parse(localStorage.getItem('admin_orders') || '[]');
-        const updated = local.map((o: any) => 
-          String(o.id) === orderIdStr ? { ...o, is_deleted: true, updated_at: new Date().toISOString() } : o
-        );
-        localStorage.setItem('admin_orders', JSON.stringify(updated));
-      } catch {}
-
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('pornpong-order-deleted', { detail: { id: orderIdStr } }));
         window.dispatchEvent(new Event('orders-updated'));
@@ -2368,15 +2340,6 @@ export const supabaseOrders = {
         }
       }
 
-      // Sync local storage
-      try {
-        const local = JSON.parse(localStorage.getItem('admin_orders') || '[]');
-        const updated = local.map((o: any) => 
-          String(o.id) === orderIdStr ? { ...o, is_deleted: false, updated_at: new Date().toISOString() } : o
-        );
-        localStorage.setItem('admin_orders', JSON.stringify(updated));
-      } catch {}
-
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('pornpong-order-restored', { detail: { id: orderIdStr } }));
         window.dispatchEvent(new Event('orders-updated'));
@@ -2392,12 +2355,7 @@ export const supabaseOrders = {
   // 2. Query Recycle Bin (is_deleted = true)
   async listRecycleBin(): Promise<any[]> {
     if (!isSupabaseConfigured || !supabase) {
-      try {
-        const local = JSON.parse(localStorage.getItem('admin_orders') || '[]');
-        return (local || []).filter((o: any) => o.is_deleted === true);
-      } catch {
-        return [];
-      }
+      return [];
     }
 
     try {
@@ -2410,26 +2368,17 @@ export const supabaseOrders = {
         supabaseDeliveries.getAll()
       ]);
 
-      let data = ordersRes.data || [];
-      // Also merge local storage items with is_deleted === true
-      try {
-        const local = JSON.parse(localStorage.getItem('admin_orders') || '[]');
-        for (const loc of local) {
-          if (loc.is_deleted === true && !data.some((r: any) => String(r.id) === String(loc.id))) {
-            data.push(loc);
-          }
-        }
-      } catch {}
+      const data = ordersRes.data || [];
 
       return data.map((row: any) => {
         const orderIdStr = String(row.id).trim();
         const delivery = deliveriesMap[orderIdStr] || deliveriesMap[row.id];
-        return {
+        return normalizeOrder({
           ...row,
           is_deleted: true,
           shipmentNo: delivery?.tracking_number || row.tracking_number || row.shipmentNo || '',
           shipping_carrier: delivery?.shipping_carrier || row.shipping_carrier || ''
-        };
+        });
       });
     } catch (err: any) {
       console.warn('listRecycleBin error:', err?.message);
@@ -2457,7 +2406,7 @@ export const supabaseOrders = {
     const isShip = sLower === 'shipped' || sLower === 'shipping' || sLower === 'in_transit';
     const isReady = sLower === 'ready_for_shipping' || sLower === 'ready';
     const mappedOrderStatus = isPending ? sLower : isDeliv ? 'completed' : isShip ? 'in_transit' : isReady ? 'ready_for_shipping' : 'manufacturing';
-    const trackingNo = meta?.tracking_number || meta?.shipment_no || `TH-EX-${String(id).replace(/[^0-9]/g, '').slice(-6) || '291823'}`;
+    const trackingNo = meta?.tracking_number || meta?.shipment_no || '';
     const carrier = meta?.shipping_carrier || meta?.carrier_name || '';
     const driver = meta?.driver_phone || '';
     const estDate = meta?.estimated_delivery_date || '';
@@ -2465,18 +2414,17 @@ export const supabaseOrders = {
 
     try {
       if (isSupabaseConfigured && supabase) {
-        // 1. Update orders table in Supabase
         const targetStatus = isDeliv ? 'delivered' : isShip ? 'in_transit' : status;
         try {
           await supabase.from('orders').update({
             status: targetStatus,
             order_status: mappedOrderStatus,
             ...(isPending ? {} : { delivery_status: isDeliv ? 'delivered' : mappedOrderStatus }),
-            ...(isPending ? {} : {
+            ...(!isPending && trackingNo ? {
               shipment_no: trackingNo,
               shipmentNo: trackingNo,
               tracking_number: trackingNo
-            }),
+            } : {}),
             ...(carrier ? { shipping_carrier: carrier, carrier_name: carrier } : {}),
             ...(driver ? { driver_phone: driver } : {}),
             ...(estDate ? { estimated_delivery_date: estDate } : {}),
@@ -2494,7 +2442,6 @@ export const supabaseOrders = {
       console.warn('Supabase updateStatus caught warning:', e);
     }
 
-    // 2. UPSERT into separate deliveries table (only if order is approved / not pending)
     if (!isPending) {
       try {
         await supabaseDeliveries.upsert({
@@ -2510,27 +2457,6 @@ export const supabaseOrders = {
         console.warn('supabaseDeliveries.upsert caught warning in updateStatus:', e);
       }
     }
-
-    // Persist immediately in local storage admin_orders
-    try {
-      const local = JSON.parse(localStorage.getItem('admin_orders') || '[]');
-      const updated = local.map((o: any) => 
-        o.id === id ? { 
-          ...o, 
-          status: isDeliv ? 'delivered' : status, 
-          order_status: mappedOrderStatus,
-          shipmentNo: trackingNo,
-          shipment_no: trackingNo,
-          tracking_number: trackingNo,
-          ...(carrier ? { shipping_carrier: carrier, carrier_name: carrier } : {}),
-          ...(driver ? { driver_phone: driver } : {}),
-          ...(estDate ? { estimated_delivery_date: estDate } : {}),
-          ...(queueNo ? { queue_number: queueNo } : {}),
-          delivery_status: isDeliv ? 'delivered' : mappedOrderStatus
-        } : o
-      );
-      localStorage.setItem('admin_orders', JSON.stringify(updated));
-    } catch {}
 
     return true;
   },
@@ -2549,29 +2475,27 @@ export const supabaseOrders = {
     }
   ): Promise<boolean> {
     const stageMap: Record<number, { status: string; orderStatus: string; label: string }> = {
-      1: { status: 'processing', orderStatus: 'queue_received', label: 'รับคิวผลิต' },
-      2: { status: 'manufacturing', orderStatus: 'manufacturing', label: 'กำลังหลอม/ผลิต' },
-      3: { status: 'ready_for_shipping', orderStatus: 'ready_for_shipping', label: 'รอขนย้าย' },
-      4: { status: 'in_transit', orderStatus: 'in_transit', label: 'อยู่ระหว่างจัดส่ง' }
+      1: { status: 'in_queue', orderStatus: 'in_queue', label: 'รับคิวผลิต' },
+      2: { status: 'in_production', orderStatus: 'in_production', label: 'กำลังหลอม/ผลิต' },
+      3: { status: 'ready_to_transfer', orderStatus: 'ready_to_transfer', label: 'รอขนย้าย' },
+      4: { status: 'delivering', orderStatus: 'delivering', label: 'อยู่ระหว่างจัดส่ง' }
     };
     const currentStageInfo = stageMap[stage] || stageMap[1];
-    const trackingNo = meta?.tracking_number || meta?.shipment_no || `TH-EX-${String(id).replace(/[^0-9]/g, '').slice(-6) || '291823'}`;
+    const trackingNo = meta?.tracking_number || meta?.shipment_no || '';
     const carrier = meta?.shipping_carrier || meta?.carrier_name || '';
     const driver = meta?.driver_phone || '';
     const estDate = meta?.estimated_delivery_date || '';
     const queueNo = meta?.queue_number;
 
-    // 1. Update orders table in Supabase
     if (isSupabaseConfigured && supabase) {
       try {
         await supabase.from('orders').update({
+          queue_step: stage,
           queue_stage: stage,
           queue_status: currentStageInfo.orderStatus,
           order_status: currentStageInfo.orderStatus,
           status: currentStageInfo.status,
-          shipment_no: trackingNo,
-          shipmentNo: trackingNo,
-          tracking_number: trackingNo,
+          ...(trackingNo ? { shipment_no: trackingNo, shipmentNo: trackingNo, tracking_number: trackingNo } : {}),
           ...(queueNo ? { queue_number: queueNo } : {}),
           ...(carrier ? { shipping_carrier: carrier, carrier_name: carrier } : {}),
           ...(driver ? { driver_phone: driver } : {}),
@@ -2582,13 +2506,12 @@ export const supabaseOrders = {
         try {
           await supabase.from('orders').update({
             order_status: currentStageInfo.orderStatus,
-            status: currentStageInfo.status
+            queue_step: stage
           }).eq('id', id);
         } catch {}
       }
     }
 
-    // 2. UPSERT into separate deliveries table
     try {
       await supabaseDeliveries.upsert({
         order_id: String(id),
@@ -2603,30 +2526,6 @@ export const supabaseOrders = {
       console.warn('supabaseDeliveries.upsert caught warning in updateQueueStage:', e);
     }
 
-    // Persist in local storage admin_orders
-    try {
-      const local = JSON.parse(localStorage.getItem('admin_orders') || '[]');
-      const updated = local.map((o: any) =>
-        o.id === id ? {
-          ...o,
-          queue_stage: stage,
-          queue_status: currentStageInfo.orderStatus,
-          order_status: currentStageInfo.orderStatus,
-          status: currentStageInfo.status,
-          shipment_no: trackingNo,
-          shipmentNo: trackingNo,
-          tracking_number: trackingNo,
-          ...(queueNo ? { queue_number: queueNo } : {}),
-          ...(carrier ? { shipping_carrier: carrier, carrier_name: carrier } : {}),
-          ...(driver ? { driver_phone: driver } : {}),
-          ...(estDate ? { estimated_delivery_date: estDate } : {}),
-          delivery_status: currentStageInfo.orderStatus
-        } : o
-      );
-      localStorage.setItem('admin_orders', JSON.stringify(updated));
-    } catch {}
-
-    // Dispatch realtime broadcast events
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('pornpong-queue-updated', {
         detail: {
@@ -2646,114 +2545,54 @@ export const supabaseOrders = {
   },
 
   async listWaitingVerify(): Promise<any[]> {
-    const getApprovedIds = (): Set<string> => {
-      try {
-        return new Set(JSON.parse(localStorage.getItem('pornpong_approved_order_ids') || '[]').map(String));
-      } catch {
-        return new Set();
-      }
-    };
-    const getRejectedIds = (): Set<string> => {
-      try {
-        return new Set(JSON.parse(localStorage.getItem('pornpong_rejected_order_ids') || '[]').map(String));
-      } catch {
-        return new Set();
-      }
-    };
-
-    const isOrderExcludedFromPending = (order: any, approvedIds: Set<string>, rejectedIds: Set<string>): boolean => {
-      const id = String(order.id || '');
-      if (approvedIds.has(id) || rejectedIds.has(id)) return true;
-
-      const s = String(order.status || '').toLowerCase().trim();
-      const ps = String(order.payment_status || '').toLowerCase().trim();
+    const isOrderExcludedFromPending = (rawOrder: any): boolean => {
+      const order = normalizeOrder(rawOrder);
       const os = String(order.order_status || '').toLowerCase().trim();
+      const ps = String(order.payment_status || '').toLowerCase().trim();
 
-      // Explicitly excluded statuses (already approved, produced, shipped, or completed)
-      const EXCLUDED_STATUSES = ['paid', 'in_queue', 'in_production', 'production_queue', 'ready_to_ship', 'producing', 'completed', 'in_transit', 'shipping', 'delivered', 'cancelled', 'payment_rejected'];
+      const EXCLUDED_STATUSES = ['paid', 'in_queue', 'in_production', 'ready_to_transfer', 'delivering', 'production_queue', 'ready_to_ship', 'producing', 'completed', 'in_transit', 'shipping', 'delivered', 'cancelled', 'payment_rejected', 'rejected'];
       const EXCLUDED_PAYMENT_STATUSES = ['verified', 'paid', 'completed', 'approved', 'rejected', 'payment_rejected'];
-      const EXCLUDED_ORDER_STATUSES = ['in_queue', 'in_production', 'production_queue', 'manufacturing', 'producing', 'ready_to_ship', 'in_transit', 'shipping', 'completed', 'delivered'];
 
-      if (EXCLUDED_STATUSES.includes(s) || EXCLUDED_PAYMENT_STATUSES.includes(ps) || EXCLUDED_ORDER_STATUSES.includes(os)) {
+      if (EXCLUDED_STATUSES.includes(os) || EXCLUDED_PAYMENT_STATUSES.includes(ps)) {
         return true;
       }
 
-      // Requirement 1: ดึงออเดอร์ที่มี status = 'pending_verification' หรือ payment_status = 'pending_verification' ออกมาแสดงผลทันที
-      if (s === 'pending_verification' || ps === 'pending_verification') {
+      if (os === 'pending_payment' || os === 'pending_verification' || ps === 'pending_verification') {
         return false;
       }
 
-      // Other pending states
-      const isPending = ['waiting_verify', 'waiting_approval', 'pending'].includes(ps) ||
-                        ['waiting_verify', 'waiting_approval', 'pending', 'waiting_payment'].includes(s);
+      const isPending = ['waiting_verify', 'waiting_approval', 'pending', 'pending_payment', 'waiting_payment'].includes(ps) ||
+                        ['waiting_verify', 'waiting_approval', 'pending', 'waiting_payment', 'pending_payment'].includes(os);
       return !isPending;
     };
 
-    const approvedIds = getApprovedIds();
-    const rejectedIds = getRejectedIds();
-
     if (!isSupabaseConfigured || !supabase) {
-      // Local storage fallback
-      try {
-        const local = JSON.parse(localStorage.getItem('admin_orders') || '[]');
-        const preLocal = JSON.parse(localStorage.getItem('admin_preorders') || '[]');
-        const combined = [...local, ...preLocal];
-        return combined
-          .filter((o: any) => !isOrderExcludedFromPending(o, approvedIds, rejectedIds))
-          .map((row: any) => ({
-            ...row,
-            id: row.id,
-            customerName: row.customer_name || row.customerName || '',
-            date: row.created_at ? new Date(row.created_at).toISOString().split('T')[0] : '',
-            productName: row.productName || row.product_name || 'เรือพลาสติกและอุปกรณ์',
-            color: row.color || 'คละสี',
-            amount: Number(row.total_amount || row.amount || 0),
-            status: row.payment_status || row.status || 'pending_verification',
-            shipmentNo: row.shipmentNo || row.shipment_no || '',
-            payment_slip_url: row.payment_slip_url || row.slip_url || row.base64_slip || '',
-            slip_url: row.slip_url || row.payment_slip_url || row.base64_slip || '',
-            base64_slip: row.base64_slip || (row.payment_slip_url?.startsWith('data:') ? row.payment_slip_url : ''),
-            customer_id: row.customer_id || null,
-            customer_name: row.customer_name || row.customerName || '',
-            customer_email: row.customer_email || 'guest@example.com',
-            customer_phone: row.customer_phone || '',
-            total_amount: Number(row.total_amount || row.amount || 0),
-            payment_status: row.payment_status || row.status || 'pending_verification',
-            order_status: row.order_status || 'pending_verification',
-            created_at: row.created_at || row.date || ''
-          }));
-      } catch {
-        return [];
-      }
+      return [];
     }
 
     try {
-      // 1. Direct query: status = 'pending_verification' OR payment_status = 'pending_verification'
       const { data: pvData, error: pvErr } = await supabase
         .from('orders')
         .select('*')
-        .or('status.eq.pending_verification,payment_status.eq.pending_verification')
+        .or('order_status.eq.pending_payment,order_status.eq.pending_verification,status.eq.pending_payment,status.eq.pending_verification,payment_status.eq.pending_verification')
         .order('created_at', { ascending: false });
 
       if (pvErr) {
-        console.warn('Supabase pending_verification query error:', pvErr.message);
+        console.warn('Supabase pending_payment/verification query error:', pvErr.message);
       }
 
-      // 2. Secondary query: pending status
-      const { data: pendingData, error: pendingErr } = await supabase
+      const { data: pendingData } = await supabase
         .from('orders')
         .select('*')
-        .or('status.eq.pending,payment_status.eq.pending')
+        .or('order_status.eq.pending,status.eq.pending,payment_status.eq.pending')
         .order('created_at', { ascending: false });
 
-      // 3. Recent orders query (fetches latest orders to ensure the 2 latest orders are captured)
-      const { data: recentData, error: recentErr } = await supabase
+      const { data: recentData } = await supabase
         .from('orders')
         .select('*')
         .order('created_at', { ascending: false })
-        .limit(20);
+        .limit(30);
 
-      // Merge and deduplicate by ID
       const rawMap = new Map<string, any>();
       const addRows = (rows?: any[] | null) => {
         if (!rows || !Array.isArray(rows)) return;
@@ -2769,11 +2608,10 @@ export const supabaseOrders = {
       addRows(recentData);
 
       const rawCombined = Array.from(rawMap.values());
+      const strictlyFiltered = rawCombined.filter((row: any) => !isOrderExcludedFromPending(row));
 
-      // Filter to only include unapproved pending_verification orders
-      const strictlyFiltered = rawCombined.filter((row: any) => !isOrderExcludedFromPending(row, approvedIds, rejectedIds));
-
-      let list: any[] = strictlyFiltered.map((row: any) => {
+      return strictlyFiltered.map((rawRow: any) => {
+        const row = normalizeOrder(rawRow);
         let slipUrl = row.payment_slip_url || row.slip_url || row.slipUrl || row.slip || row.image_url || '';
         if (slipUrl && !slipUrl.startsWith('http') && !slipUrl.startsWith('data:')) {
           try {
@@ -2784,7 +2622,7 @@ export const supabaseOrders = {
           } catch {}
         }
 
-        return {
+        return normalizeOrder({
           ...row,
           id: row.id,
           customerName: row.customer_name || row.customerName || '',
@@ -2792,7 +2630,6 @@ export const supabaseOrders = {
           productName: row.productName || row.product_name || 'เรือพลาสติกและอุปกรณ์',
           color: row.color || 'คละสี',
           amount: Number(row.total_amount || row.amount || 0),
-          status: row.payment_status || row.status || 'pending_verification',
           shipmentNo: row.shipmentNo || row.shipment_no || '',
           payment_slip_url: slipUrl || row.slip_url || row.base64_slip || '',
           slip_url: row.slip_url || slipUrl || row.base64_slip || '',
@@ -2802,61 +2639,20 @@ export const supabaseOrders = {
           customer_email: row.customer_email || 'guest@example.com',
           customer_phone: row.customer_phone || '',
           total_amount: Number(row.total_amount || row.amount || 0),
-          payment_status: row.payment_status || row.status || 'pending_verification',
-          order_status: row.order_status || 'pending_verification',
+          payment_status: row.payment_status || 'pending_verification',
           created_at: row.created_at || row.date || ''
-        };
+        });
       });
-
-      // Also merge with local storage admin_orders to ensure any recently attached slips/orders are never lost
-      try {
-        const local = JSON.parse(localStorage.getItem('admin_orders') || '[]');
-        const pendingLocal = local.filter((o: any) => !isOrderExcludedFromPending(o, approvedIds, rejectedIds));
-        for (const loc of pendingLocal) {
-          const existingIdx = list.findIndex(r => String(r.id) === String(loc.id));
-          const locSlip = loc.payment_slip_url || loc.slip_url || loc.base64_slip || '';
-          if (existingIdx >= 0) {
-            if (!list[existingIdx].payment_slip_url && locSlip) {
-              list[existingIdx].payment_slip_url = locSlip;
-              list[existingIdx].slip_url = locSlip;
-            }
-          } else {
-            list.push({
-              ...loc,
-              payment_slip_url: locSlip,
-              slip_url: loc.slip_url || locSlip
-            });
-          }
-        }
-      } catch {}
-
-      // Final strict filter pass
-      return list.filter((item: any) => !isOrderExcludedFromPending(item, approvedIds, rejectedIds));
     } catch (e: any) {
       console.warn('Orders fetch waiting verify caught error:', e.message);
       return [];
     }
   },
 
-  async approve(id: string): Promise<boolean> {
+  async approve(id: string, fallbackOrder?: any): Promise<boolean> {
     try {
       const orderIdStr = String(id);
-
-      // Immediately save to approved set in localStorage so no refresh can re-render it
-      try {
-        const approvedList = JSON.parse(localStorage.getItem('pornpong_approved_order_ids') || '[]');
-        if (!approvedList.map(String).includes(orderIdStr)) {
-          approvedList.push(orderIdStr);
-          localStorage.setItem('pornpong_approved_order_ids', JSON.stringify(approvedList));
-        }
-        // Remove from rejected if was there
-        const rejectedList = JSON.parse(localStorage.getItem('pornpong_rejected_order_ids') || '[]');
-        const filteredRejected = rejectedList.filter((x: any) => String(x) !== orderIdStr);
-        localStorage.setItem('pornpong_rejected_order_ids', JSON.stringify(filteredRejected));
-      } catch {}
-
-      let isPre = false;
-      let orderData: any = null;
+      let orderData: any = fallbackOrder ? normalizeOrder({ ...fallbackOrder }) : null;
 
       if (isSupabaseConfigured && supabase) {
         try {
@@ -2866,42 +2662,30 @@ export const supabaseOrders = {
             .eq('id', id)
             .maybeSingle();
           if (data) {
-            orderData = data;
-            isPre = isOrderPreOrder(data);
+            orderData = normalizeOrder({ ...(orderData || {}), ...data });
           }
         } catch (fetchErr) {
           console.warn('Supabase fetch order in approve caught:', fetchErr);
         }
       }
 
-      if (!orderData) {
-        try {
-          const local = JSON.parse(localStorage.getItem('admin_orders') || '[]');
-          const found = local.find((o: any) => String(o.id) === orderIdStr);
-          if (found) {
-            isPre = isOrderPreOrder(found);
-            orderData = found;
-          }
-        } catch {}
-      }
-
-      // Per Requirement 1:
-      // When approving, check product_type (or order_type):
-      // [กรณี A: สินค้าพร้อมส่ง (product_type === 'in_stock')]
-      // * status = 'ready_to_ship', payment_status = 'paid', is_deleted = false
-      // [กรณี B: สินค้าพรีออเดอร์ (product_type === 'pre_order')]
-      // * Q-YYMM-XXX queue number, status = 'producing', queue_status = 'waiting_production', payment_status = 'deposit_paid', is_deleted = false
-      const pType = orderData?.product_type || orderData?.order_type || orderData?.orderType;
-      const isPreorder = Boolean(
-        orderData?.is_preorder === true || 
+      const explicitPre = Boolean(
+        orderData?.is_preorder === true ||
         orderData?.is_preorder === 'true' ||
-        orderData?.order_type === 'preorder' || 
-        orderData?.order_type === 'pre_order' || 
+        orderData?.order_type === 'preorder' ||
+        orderData?.order_type === 'pre_order' ||
         orderData?.type === 'preorder' ||
-        pType === 'pre_order' || 
-        pType === 'preorder'
+        orderData?.product_type === 'pre_order'
       );
-      isPre = isPreorder;
+      const explicitStock = Boolean(
+        orderData?.is_preorder === false ||
+        orderData?.is_preorder === 'false' ||
+        orderData?.order_type === 'stock' ||
+        orderData?.order_type === 'instock' ||
+        orderData?.order_type === 'in_stock' ||
+        orderData?.product_type === 'in_stock'
+      );
+      const isPre = explicitPre ? true : explicitStock ? false : isOrderPreOrder(orderData);
 
       let assignedQueueNumber: string | undefined = undefined;
       if (isPre) {
@@ -2913,81 +2697,102 @@ export const supabaseOrders = {
         }
       }
 
-      const nextStatus = isPre ? 'in_queue' : 'paid';
-      const nextOrderStatus = isPre ? 'in_queue' : 'paid';
-      const nextPaymentStatus = isPre ? 'deposit_paid' : 'paid';
+      const nextStatus = isPre ? 'in_queue' : 'completed';
+      const nextOrderStatus = isPre ? 'in_queue' : 'completed';
+      const nextPaymentStatus = isPre ? 'verified' : 'paid';
 
       const nextStatusMessage = isPre 
         ? `การชำระเงินเสร็จสิ้น! คำสั่งซื้อเป็นสินค้าสั่งผลิต (Pre-Order) ออกหมายเลขคิวผลิต [${assignedQueueNumber}] เรียบร้อยแล้ว ลำดับคิวการผลิตเริ่มต้นแล้ว โรงงานเริ่มกระบวนการผลิตทันที`
-        : 'การชำระเงินเสร็จสิ้น! คำสั่งซื้อเป็นสินค้าพร้อมส่ง (In-Stock) ชำระเงินเรียบร้อยแล้ว - ทางคลังสินค้ากำลังเตรียมบรรจุหีบห่อและส่งมอบให้ขนส่งโดยตรง';
+        : 'การชำระเงินเสร็จสิ้น! คำสั่งซื้อสินค้าพร้อมส่ง (In-Stock) อนุมัติและตัดสต็อกสินค้าเรียบร้อยแล้ว';
 
       if (isSupabaseConfigured && supabase) {
-        // 1. UPDATE orders table per Case A and Case B
-        const updatePayload: any = isPre ? {
-          status: 'in_queue',
+        const fullUpdatePayload: any = isPre ? {
           order_status: 'in_queue',
-          queue_status: 'waiting_production',
-          queue_stage: 1,
+          status: 'in_queue',
           queue_step: 1,
+          queue_stage: 1,
+          queue_status: 'waiting_production',
           payment_status: 'verified',
-          product_type: 'pre_order',
           order_type: 'preorder',
           is_preorder: true,
+          queue_id: assignedQueueNumber,
+          queue_number: assignedQueueNumber,
           status_message: nextStatusMessage,
           is_deleted: false,
-          queue_number: assignedQueueNumber,
-          queue_id: assignedQueueNumber,
           updated_at: new Date().toISOString()
         } : {
-          status: 'paid',
-          order_status: 'paid',
+          order_status: 'completed',
+          status: 'completed',
           payment_status: 'paid',
-          product_type: 'in_stock',
-          order_type: 'instock',
+          order_type: 'stock',
           is_preorder: false,
+          queue_id: null,
+          queue_number: null,
           status_message: nextStatusMessage,
           is_deleted: false,
-          delivery_status: 'ready_to_ship',
+          delivery_status: 'completed',
           updated_at: new Date().toISOString()
         };
 
-        const { error: orderUpdateErr } = await supabase
+        const { error: fullErr } = await supabase
           .from('orders')
-          .update(updatePayload)
+          .update(fullUpdatePayload)
           .eq('id', id);
 
-        if (orderUpdateErr) {
-          console.warn('Supabase approve order error, continuing fallback:', orderUpdateErr.message);
+        if (fullErr) {
+          console.warn('Full update payload failed in approve, retrying schema-safe payload:', fullErr.message);
+          const safePayload: any = isPre ? {
+            order_status: 'in_queue',
+            queue_step: 1,
+            queue_id: assignedQueueNumber,
+            is_preorder: true,
+            order_type: 'preorder',
+            updated_at: new Date().toISOString()
+          } : {
+            order_status: 'completed',
+            queue_id: null,
+            is_preorder: false,
+            order_type: 'stock',
+            updated_at: new Date().toISOString()
+          };
+          const { error: safeErr } = await supabase.from('orders').update(safePayload).eq('id', id);
+          if (safeErr) {
+            console.warn('Safe payload failed, retrying minimal order_status update:', safeErr.message);
+            await supabase
+              .from('orders')
+              .update(isPre ? { order_status: 'in_queue', queue_step: 1 } : { order_status: 'completed' })
+              .eq('id', id);
+          }
         }
 
-        // Also update preorders table if it exists
-        try {
-          await supabase
-            .from('preorders')
-            .update({
-              payment_status: nextPaymentStatus,
-              status: nextStatus,
-              order_status: nextOrderStatus,
-              queue_status: isPre ? 'waiting_production' : undefined,
-              is_deleted: false,
-              ...(assignedQueueNumber ? {
-                queue_number: assignedQueueNumber,
-                queue_id: assignedQueueNumber
-              } : {}),
-              updated_at: new Date().toISOString()
-            })
-            .eq('id', id);
-        } catch {}
+        if (isPre) {
+          try {
+            await supabase
+              .from('preorders')
+              .update({
+                payment_status: nextPaymentStatus,
+                status: nextStatus,
+                order_status: nextOrderStatus,
+                queue_status: 'waiting_production',
+                is_deleted: false,
+                ...(assignedQueueNumber ? {
+                  queue_number: assignedQueueNumber,
+                  queue_id: assignedQueueNumber
+                } : {}),
+                updated_at: new Date().toISOString()
+              })
+              .eq('id', id);
+          } catch {}
+        }
 
-        // 2. UPSERT deliveries table with { onConflict: 'order_id' } to prevent constraint errors
         try {
-          const deliveryStatus = isPre ? 'waiting_production' : 'ready_to_ship';
+          const deliveryStatus = isPre ? 'waiting_production' : 'completed';
           const { error: deliveryErr } = await supabase
             .from('deliveries')
             .upsert({
               order_id: orderIdStr,
               delivery_status: deliveryStatus,
-              ...(assignedQueueNumber ? { queue_number: assignedQueueNumber } : {}),
+              ...(isPre && assignedQueueNumber ? { queue_number: assignedQueueNumber } : {}),
               updated_at: new Date().toISOString()
             }, { onConflict: 'order_id' });
 
@@ -2999,60 +2804,18 @@ export const supabaseOrders = {
         }
       }
 
-      // Sync local storage for immediate persistence
-      try {
-        const local = JSON.parse(localStorage.getItem('admin_orders') || '[]');
-        const updated = local.map((o: any) => 
-          String(o.id) === orderIdStr ? { 
-            ...o, 
-            status: isPre ? 'in_queue' : 'paid', 
-            order_status: isPre ? 'in_queue' : 'paid',
-            queue_status: isPre ? 'waiting_production' : o.queue_status,
-            payment_status: nextPaymentStatus, 
-            product_type: isPre ? 'pre_order' : 'in_stock',
-            order_type: isPre ? 'preorder' : 'instock',
-            is_preorder: isPre,
-            status_message: nextStatusMessage,
-            delivery_status: isPre ? 'waiting_production' : 'ready_to_ship',
-            is_deleted: false,
-            ...(isPre && assignedQueueNumber ? {
-              queue_number: assignedQueueNumber,
-              queue_id: assignedQueueNumber,
-              queue_stage: 1
-            } : {}),
-            updated_at: new Date().toISOString()
-          } : o
-        );
-        localStorage.setItem('admin_orders', JSON.stringify(updated));
+      if (!isPre) {
+        await supabaseProducts.deductStockForOrder({ ...(orderData || {}), id: orderIdStr });
+      }
 
-        const preLocal = JSON.parse(localStorage.getItem('admin_preorders') || '[]');
-        const updatedPre = preLocal.map((p: any) =>
-          String(p.id) === orderIdStr ? {
-            ...p,
-            payment_status: nextPaymentStatus,
-            status: nextStatus,
-            order_status: nextOrderStatus,
-            status_message: nextStatusMessage,
-            is_deleted: false,
-            ...(assignedQueueNumber ? {
-              queue_number: assignedQueueNumber,
-              queue_id: assignedQueueNumber
-            } : {}),
-            updated_at: new Date().toISOString()
-          } : p
-        );
-        localStorage.setItem('admin_preorders', JSON.stringify(updatedPre));
-      } catch {}
-
-      // Dispatch realtime events across all components
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('pornpong-order-approved', {
-          detail: { orderId: orderIdStr, queueNumber: assignedQueueNumber, isPre, nextStatus }
+          detail: { orderId: orderIdStr, queueNumber: assignedQueueNumber, isPre, nextStatus: nextOrderStatus }
         }));
         window.dispatchEvent(new Event('orders-updated'));
         window.dispatchEvent(new Event('orders_updated'));
         window.dispatchEvent(new CustomEvent('pornpong-delivery-updated', {
-          detail: { order_id: orderIdStr, delivery_status: nextStatus }
+          detail: { order_id: orderIdStr, delivery_status: isPre ? 'waiting_production' : 'completed' }
         }));
       }
 
@@ -3060,7 +2823,7 @@ export const supabaseOrders = {
         success: true,
         queueNumber: assignedQueueNumber,
         isPre,
-        nextStatus
+        nextStatus: nextOrderStatus
       } as any;
     } catch (err: any) {
       console.error('Failed to approve order:', err.message);
@@ -3070,17 +2833,6 @@ export const supabaseOrders = {
 
   async reject(id: string): Promise<boolean> {
     try {
-      const orderIdStr = String(id);
-
-      // Immediately save to rejected set in localStorage so no refresh can re-render it
-      try {
-        const rejectedList = JSON.parse(localStorage.getItem('pornpong_rejected_order_ids') || '[]');
-        if (!rejectedList.map(String).includes(orderIdStr)) {
-          rejectedList.push(orderIdStr);
-          localStorage.setItem('pornpong_rejected_order_ids', JSON.stringify(rejectedList));
-        }
-      } catch {}
-
       if (isSupabaseConfigured && supabase) {
         const { error } = await supabase
           .from('orders')
@@ -3098,34 +2850,6 @@ export const supabaseOrders = {
         }
       }
 
-      // Sync local storage
-      try {
-        const local = JSON.parse(localStorage.getItem('admin_orders') || '[]');
-        const updated = local.map((o: any) => 
-          String(o.id) === orderIdStr ? { 
-            ...o, 
-            status: 'cancelled',
-            payment_status: 'payment_rejected', 
-            order_status: 'cancelled',
-            status_message: 'หลักฐานการชำระเงินไม่ถูกต้องหรือถูกปฏิเสธ กรุณาติดต่อแอดมินหรืออัปโหลดสลิปใหม่',
-            updated_at: new Date().toISOString()
-          } : o
-        );
-        localStorage.setItem('admin_orders', JSON.stringify(updated));
-
-        const preLocal = JSON.parse(localStorage.getItem('admin_preorders') || '[]');
-        const updatedPre = preLocal.map((p: any) =>
-          String(p.id) === orderIdStr ? {
-            ...p,
-            status: 'cancelled',
-            payment_status: 'payment_rejected',
-            order_status: 'cancelled',
-            updated_at: new Date().toISOString()
-          } : p
-        );
-        localStorage.setItem('admin_preorders', JSON.stringify(updatedPre));
-      } catch {}
-
       return true;
     } catch (err: any) {
       console.error('Failed to reject order:', err.message);
@@ -3135,7 +2859,6 @@ export const supabaseOrders = {
 
   async uploadSlip(orderId: string, file: File): Promise<string | null> {
     try {
-      // Create a unique clean path name
       const fileExt = file.name.split('.').pop() || 'png';
       const cleanFileName = `slip_${orderId}_${Date.now()}.${fileExt}`;
       let finalSlipUrl = '';
@@ -3150,7 +2873,6 @@ export const supabaseOrders = {
             });
 
           if (!uploadError && uploadData) {
-            // Retrieve public URL from 'payment-slips'
             const { data: { publicUrl } } = supabase.storage
               .from('payment-slips')
               .getPublicUrl(cleanFileName);
@@ -3163,7 +2885,6 @@ export const supabaseOrders = {
         }
       }
 
-      // If storage upload didn't succeed, create Base64 string fallback
       if (!finalSlipUrl) {
         finalSlipUrl = await new Promise<string>((resolve) => {
           const reader = new FileReader();
@@ -3176,35 +2897,43 @@ export const supabaseOrders = {
       const updatePayload = {
         payment_slip_url: finalSlipUrl,
         slip_url: finalSlipUrl,
-        status: 'pending_verification',
+        status: 'pending_payment',
         payment_status: 'pending_verification',
-        order_status: 'pending_verification',
+        order_status: 'pending_payment',
+        queue_id: null,
         updated_at: new Date().toISOString()
       };
 
-      // Update orders table
       if (isSupabaseConfigured && supabase) {
         try {
-          await supabase
+          const { error: updErr } = await supabase
             .from('orders')
             .update(updatePayload)
             .eq('id', orderId);
+          if (updErr) {
+            await supabase
+              .from('orders')
+              .update({
+                payment_slip_url: finalSlipUrl,
+                order_status: 'pending_payment',
+                payment_status: 'pending_verification',
+                queue_id: null
+              })
+              .eq('id', orderId);
+          }
         } catch (e) {
           console.warn('Supabase orders update error in uploadSlip:', e);
         }
-      }
 
-      // Try updating preorders / pre_orders table if applicable
-      if (isSupabaseConfigured && supabase) {
         try {
           await supabase
             .from('preorders')
             .update({ 
               payment_slip_url: finalSlipUrl, 
               slip_url: finalSlipUrl, 
-              status: 'pending_verification',
+              status: 'pending_payment',
               payment_status: 'pending_verification',
-              order_status: 'pending_verification'
+              order_status: 'pending_payment'
             })
             .eq('id', orderId);
         } catch {}
@@ -3215,48 +2944,17 @@ export const supabaseOrders = {
             .update({ 
               payment_slip_url: finalSlipUrl, 
               slip_url: finalSlipUrl, 
-              status: 'pending_verification',
+              status: 'pending_payment',
               payment_status: 'pending_verification',
-              order_status: 'pending_verification'
+              order_status: 'pending_payment'
             })
             .eq('id', orderId);
         } catch {}
       }
 
-      // Update local storage for immediate reactivity
-      try {
-        const localOrders = JSON.parse(localStorage.getItem('admin_orders') || '[]');
-        const updatedOrders = localOrders.map((o: any) => 
-          o.id === orderId 
-            ? { 
-                ...o, 
-                payment_slip_url: finalSlipUrl, 
-                slip_url: finalSlipUrl, 
-                status: 'pending_verification',
-                payment_status: 'pending_verification',
-                order_status: 'pending_verification'
-              } 
-            : o
-        );
-        localStorage.setItem('admin_orders', JSON.stringify(updatedOrders));
-
-        const localPre = JSON.parse(localStorage.getItem('admin_preorders') || '[]');
-        const updatedPre = localPre.map((p: any) =>
-          p.id === orderId
-            ? { 
-                ...p, 
-                payment_slip_url: finalSlipUrl, 
-                slip_url: finalSlipUrl, 
-                status: 'pending_verification',
-                payment_status: 'pending_verification',
-                order_status: 'pending_verification'
-              }
-            : p
-        );
-        localStorage.setItem('admin_preorders', JSON.stringify(updatedPre));
-
+      if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('orders-updated'));
-      } catch {}
+      }
 
       return finalSlipUrl;
     } catch (err: any) {
@@ -3291,12 +2989,12 @@ export const supabasePreOrders = {
         const { data: ordData, error: ordErr } = await supabase
           .from('orders')
           .select('*')
-          .or('id.like.ORD-PRE-%,payment_status.eq.pending_deposit,order_status.eq.pending_deposit')
+          .or('is_preorder.eq.true,order_type.eq.preorder,payment_status.eq.pending_deposit,order_status.eq.pending_deposit')
           .order('created_at', { ascending: false });
         if (!ordErr && ordData) {
           for (const ord of ordData) {
             if (!results.some(r => r.id === ord.id)) {
-              results.push(this.mapRow(ord));
+              results.push(this.mapRow(normalizeOrder(ord)));
             }
           }
         }
@@ -3305,37 +3003,7 @@ export const supabasePreOrders = {
       }
     }
 
-    // 2. Merge local storage preorders
-    try {
-      const localPreorders = JSON.parse(localStorage.getItem('admin_preorders') || '[]');
-      for (const lp of localPreorders) {
-        const idx = results.findIndex(r => r.id === lp.id);
-        if (idx >= 0) {
-          // Keep overridden prices from local if present
-          if (lp.price_overridden) {
-            results[idx] = { ...results[idx], ...lp, fullPrice: lp.fullPrice, deposit: lp.deposit, price_overridden: true };
-          }
-        } else {
-          results.push(this.mapRow(lp));
-        }
-      }
-
-      const localOrders = JSON.parse(localStorage.getItem('admin_orders') || '[]');
-      for (const lo of localOrders) {
-        if (String(lo.id).startsWith('ORD-PRE-') || lo.payment_status === 'pending_deposit' || (lo.notes && lo.notes.includes('Custom Pre-Order'))) {
-          const idx = results.findIndex(r => r.id === lo.id);
-          if (idx >= 0) {
-            if (lo.price_overridden) {
-              results[idx] = { ...results[idx], ...lo, fullPrice: Number(lo.total_price || lo.total_amount || results[idx].fullPrice), deposit: Number(lo.deposit_amount || lo.deposit || results[idx].deposit), price_overridden: true };
-            }
-          } else {
-            results.push(this.mapRow(lo));
-          }
-        }
-      }
-    } catch {}
-
-    return results;
+    return results.map(normalizeOrder);
   },
 
   mapRow(row: any) {
@@ -3420,14 +3088,6 @@ export const supabasePreOrders = {
         await supabase.from('orders').update({ payment_status: status, order_status: status }).eq('id', id);
       } catch {}
     }
-    try {
-      const localPreorders = JSON.parse(localStorage.getItem('admin_preorders') || '[]');
-      const idx = localPreorders.findIndex((p: any) => p.id === id);
-      if (idx >= 0) {
-        localPreorders[idx].status = status;
-        localStorage.setItem('admin_preorders', JSON.stringify(localPreorders));
-      }
-    } catch {}
     window.dispatchEvent(new CustomEvent('orders_updated', { detail: { id, status } }));
     return true;
   },
@@ -3436,7 +3096,6 @@ export const supabasePreOrders = {
     const numPrice = Number(finalPrice);
     const numDeposit = depositAmount !== undefined ? Number(depositAmount) : Math.round(numPrice * 0.3);
 
-    // 1. Update in Supabase
     if (isSupabaseConfigured && supabase) {
       try {
         await supabase.from('preorders').update({
@@ -3465,35 +3124,6 @@ export const supabasePreOrders = {
       }
     }
 
-    // 2. Update local storage preorders
-    try {
-      const localPreorders = JSON.parse(localStorage.getItem('admin_preorders') || '[]');
-      const idx = localPreorders.findIndex((p: any) => p.id === id);
-      if (idx >= 0) {
-        localPreorders[idx].original_price = localPreorders[idx].original_price || localPreorders[idx].fullPrice;
-        localPreorders[idx].fullPrice = numPrice;
-        localPreorders[idx].total_price = numPrice;
-        localPreorders[idx].deposit = numDeposit;
-        localPreorders[idx].deposit_amount = numDeposit;
-        localPreorders[idx].price_overridden = true;
-        localStorage.setItem('admin_preorders', JSON.stringify(localPreorders));
-      }
-
-      // Also update in admin_orders if present
-      const localOrders = JSON.parse(localStorage.getItem('admin_orders') || '[]');
-      const ordIdx = localOrders.findIndex((o: any) => o.id === id);
-      if (ordIdx >= 0) {
-        localOrders[ordIdx].original_price = localOrders[ordIdx].original_price || localOrders[ordIdx].total_price || localOrders[ordIdx].total_amount;
-        localOrders[ordIdx].total_price = numPrice;
-        localOrders[ordIdx].total_amount = numPrice;
-        localOrders[ordIdx].amount = numPrice;
-        localOrders[ordIdx].deposit_amount = numDeposit;
-        localOrders[ordIdx].price_overridden = true;
-        localStorage.setItem('admin_orders', JSON.stringify(localOrders));
-      }
-    } catch {}
-
-    // 3. Broadcast to all open views & modals
     window.dispatchEvent(new CustomEvent('orders_updated', {
       detail: { id, finalPrice: numPrice, depositAmount: numDeposit }
     }));
@@ -3517,9 +3147,10 @@ export const supabasePreOrders = {
     }
   },
   async insert(item: any): Promise<any> {
-    const queueId = 'PRE-' + new Date().getFullYear() + '-' + Math.floor(1000 + Math.random() * 9000);
+    if (!isSupabaseConfigured || !supabase) {
+      throw new Error('ระบบไม่ได้เชื่อมต่อฐานข้อมูล Supabase');
+    }
     const preOrderItem = {
-      id: queueId,
       customerName: item.customerName || '',
       phone: item.phone || '',
       email: item.email || '',
@@ -3534,22 +3165,15 @@ export const supabasePreOrders = {
       address: item.address || '',
       notes: item.notes || ''
     };
-    if (isSupabaseConfigured && supabase) {
-      try {
-        const { error } = await supabase.from('preorders').insert([preOrderItem]);
-        if (error) {
-          await supabase.from('pre_orders').insert([preOrderItem]);
-        }
-      } catch (e: any) {
-        console.warn('Could not insert preorder to Supabase:', e.message);
-      }
+    const { data, error } = await supabase.from('preorders').insert([preOrderItem]).select();
+    if (!error && data?.[0]) {
+      return normalizeOrder(data[0]);
     }
-    try {
-      const existing = JSON.parse(localStorage.getItem('admin_preorders') || '[]');
-      existing.unshift(preOrderItem);
-      localStorage.setItem('admin_preorders', JSON.stringify(existing));
-    } catch {}
-    return preOrderItem;
+    const { data: data2, error: err2 } = await supabase.from('pre_orders').insert([preOrderItem]).select();
+    if (!err2 && data2?.[0]) {
+      return normalizeOrder(data2[0]);
+    }
+    throw err2 || error || new Error('ไม่สามารถสร้างคำสั่งจองได้');
   }
 };
 

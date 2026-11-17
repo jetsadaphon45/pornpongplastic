@@ -25,6 +25,7 @@ import {
   Image as ImageIcon
 } from 'lucide-react';
 import { supabaseOrders, isSupabaseConfigured, supabase, isOrderPreOrder } from '../lib/supabase';
+import { normalizeOrder } from '../utils/orderHelper.js';
 
 // Helper to determine if an order has been approved or moved beyond pending_verification
 export const isOrderStatusApproved = (ord: any): boolean => {
@@ -34,8 +35,14 @@ export const isOrderStatusApproved = (ord: any): boolean => {
   const ps = String(ord.payment_status || '').toLowerCase().trim();
   const ds = String(ord.delivery_status || '').toLowerCase().trim();
 
-  // 1. If status is pending_verification, it is STRICTLY NOT APPROVED. Never show green success screen.
-  if (s === 'pending_verification' || s === 'waiting_verify' || s === 'waiting_approval' || s === 'waiting_payment') {
+  // 1. If status or order_status is pending_payment / pending_verification, it is STRICTLY NOT APPROVED. Never show green success screen.
+  if (
+    s === 'pending_payment' || os === 'pending_payment' || ps === 'pending_payment' ||
+    s === 'pending_verification' || os === 'pending_verification' ||
+    s === 'waiting_verify' || os === 'waiting_verify' ||
+    s === 'waiting_approval' || os === 'waiting_approval' ||
+    s === 'waiting_payment' || os === 'waiting_payment'
+  ) {
     return false;
   }
   // 2. If payment_status is pending_verification or waiting approval
@@ -43,7 +50,7 @@ export const isOrderStatusApproved = (ord: any): boolean => {
     return false;
   }
   // If payment is pending and status is not yet approved by admin:
-  if (ps === 'pending' && !['paid', 'ready_to_ship', 'producing', 'manufacturing', 'in_transit', 'shipping', 'completed', 'delivered'].includes(s)) {
+  if (ps === 'pending' && !['paid', 'ready_to_ship', 'producing', 'manufacturing', 'in_transit', 'shipping', 'completed', 'delivered'].includes(s) && !['paid', 'in_queue', 'ready_to_ship', 'producing', 'manufacturing', 'in_transit', 'shipping', 'completed', 'delivered'].includes(os)) {
     return false;
   }
 
@@ -143,21 +150,17 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, o
     };
   }, []);
 
-  // Fallback initial order info
-  const [activeOrder, setActiveOrder] = React.useState<any>(order || {
-    id: 'PP-ORD-' + Math.floor(1000 + Math.random() * 9000),
-    customer_name: 'คุณผู้ใช้บริการ',
-    customer_email: 'customer@example.com',
-    customer_phone: '081-XXX-XXXX',
-    total_amount: 15400,
-    payment_status: 'pending',
-    order_status: 'waiting_payment',
-    productName: 'เรือพลาสติก รุ่นยอดนิยม และอุปกรณ์พายเรือคู่',
-    color: 'น้ำเงินส้มสีผสม'
+  const [activeOrder, setActiveOrder] = React.useState<any>(() => (order ? normalizeOrder(order) : null));
+  const [isLoadingOrder, setIsLoadingOrder] = React.useState<boolean>(() => {
+    if (order) return false;
+    if (typeof window !== 'undefined') {
+      return Boolean(new URLSearchParams(window.location.search).get('orderId'));
+    }
+    return false;
   });
 
-  const [currentPaymentStatus, setCurrentPaymentStatus] = React.useState(activeOrder.payment_status || 'pending');
-  const [currentOrderStatus, setCurrentOrderStatus] = React.useState(activeOrder.order_status || 'waiting_payment');
+  const [currentPaymentStatus, setCurrentPaymentStatus] = React.useState(order?.payment_status || 'pending');
+  const [currentOrderStatus, setCurrentOrderStatus] = React.useState(order?.order_status || order?.status || 'waiting_payment');
   const [uploadedSlipUrl, setUploadedSlipUrl] = React.useState<string>('');
 
   const handleReturnHome = React.useCallback(() => {
@@ -255,21 +258,19 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, o
   // Synchronize and lookup order from url params or prop
   React.useEffect(() => {
     if (order) {
-      setActiveOrder(order);
-      const s = String(order.status || '').toLowerCase().trim();
-      const ps = String(order.payment_status || '').toLowerCase().trim();
-      const hasSlip = Boolean(order.payment_slip_url || order.slip_url);
+      const normalized = normalizeOrder(order);
+      setActiveOrder(normalized);
+      setIsLoadingOrder(false);
+      const hasSlip = Boolean(normalized.payment_slip_url || normalized.slip_url);
 
-      setCurrentPaymentStatus(order.payment_status || 'pending');
-      setCurrentOrderStatus(order.order_status || order.status || 'waiting_payment');
+      setCurrentPaymentStatus(normalized.payment_status || 'pending');
+      setCurrentOrderStatus(normalized.order_status || normalized.status || 'waiting_payment');
       
       if (hasSlip) {
-        setUploadedSlipUrl(order.payment_slip_url || order.slip_url);
+        setUploadedSlipUrl(normalized.payment_slip_url || normalized.slip_url);
       }
 
-      // State Guard: Only transition to 'verifying' if a slip has actually been uploaded
-      // Never auto-skip Step 2 ('pay') to Step 3 ('verifying') just because status is pending_verification
-      if (isOrderStatusApproved(order)) {
+      if (isOrderStatusApproved(normalized)) {
         setStep('approved');
       } else if (hasSlip) {
         setStep('verifying');
@@ -282,6 +283,7 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, o
     const orderIdFromUrl = urlParams.get('orderId');
     if (orderIdFromUrl) {
       const fetchOrder = async () => {
+        setIsLoadingOrder(true);
         try {
           if (isSupabaseConfigured && supabase) {
             const { data, error } = await supabase
@@ -291,34 +293,30 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, o
               .maybeSingle();
             
             if (data && !error) {
-              const formattedOrder = {
+              const formattedOrder = normalizeOrder({
                 ...data,
                 id: data.id,
-                customer_name: data.customer_name || data.customerName || 'คุณผู้ใช้บริการ',
-                customer_email: data.customer_email || 'guest@example.com',
-                customer_phone: data.customer_phone || '081-XXX-XXXX',
+                customer_name: data.customer_name || data.customerName || 'ลูกค้า',
+                customer_email: data.customer_email || '',
+                customer_phone: data.customer_phone || '',
                 total_amount: Number(data.total_amount || data.amount || 0),
                 payment_status: data.payment_status || data.status || 'pending',
-                status: data.status || data.order_status || 'waiting_payment',
-                order_status: data.order_status || data.status || 'waiting_payment',
+                status: data.status || data.order_status || 'pending_payment',
+                order_status: data.order_status || data.status || 'pending_payment',
                 productName: data.productName || data.product_name || 'เรือและชุดพ่วงอุปกรณ์',
                 color: data.color || 'คละสี',
                 payment_slip_url: data.payment_slip_url || data.slip_url || ''
-              };
+              });
               setActiveOrder(formattedOrder);
               setCurrentPaymentStatus(formattedOrder.payment_status);
               setCurrentOrderStatus(formattedOrder.status);
 
-              const s = String(formattedOrder.status || '').toLowerCase().trim();
-              const ps = String(formattedOrder.payment_status || '').toLowerCase().trim();
               const hasSlip = Boolean(formattedOrder.payment_slip_url);
               
               if (hasSlip) {
                 setUploadedSlipUrl(formattedOrder.payment_slip_url);
               }
 
-              // State Guard: Only transition to 'verifying' if a slip has actually been uploaded
-              // Never auto-skip Step 2 ('pay') to Step 3 ('verifying') just because status is pending_verification
               if (isOrderStatusApproved(formattedOrder)) {
                 setStep('approved');
               } else if (hasSlip) {
@@ -330,6 +328,8 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, o
           }
         } catch (err) {
           console.error('Error fetching order by URL orderId in PaymentPage:', err);
+        } finally {
+          setIsLoadingOrder(false);
         }
       };
       fetchOrder();
@@ -369,24 +369,6 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, o
             return;
           }
         }
-
-        // B. Check local storage fallback (instant sync when tested in same browser)
-        try {
-          const localOrders = JSON.parse(localStorage.getItem('admin_orders') || '[]');
-          const found = localOrders.find((o: any) => String(o.id) === String(targetOrderId));
-          if (found && isOrderStatusApproved(found)) {
-            triggerApprovalSuccess(found);
-            return;
-          }
-
-          // Check pornpong_unshown_approvals
-          const approvals = JSON.parse(localStorage.getItem('pornpong_unshown_approvals') || '[]');
-          const hasApproval = approvals.some((a: any) => String(a.orderId) === String(targetOrderId));
-          if (hasApproval) {
-            triggerApprovalSuccess({ status: 'ready_to_ship', payment_status: 'verified' });
-            return;
-          }
-        } catch {}
       } catch (pollErr) {
         console.warn('Polling order status check error:', pollErr);
       }
@@ -403,20 +385,6 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, o
     window.addEventListener('pornpong-shipping-in-transit', handleBroadcastApproval);
     window.addEventListener('pornpong-delivery-updated', handleBroadcastApproval);
     window.addEventListener('orders-updated', handleBroadcastApproval);
-
-    // 3. Storage event listener for cross-window / cross-tab changes
-    const handleStorageChange = (e: StorageEvent) => {
-      if (e.key === 'pornpong_unshown_approvals' || e.key === 'admin_orders' || e.key === 'pornpong_orders') {
-        try {
-          const localOrders = JSON.parse(localStorage.getItem('admin_orders') || '[]');
-          const found = localOrders.find((o: any) => String(o.id) === String(targetOrderId));
-          if (found && isOrderStatusApproved(found)) {
-            triggerApprovalSuccess(found);
-          }
-        } catch {}
-      }
-    };
-    window.addEventListener('storage', handleStorageChange);
 
     // 4. Supabase Realtime Subscription (postgres_changes on orders and deliveries)
     let channel: any = null;
@@ -473,7 +441,6 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, o
       window.removeEventListener('pornpong-shipping-in-transit', handleBroadcastApproval);
       window.removeEventListener('pornpong-delivery-updated', handleBroadcastApproval);
       window.removeEventListener('orders-updated', handleBroadcastApproval);
-      window.removeEventListener('storage', handleStorageChange);
       if (channel && supabase) {
         supabase.removeChannel(channel);
       }
@@ -541,85 +508,48 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, o
         setUploadedSlipUrl(slipUrl);
       }
 
-      // Update to status = 'pending_verification' and payment_status = 'pending' per requirement
+      // Update to order_status = 'pending_payment' and queue_id = null until admin approves
       hasTriggeredApprovalRef.current = false;
-      setCurrentPaymentStatus('pending');
-      setCurrentOrderStatus('pending_verification');
+      setCurrentPaymentStatus('pending_verification');
+      setCurrentOrderStatus('pending_payment');
 
       if (isSupabaseConfigured) {
         try {
           if (supabase) {
-            await supabase.from('orders').update({
-              status: 'pending_verification',
+            const { error: updErr } = await supabase.from('orders').update({
+              status: 'pending_payment',
               payment_status: 'pending_verification',
-              order_status: 'pending_verification',
+              order_status: 'pending_payment',
+              queue_id: null,
               payment_slip_url: slipUrl,
               slip_url: slipUrl,
               updated_at: new Date().toISOString()
             }).eq('id', activeOrder.id);
+            if (updErr) {
+              await supabase.from('orders').update({
+                order_status: 'pending_payment',
+                payment_status: 'pending_verification',
+                payment_slip_url: slipUrl,
+                queue_id: null
+              }).eq('id', activeOrder.id);
+            }
           }
         } catch (errStatus) {
           console.warn('Error updating status in Supabase:', errStatus);
         }
       }
 
-      // Sync local storage orders for immediate UI reflection in Admin and Order history
-      try {
-        const localOrders = JSON.parse(localStorage.getItem('admin_orders') || '[]');
-        const updatedLocal = localOrders.map((o: any) => 
-          o.id === activeOrder.id 
-            ? { 
-                ...o, 
-                payment_slip_url: slipUrl || slipPreview, 
-                slip_url: slipUrl || slipPreview, 
-                status: 'pending_verification',
-                payment_status: 'pending_verification', 
-                order_status: 'pending_verification' 
-              }
-            : o
-        );
-        localStorage.setItem('admin_orders', JSON.stringify(updatedLocal));
-
-        const preLocal = JSON.parse(localStorage.getItem('admin_preorders') || '[]');
-        const updatedPre = preLocal.map((p: any) =>
-          p.id === activeOrder.id 
-            ? { 
-                ...p, 
-                payment_slip_url: slipUrl || slipPreview, 
-                slip_url: slipUrl || slipPreview, 
-                status: 'pending_verification',
-                payment_status: 'pending_verification', 
-                order_status: 'pending_verification' 
-              }
-            : p
-        );
-        localStorage.setItem('admin_preorders', JSON.stringify(updatedPre));
-
-        window.dispatchEvent(new CustomEvent('orders-updated'));
-      } catch {}
+      window.dispatchEvent(new CustomEvent('orders-updated'));
 
       setActiveOrder((prev: any) => ({
         ...prev,
-        status: 'pending_verification',
+        status: 'pending_payment',
         payment_status: 'pending_verification',
-        order_status: 'pending_verification',
+        order_status: 'pending_payment',
+        queue_id: null,
         payment_slip_url: slipUrl,
         slip_url: slipUrl
       }));
-
-      // Add a notification for the customer
-      try {
-        const currentNotis = JSON.parse(localStorage.getItem('pornpong_notifications') || '[]');
-        const newNoti = {
-          id: 'noti-' + Date.now(),
-          title: 'ระบบได้รับสลิปการโอนเงินแล้ว',
-          message: `คำสั่งซื้อ ${activeOrder.id} กำลังอยู่ในขั้นตอนการตรวจสอบสลิปการโอนเงิน (ใช้เวลาประมาณ 5-15 นาที)`,
-          type: 'order',
-          date: 'เมื่อครู่',
-          isRead: false
-        };
-        localStorage.setItem('pornpong_notifications', JSON.stringify([newNoti, ...currentNotis]));
-      } catch {}
 
       triggerToast('ระบบได้รับหลักฐานการชำระเงินเรียบร้อยแล้ว กำลังตรวจสอบสลิป...');
       setStep('verifying');
@@ -627,11 +557,13 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, o
       console.error('Failed to submit slip:', err);
       setUploadedSlipUrl(slipPreview || '');
       setCurrentPaymentStatus('pending_verification');
-      setCurrentOrderStatus('pending_verification');
+      setCurrentOrderStatus('pending_payment');
       setActiveOrder((prev: any) => ({
         ...prev,
-        status: 'pending_verification',
-        payment_status: 'pending_verification'
+        status: 'pending_payment',
+        order_status: 'pending_payment',
+        payment_status: 'pending_verification',
+        queue_id: null
       }));
       triggerToast('ระบบได้รับหลักฐานการชำระเงินเรียบร้อยแล้ว');
       setStep('verifying');
@@ -715,6 +647,36 @@ export default function PaymentPage({ order, onBackToHome, onViewOrderHistory, o
       </div>
     );
   };
+
+  // LOADING / EMPTY ORDER GUARD
+  if (!activeOrder) {
+    return (
+      <div className="font-sans min-h-screen bg-slate-50 flex items-center justify-center p-4">
+        <div className="max-w-md w-full bg-white rounded-3xl border border-slate-200 shadow-xl p-8 text-center space-y-4">
+          {isLoadingOrder ? (
+            <>
+              <Loader2 size={36} className="animate-spin text-brand-blue mx-auto" />
+              <h2 className="font-display text-lg font-bold text-slate-800">กำลังโหลดข้อมูลคำสั่งซื้อ...</h2>
+              <p className="text-xs text-slate-500">กรุณารอสักครู่ ระบบกำลังดึงข้อมูลล่าสุดจาก Supabase</p>
+            </>
+          ) : (
+            <>
+              <AlertCircle size={36} className="text-amber-500 mx-auto" />
+              <h2 className="font-display text-lg font-bold text-slate-800">ไม่พบข้อมูลคำสั่งซื้อ</h2>
+              <p className="text-xs text-slate-500">ไม่พบรายการสั่งซื้อที่ต้องการชำระเงิน กรุณาเลือกสินค้าใหม่อีกครั้ง</p>
+              <button
+                type="button"
+                onClick={handleReturnHome}
+                className="w-full py-3 rounded-xl bg-brand-blue hover:bg-brand-blue-dark text-white font-bold text-xs cursor-pointer transition-all"
+              >
+                กลับสู่หน้าแรก
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   // STEP 2: VERIFICATION PENDING SCREEN (กำลังตรวจสอบการชำระเงิน)
   if (step === 'verifying') {

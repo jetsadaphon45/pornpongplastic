@@ -85,6 +85,7 @@ import {
   isOrderPreOrder,
   getNextAvailableQueueNumber
 } from '../lib/supabase';
+import { normalizeOrder } from '../utils/orderHelper.js';
 import { AppNotification } from './NotificationDropdown';
 import { CustomerOrderHistoryModal } from './CustomerOrderHistoryModal';
 import { CustomerDetailModal } from './CustomerDetailModal';
@@ -129,9 +130,11 @@ export const STANDARD_STATUS_LABELS: Record<string, string> = {
 // -------------------------------------------------------------
 export const isPreorderOrder = (order: any): boolean => {
   if (!order) return false;
-  // 1. เช็กจากฟิลด์สถานะและประเภท
+  // 1. เช็กจากฟิลด์สถานะและประเภทอย่างชัดเจนก่อน
   if (order.is_preorder === true || order.is_preorder === 'true' || order.isPreOrder === true || order.isPreOrder === 'true') return true;
   if (order.order_type === 'preorder' || order.order_type === 'pre_order' || order.type === 'preorder' || order.orderType === 'preorder' || order.orderType === 'pre_order' || order.product_type === 'pre_order' || order.product_type === 'preorder') return true;
+  if (order.is_preorder === false || order.is_preorder === 'false' || order.isPreOrder === false || order.isPreOrder === 'false') return false;
+  if (order.order_type === 'stock' || order.order_type === 'instock' || order.order_type === 'in_stock' || order.orderType === 'stock' || order.orderType === 'instock' || order.product_type === 'in_stock') return false;
   if (order.status === 'in_queue' || order.status === 'in_production' || order.order_status === 'in_queue' || order.order_status === 'in_production') return true;
 
   const idStr = String(order.id || '').toUpperCase();
@@ -256,7 +259,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
   const [productsCategoryFilter, setProductsCategoryFilter] = React.useState<string>('all');
   const [productsStatusFilter, setProductsStatusFilter] = React.useState<string>('all');
   const [ordersSearch, setOrdersSearch] = React.useState('');
-  const [ordersTabFilter, setOrdersTabFilter] = React.useState<'active' | 'completed' | 'trash'>('active');
+  const [ordersTabFilter, setOrdersTabFilter] = React.useState<'active' | 'completed' | 'trash'>('completed');
   const [queueStageFilter, setQueueStageFilter] = React.useState<string>('all');
   const [isRestoringOrder, setIsRestoringOrder] = React.useState<string | null>(null);
   const [preordersSearch, setPreordersSearch] = React.useState('');
@@ -289,13 +292,6 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
   // Filtered pending orders strictly displaying pending_verification only
   // Explicitly excludes paid, ready_to_ship, producing, completed, cancelled, rejected
   const pendingOrdersList = React.useMemo(() => {
-    let approvedIds = new Set<string>();
-    let rejectedIds = new Set<string>();
-    try {
-      approvedIds = new Set(JSON.parse(localStorage.getItem('pornpong_approved_order_ids') || '[]').map(String));
-      rejectedIds = new Set(JSON.parse(localStorage.getItem('pornpong_rejected_order_ids') || '[]').map(String));
-    } catch {}
-
     const EXCLUDED_STATUSES = ['paid', 'in_queue', 'in_production', 'production_queue', 'ready_to_ship', 'producing', 'completed', 'in_transit', 'shipping', 'delivered', 'cancelled', 'payment_rejected'];
     const EXCLUDED_PAYMENT_STATUSES = ['verified', 'paid', 'completed', 'approved', 'rejected', 'payment_rejected'];
     const EXCLUDED_ORDER_STATUSES = ['in_queue', 'in_production', 'production_queue', 'manufacturing', 'producing', 'ready_to_ship', 'in_transit', 'shipping', 'completed', 'delivered'];
@@ -303,21 +299,20 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
     // Merge waitingVerifyOrders with adminOrders (so changes in adminOrders immediately reflect here)
     const combinedMap = new Map<string, any>();
     for (const o of (waitingVerifyOrders || [])) {
-      if (o && o.id) combinedMap.set(String(o.id), o);
+      if (o && o.id) combinedMap.set(String(o.id), normalizeOrder(o));
     }
     for (const o of (adminOrders || [])) {
       if (o && o.id) {
         const prev = combinedMap.get(String(o.id));
-        combinedMap.set(String(o.id), {
+        combinedMap.set(String(o.id), normalizeOrder({
           ...o,
           payment_slip_url: o.payment_slip_url || prev?.payment_slip_url || o.slip_url || prev?.slip_url || ''
-        });
+        }));
       }
     }
 
     return Array.from(combinedMap.values()).filter((ord: any) => {
-      const id = String(ord.id || '');
-      if (approvedIds.has(id) || rejectedIds.has(id)) return false;
+      if (ord.is_deleted === true || ord.is_deleted === 'true') return false;
 
       const s = String(ord.status || '').toLowerCase().trim();
       const ps = String(ord.payment_status || '').toLowerCase().trim();
@@ -327,8 +322,9 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
         return false;
       }
 
-      return ['pending_verification', 'waiting_verify', 'waiting_approval', 'pending'].includes(ps) ||
-             ['pending_verification', 'waiting_verify', 'waiting_approval', 'pending'].includes(s);
+      return ['pending_payment', 'pending_verification', 'waiting_verify', 'waiting_approval', 'pending'].includes(ps) ||
+             ['pending_payment', 'pending_verification', 'waiting_verify', 'waiting_approval', 'pending'].includes(s) ||
+             ['pending_payment', 'pending_verification', 'waiting_verify', 'waiting_approval', 'pending'].includes(os);
     }).sort((a: any, b: any) => {
       const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
       const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
@@ -401,19 +397,13 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
   const reloadWaitingVerifyOrders = React.useCallback(async () => {
     try {
       const data = await supabaseOrders.listWaitingVerify();
-      let approvedIds = new Set<string>();
-      let rejectedIds = new Set<string>();
-      try {
-        approvedIds = new Set(JSON.parse(localStorage.getItem('pornpong_approved_order_ids') || '[]').map(String));
-        rejectedIds = new Set(JSON.parse(localStorage.getItem('pornpong_rejected_order_ids') || '[]').map(String));
-      } catch {}
 
       const EXCLUDED_STATUSES = ['paid', 'in_queue', 'in_production', 'production_queue', 'ready_to_ship', 'producing', 'completed', 'in_transit', 'shipping', 'delivered', 'cancelled', 'payment_rejected'];
       const EXCLUDED_PAYMENT_STATUSES = ['verified', 'paid', 'completed', 'approved', 'rejected', 'payment_rejected'];
       const EXCLUDED_ORDER_STATUSES = ['in_queue', 'in_production', 'production_queue', 'manufacturing', 'producing', 'ready_to_ship', 'in_transit', 'shipping', 'completed', 'delivered'];
 
-      const filtered = (data || []).filter((ord: any) => {
-        const id = String(ord.id || '');
+      const filtered = (data || []).map(normalizeOrder).filter((ord: any) => {
+        if (ord.is_deleted === true || ord.is_deleted === 'true') return false;
         const s = String(ord.status || '').toLowerCase().trim();
         const ps = String(ord.payment_status || '').toLowerCase().trim();
         const os = String(ord.order_status || '').toLowerCase().trim();
@@ -422,15 +412,14 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
           return false;
         }
 
-        // Requirement 1: Any order with status = 'pending_verification' or payment_status = 'pending_verification' displays immediately!
-        if (s === 'pending_verification' || ps === 'pending_verification') {
+        // Requirement 1: Any order with pending_payment / pending_verification displays immediately
+        if (os === 'pending_payment' || s === 'pending_payment' || s === 'pending_verification' || os === 'pending_verification' || ps === 'pending_verification') {
           return true;
         }
 
-        if (approvedIds.has(id) || rejectedIds.has(id)) return false;
-
-        return ['waiting_verify', 'waiting_approval', 'pending'].includes(ps) ||
-               ['waiting_verify', 'waiting_approval', 'pending', 'waiting_payment'].includes(s);
+        return ['waiting_verify', 'waiting_approval', 'pending', 'pending_payment'].includes(ps) ||
+               ['waiting_verify', 'waiting_approval', 'pending', 'waiting_payment', 'pending_payment'].includes(s) ||
+               ['waiting_verify', 'waiting_approval', 'pending', 'waiting_payment', 'pending_payment'].includes(os);
       });
       setWaitingVerifyOrders(filtered);
     } catch (err) {
@@ -444,17 +433,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
     setIsFetchingOrders(true);
     try {
       if (!isSupabaseConfigured || !supabase) {
-        try {
-          const local = JSON.parse(localStorage.getItem('pornpong_orders') || '[]');
-          const local2 = JSON.parse(localStorage.getItem('admin_orders') || '[]');
-          const combined = [...local];
-          for (const it of local2) {
-            if (it && it.id && !combined.some((c: any) => String(c.id) === String(it.id))) {
-              combined.push(it);
-            }
-          }
-          setAdminOrders(combined);
-        } catch {}
+        setAdminOrders([]);
         return;
       }
 
@@ -497,7 +476,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
         }
 
         // นำ realOrders จากฐานข้อมูลจริงไปอัปเดตใส่ State หลักของหน้าแอดมินทันที (ไม่ใช้ Mock Data)
-        setAdminOrders(mergedList);
+        setAdminOrders(mergedList.map(normalizeOrder));
       }
     } catch (err) {
       console.error("Error fetching orders:", err);
@@ -552,7 +531,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
           }
         } catch {}
 
-        setAdminOrders(mergedList);
+        setAdminOrders(mergedList.map(normalizeOrder));
       }
     } catch (err) {
       console.error("Error fetching queue orders:", err);
@@ -616,11 +595,11 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
     reloadPreOrderSettings();
   }, [reloadOrders, reloadPreOrders, reloadCoupons, reloadReviews, reloadPromotions, reloadWaitingVerifyOrders, reloadPreOrderSettings]);
 
-  // Set default tab to 'active' when opening "คำสั่งซื้อสำเร็จ" (orders menu)
+  // Set default tab to 'completed' when opening "คำสั่งซื้อสำเร็จ" (orders menu)
   const prevActiveMenuRef = React.useRef(activeMenu);
   React.useEffect(() => {
     if (activeMenu === 'orders' && prevActiveMenuRef.current !== 'orders') {
-      setOrdersTabFilter('active');
+      setOrdersTabFilter('completed');
     }
     if (activeMenu === 'queue-management' && prevActiveMenuRef.current !== 'queue-management') {
       setQueueSearch('');
@@ -1230,7 +1209,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
       const mappedOrderStatus = isDeliv ? 'completed' : isShip ? 'in_transit' : isReady ? 'ready_to_ship' : isPaid ? 'paid' : 'manufacturing';
       const targetStatus = isDeliv ? 'completed' : isShip ? 'shipped' : isReady ? 'ready_to_ship' : 'paid';
       const stepNum = isDeliv ? 4 : isShip ? 3 : isReady ? 2 : 1;
-      const trackingNo = meta.shipment_no || meta.tracking_number || `TH-EX-${String(orderId).replace(/[^0-9]/g, '').slice(-6) || '291823'}`;
+      const trackingNo = meta.shipment_no || meta.tracking_number || '';
 
       // Optimistically update React state immediately
       setAdminOrders(prev => prev.map(o => o.id === orderId ? {
@@ -1285,38 +1264,8 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
 
       // 1. Update in-app notifications
       setNotifications(prev => [newNoti, ...prev]);
-      try {
-        const current = JSON.parse(localStorage.getItem('pornpong_notifications') || '[]');
-        localStorage.setItem('pornpong_notifications', JSON.stringify([newNoti, ...current]));
-      } catch {}
 
-      // 2. Unshown deliveries for customer popup alert if delivered
-      if (isDeliv) {
-        try {
-          const unshown = JSON.parse(localStorage.getItem('pornpong_unshown_deliveries') || '[]');
-          unshown.push({ orderId, message: notificationMsg, timestamp: Date.now() });
-          localStorage.setItem('pornpong_unshown_deliveries', JSON.stringify(unshown));
-        } catch {}
-      }
-
-      // Also save unshown status update for customer alert popup
-      try {
-        const unshownStatus = JSON.parse(localStorage.getItem('pornpong_unshown_status_updates') || '[]');
-        unshownStatus.push({
-          orderId,
-          stage: mappedOrderStatus,
-          statusLabel,
-          message: notificationMsg,
-          meta: {
-            ...meta,
-            shipment_no: trackingNo
-          },
-          timestamp: Date.now()
-        });
-        localStorage.setItem('pornpong_unshown_status_updates', JSON.stringify(unshownStatus));
-      } catch {}
-
-      // 3. Dispatch broadcast events
+      // 2. Dispatch broadcast events
       window.dispatchEvent(new CustomEvent('pornpong-order-status-updated', {
         detail: {
           orderId,
@@ -1477,7 +1426,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
     const orderId = order.id;
     const carrier = customMeta?.shipping_carrier || customMeta?.carrier_name || order.shipping_carrier || order.carrier_name || inTransitCarrier.trim() || 'รถโรงงานพรพงศ์ (สายส่งตรง)';
     const driver = customMeta?.driver_phone || order.driver_phone || inTransitDriverPhone.trim() || '089-456-7890';
-    const tracking = customMeta?.tracking_number || customMeta?.shipment_no || order.tracking_number || order.shipmentNo || order.shipment_no || inTransitTrackingNo.trim() || `TH-EX-${String(orderId).replace(/[^0-9]/g, '').slice(-6) || '291823'}`;
+    const tracking = customMeta?.tracking_number || customMeta?.shipment_no || order.tracking_number || order.shipmentNo || order.shipment_no || inTransitTrackingNo.trim() || '';
     const msg = `คำสั่งซื้อหมายเลข #${orderId} สินค้าอยู่ระหว่างจัดส่ง - ขนส่ง: ${carrier} | เบอร์คนขับ/Tracking: ${driver} / ${tracking}`;
 
     // 1. Optimistically update local React state so UI turns Active Green immediately
@@ -1569,7 +1518,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
     const carrier = order.shipping_carrier || order.carrier_name || 'รถโรงงานพรพงศ์ (สายส่งตรง)';
     setInTransitCarrier(carrier);
     setInTransitDriverPhone(order.driver_phone || '089-456-7890');
-    const tracking = order.tracking_number || order.shipmentNo || order.shipment_no || `TH-EX-${String(order.id).replace(/[^0-9]/g, '').slice(-6) || '291823'}`;
+    const tracking = order.tracking_number || order.shipmentNo || order.shipment_no || '';
     setInTransitTrackingNo(tracking);
   };
 
@@ -1578,7 +1527,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
     const targetOrder = inTransitOrder;
     const carrier = inTransitCarrier.trim() || 'รถโรงงานพรพงศ์ (สายส่งตรง)';
     const driver = inTransitDriverPhone.trim() || '089-456-7890';
-    const tracking = inTransitTrackingNo.trim() || `TH-EX-${String(targetOrder.id).replace(/[^0-9]/g, '').slice(-6) || '291823'}`;
+    const tracking = inTransitTrackingNo.trim() || '';
     
     // Close modal immediately
     setInTransitOrder(null);
@@ -1659,7 +1608,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
   };
 
   // -------------------------------------------------------------
-  // PAYMENT APPROVAL & VERIFICATION LOGIC (Requirements 1 & 4)
+  // PAYMENT APPROVAL & VERIFICATION LOGIC (Strict Branching A vs B)
   // -------------------------------------------------------------
   const handleApprovePayment = async (ord: any) => {
     if (!confirm('คุณแน่ใจหรือไม่ว่าต้องการ "อนุมัติสลิปการโอนเงิน" นี้?')) return;
@@ -1669,101 +1618,33 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
       // 1. Instant card removal & badge decrement
       setWaitingVerifyOrders(prev => prev.filter(o => String(o.id) !== targetOrderId));
 
-      // Persist in approved IDs set immediately
-      try {
-        const approvedList = JSON.parse(localStorage.getItem('pornpong_approved_order_ids') || '[]');
-        if (!approvedList.map(String).includes(targetOrderId)) {
-          approvedList.push(targetOrderId);
-          localStorage.setItem('pornpong_approved_order_ids', JSON.stringify(approvedList));
-        }
-        // Remove from rejected if present
-        const rejectedList = JSON.parse(localStorage.getItem('pornpong_rejected_order_ids') || '[]');
-        const filteredRej = rejectedList.filter((x: any) => String(x) !== targetOrderId);
-        localStorage.setItem('pornpong_rejected_order_ids', JSON.stringify(filteredRej));
-      } catch {}
+      // 2. ตรวจสอบประเภทคำสั่งซื้ออย่างชัดเจน (Strict Branching)
+      const explicitPre = Boolean(
+        ord.is_preorder === true ||
+        ord.is_preorder === 'true' ||
+        ord.order_type === 'preorder' ||
+        ord.order_type === 'pre_order' ||
+        ord.product_type === 'pre_order'
+      );
+      const explicitStock = Boolean(
+        ord.is_preorder === false ||
+        ord.is_preorder === 'false' ||
+        ord.order_type === 'stock' ||
+        ord.order_type === 'instock' ||
+        ord.order_type === 'in_stock' ||
+        ord.product_type === 'in_stock'
+      );
+      const isPreorder = explicitPre ? true : explicitStock ? false : isPreorderOrder(ord);
 
-      // Requirement 1: ตรวจสอบประเภทสินค้าของคำสั่งซื้อด้วยฟังก์ชันรวม isPreorderOrder
-      const isPreorder = isPreorderOrder(ord);
+      // 3. เรียกใช้ supabaseOrders.approve เพื่อบันทึกสถานะลง Supabase + สร้างเลขคิว (กรณี A) หรือ ตัดสต็อกและปิดงาน (กรณี B)
+      const result: any = await supabaseOrders.approve(targetOrderId, ord);
+      const assignedQ = isPreorder
+        ? ((typeof result === 'object' && result?.queueNumber) || ord.queue_number || ord.queue_id || formatQueueId(ord))
+        : null;
 
-      let qNum = ord.queue_number || ord.queue_id;
-      if (isPreorder) {
-        if (!qNum || !/^Q-\d{4}-\d{3}$/i.test(String(qNum).trim())) {
-          qNum = await getNextAvailableQueueNumber();
-        } else {
-          qNum = String(qNum).trim().toUpperCase();
-        }
-      }
-
-      // หากเป็นพรีออเดอร์ (isPreorder === true):
-      // ให้อัปเดต status เป็น 'in_queue' เพื่อส่งเข้าเมนู "จัดการคิวผลิตและจัดส่ง"
-      // หากเป็นสินค้าพร้อมส่ง/มีในสต็อก (isPreorder === false หรืออื่นๆ):
-      // ให้อัปเดต status เป็น 'paid' เพื่อส่งเข้าเมนู "คำสั่งซื้อสำเร็จ" (แท็บ "รายการคำสั่งซื้อกำลังดำเนินการ") ทันที
-      const selectedOrderId = targetOrderId;
-      if (isSupabaseConfigured && supabase) {
-        try {
-          if (isPreorder) {
-            await supabase
-              .from('orders')
-              .update({
-                status: 'in_queue',             // เปลี่ยนจาก pending_verification เป็น in_queue ทันที
-                order_status: 'in_queue',
-                queue_status: 'waiting_production',
-                queue_stage: 1,
-                queue_step: 1,                  // ตั้งค่าเริ่มต้นสเต็ป 1 (รับคิวผลิต)
-                payment_status: 'verified',     // ยืนยันชำระเงินเรียบร้อย
-                product_type: 'pre_order',
-                order_type: 'preorder',
-                is_preorder: true,
-                queue_number: qNum,
-                queue_id: qNum,
-                is_deleted: false,
-                updated_at: new Date().toISOString()
-              })
-              .eq('id', selectedOrderId);
-
-            await supabaseDeliveries.upsert({
-              order_id: selectedOrderId,
-              delivery_status: 'waiting_production',
-              queue_number: qNum
-            });
-          } else {
-            // Requirement 3: อัปเดตสถานะ status: 'paid' ลงตาราง 'orders'
-            await supabase
-              .from('orders')
-              .update({ status: 'paid' })
-              .eq('id', selectedOrderId);
-
-            await supabase
-              .from('orders')
-              .update({
-                status: 'paid',
-                order_status: 'paid',
-                payment_status: 'paid',
-                product_type: 'in_stock',
-                order_type: 'instock',
-                is_preorder: false,
-                is_deleted: false,
-                delivery_status: 'ready_to_ship',
-                delivery_step: 1,
-                updated_at: new Date().toISOString()
-              })
-              .eq('id', selectedOrderId);
-
-            await supabaseDeliveries.upsert({
-              order_id: selectedOrderId,
-              delivery_status: 'ready_to_ship'
-            });
-          }
-        } catch (updateErr) {
-          console.warn('Direct Supabase update error in approve handler:', updateErr);
-        }
-      }
-
-      const result: any = await supabaseOrders.approve(targetOrderId);
-      const assignedQ = (typeof result === 'object' && result?.queueNumber) || qNum || ord.queue_number || ord.queue_id || formatQueueId(ord);
       const approvalMsg = isPreorder
-        ? `การชำระเงินเสร็จสิ้น! คำสั่งซื้อ #${targetOrderId} เป็นสินค้าสั่งผลิต ลำดับคิวการผลิตเริ่มต้นแล้ว [${assignedQ}] โรงงานเริ่มกระบวนการผลิตทันที`
-        : `การชำระเงินเสร็จสิ้น! คำสั่งซื้อ #${targetOrderId} เป็นสินค้าพร้อมส่ง คลังสินค้ากำลังเตรียมจัดส่งตรงถึงคุณ`;
+        ? `การชำระเงินเสร็จสิ้น! คำสั่งซื้อ #${targetOrderId} เป็นสินค้าสั่งผลิต (Pre-order) ออกเลขคิว [${assignedQ}] และส่งเข้าคิวผลิตเรียบร้อยแล้ว`
+        : `การชำระเงินเสร็จสิ้น! คำสั่งซื้อ #${targetOrderId} เป็นสินค้าพร้อมส่ง (Stock) ตัดสต็อกสินค้าและบันทึกเป็นคำสั่งซื้อสำเร็จเรียบร้อยแล้ว`;
 
       const newNoti = {
         id: 'noti-appr-' + Date.now(),
@@ -1776,85 +1657,50 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
 
       setNotifications(prev => [newNoti, ...prev]);
 
-      try {
-        const saved = JSON.parse(localStorage.getItem('pornpong_notifications') || '[]');
-        localStorage.setItem('pornpong_notifications', JSON.stringify([newNoti, ...saved]));
-      } catch {}
-
-      try {
-        const unshown = JSON.parse(localStorage.getItem('pornpong_unshown_approvals') || '[]');
-        unshown.push({ orderId: targetOrderId, message: approvalMsg, timestamp: Date.now() });
-        localStorage.setItem('pornpong_unshown_approvals', JSON.stringify(unshown));
-      } catch {}
-
       window.dispatchEvent(new CustomEvent('pornpong-order-approved', {
-        detail: { orderId: targetOrderId, notification: newNoti }
+        detail: { orderId: targetOrderId, queueNumber: assignedQ, isPre: isPreorder, notification: newNoti }
       }));
 
-      // Immediately update adminOrders state so the destination tab reflects it instantly
+      // 4. อัปเดต adminOrders state ให้สอดคล้องกับ Supabase ทันที
       setAdminOrders(prev => {
-        const updatedOrder = {
+        const updatedOrder = normalizeOrder({
           ...ord,
           id: targetOrderId,
-          status: isPreorder ? 'in_queue' : 'paid',
-          order_status: isPreorder ? 'in_queue' : 'paid',
+          status: isPreorder ? 'in_queue' : 'completed',
+          order_status: isPreorder ? 'in_queue' : 'completed',
           queue_status: isPreorder ? 'waiting_production' : undefined,
           queue_stage: isPreorder ? 1 : undefined,
           queue_step: isPreorder ? 1 : undefined,
           payment_status: isPreorder ? 'verified' : 'paid',
-          product_type: isPreorder ? 'pre_order' : 'in_stock',
-          order_type: isPreorder ? 'preorder' : 'instock',
+          order_type: isPreorder ? 'preorder' : 'stock',
           is_preorder: isPreorder,
           is_deleted: false,
-          delivery_status: isPreorder ? 'waiting_production' : 'ready_to_ship',
-          ...(isPreorder ? { queue_number: assignedQ, queue_id: assignedQ, queue_stage: 1, queue_step: 1 } : {})
-        };
+          delivery_status: isPreorder ? 'waiting_production' : 'completed',
+          queue_number: isPreorder ? assignedQ : null,
+          queue_id: isPreorder ? assignedQ : null
+        });
         const exists = prev.some(o => String(o.id) === targetOrderId);
         return exists
           ? prev.map(o => String(o.id) === targetOrderId ? updatedOrder : o)
           : [updatedOrder, ...prev];
       });
 
-      // Synchronize localStorage immediately so any storage reading components get the updated order
-      try {
-        const local = JSON.parse(localStorage.getItem('admin_orders') || '[]');
-        const updatedLocalOrder = {
-          ...ord,
-          id: targetOrderId,
-          status: isPreorder ? 'in_queue' : 'paid',
-          order_status: isPreorder ? 'in_queue' : 'paid',
-          queue_status: isPreorder ? 'waiting_production' : undefined,
-          queue_stage: isPreorder ? 1 : undefined,
-          queue_step: isPreorder ? 1 : undefined,
-          payment_status: isPreorder ? 'verified' : 'paid',
-          product_type: isPreorder ? 'pre_order' : 'in_stock',
-          order_type: isPreorder ? 'preorder' : 'instock',
-          is_preorder: isPreorder,
-          is_deleted: false,
-          delivery_status: isPreorder ? 'waiting_production' : 'ready_to_ship',
-          ...(isPreorder ? { queue_number: assignedQ, queue_id: assignedQ, queue_stage: 1, queue_step: 1 } : {})
-        };
-        const existsInLocal = local.some((o: any) => String(o.id) === targetOrderId);
-        const newLocal = existsInLocal
-          ? local.map((o: any) => String(o.id) === targetOrderId ? updatedLocalOrder : o)
-          : [updatedLocalOrder, ...local];
-        localStorage.setItem('admin_orders', JSON.stringify(newLocal));
-      } catch {}
-
       if (isPreorder) {
-        triggerToast(`อนุมัติการชำระเงิน #${targetOrderId} (สินค้าสั่งผลิต) สำเร็จ! ออกเลขคิว [${assignedQ}] และส่งเข้าเมนู "จัดการคิวผลิตและจัดส่ง" เรียบร้อยแล้ว`);
+        triggerToast(`อนุมัติการชำระเงิน #${targetOrderId} (พรีออเดอร์) สำเร็จ! ออกเลขคิว [${assignedQ}] และส่งเข้าเมนู "จัดการคิวผลิตและจัดส่ง" เรียบร้อยแล้ว`);
       } else {
-        triggerToast(`อนุมัติการชำระเงิน #${targetOrderId} (สินค้าพร้อมส่ง) สำเร็จ! ส่งเข้าเมนู "คำสั่งซื้อสำเร็จ" (แท็บ รายการคำสั่งซื้อกำลังดำเนินการ) เรียบร้อยแล้ว`);
+        await reloadProducts();
+        triggerToast(`อนุมัติการชำระเงิน #${targetOrderId} (สินค้าพร้อมส่ง) สำเร็จ! ตัดสต็อกสินค้าและส่งเข้าเมนู "คำสั่งซื้อสำเร็จ" เรียบร้อยแล้ว`);
       }
 
       setWaitingVerifyOrders(prev => prev.filter(o => String(o.id) !== targetOrderId));
       await reloadWaitingVerifyOrders();
       await fetchOrders();
-      await reloadOrders();
       window.dispatchEvent(new Event('orders-updated'));
       window.dispatchEvent(new Event('orders_updated'));
       if (isPreorder) {
         window.dispatchEvent(new CustomEvent('pornpong-queue-updated', { detail: { orderId: targetOrderId, queue_number: assignedQ } }));
+      } else {
+        window.dispatchEvent(new Event('products-updated'));
       }
     } catch (err: any) {
       console.error('Approve payment error:', err);
@@ -1932,48 +1778,73 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
   }, []);
 
   // Single Source of Truth:
-  // เมนู "จัดการคิวผลิตและจัดส่ง" (Pre-order Queue)
-  // แสดงเฉพาะ: isPreorder && order.status === 'in_queue' (และขั้นตอนต่อเนื่องในสายผลิต)
-  // ห้ามดึงสถานะรอตรวจสอบสลิป ('pending_verification') หรือสินค้าพร้อมส่ง ('paid') เข้ามาเด็ดขาด
-  // Single Source of Truth:
-  // เมนู "จัดการคิวผลิตและจัดส่ง" (Pre-order Queue)
-  // ดึงรายการสินค้าพรีออเดอร์ที่ได้รับการอนุมัติแล้วมาแสดงผลในระบบคิวทันที
-  // ส่วนที่ 1: เมนู "จัดการคิวผลิตและจัดส่ง" (Queue Management)
-  // เงื่อนไขการกรองเพื่อแสดงในตารางคิวผลิต:
-  // นำข้อมูลมากรองเฉพาะพรีออเดอร์ที่ "ยังดำเนินการไม่เสร็จสิ้น" (order.status !== 'completed' && order.status !== 'cancelled')
+  // เมนู "จัดการคิวผลิตและจัดส่ง" (Queue Management)
+  // แสดงเฉพาะออเดอร์ที่เข้าเงื่อนไขครบ 3 ข้อ:
+  // 1) เป็นสินค้าสั่งผลิต (Pre-order): is_preorder === true หรือ order_type === 'preorder' (ตัด stock/instock ออก)
+  // 2) ผ่านการอนุมัติชำระเงินแล้ว (ไม่ดึง pending_payment / pending_verification / waiting_payment / rejected)
+  // 3) ยังดำเนินการไม่เสร็จสิ้น (order_status !== 'completed' && order_status !== 'cancelled')
   const sortedQueueOrders = React.useMemo(() => {
+    const UNAPPROVED_STATUSES = [
+      'pending_payment',
+      'pending_verification',
+      'waiting_payment',
+      'waiting_verify',
+      'waiting_approval',
+      'pending_deposit',
+      'pending',
+      'rejected',
+      'payment_rejected',
+      'unpaid'
+    ];
+
     const activeQueueOrders = (adminOrders || []).filter(order => {
       if (!order) return false;
       if (order.is_deleted === true || order.is_deleted === 'true') return false;
 
-      const status = order.order_status || order.status;
-      const statusLower = String(status || '').toLowerCase().trim();
+      const os = String(order.order_status || '').toLowerCase().trim();
+      const st = String(order.status || '').toLowerCase().trim();
+      const ps = String(order.payment_status || '').toLowerCase().trim();
+      const statusLower = os || st;
 
-      // ตรวจจับความเป็นพรีออเดอร์จากทุกฟิลด์ที่เป็นไปได้
+      // เงื่อนไข 1: ตรวจสอบประเภท Pre-order vs Stock อย่างเคร่งครัด
+      const isExplicitStock =
+        order.is_preorder === false ||
+        order.is_preorder === 'false' ||
+        order.order_type === 'stock' ||
+        order.order_type === 'instock' ||
+        order.order_type === 'in_stock' ||
+        order.product_type === 'in_stock';
+      if (isExplicitStock) return false;
+
       const isPreorder = Boolean(
         order.is_preorder === true ||
         order.is_preorder === 'true' ||
         order.order_type === 'preorder' ||
         order.order_type === 'pre_order' ||
         order.type === 'preorder' ||
-        (order.queue_id && String(order.queue_id).startsWith('Q-')) ||
-        (order.queue_number && String(order.queue_number).startsWith('Q-')) ||
-        (order.order_id && String(order.order_id).includes('ORD-PRE')) ||
-        (order.id && String(order.id).includes('ORD-PRE')) ||
-        (order.id && String(order.id).startsWith('Q-')) ||
-        ['in_queue', 'in_production', 'ready_to_transfer', 'delivering'].includes(status) ||
         ['in_queue', 'in_production', 'ready_to_transfer', 'delivering'].includes(statusLower) ||
-        Number(order.queue_step) > 0 ||
+        (order.queue_id && String(order.queue_id).startsWith('Q-')) ||
         isPreorderOrder(order)
       );
+      if (!isPreorder) return false;
 
-      // ไม่แสดงออเดอร์ที่จบงานแล้ว หรือยกเลิก
-      const notFinished = status !== 'completed' && 
-                          status !== 'cancelled' && 
-                          statusLower !== 'completed' && 
-                          statusLower !== 'cancelled';
+      // เงื่อนไข 2: ต้องผ่านการอนุมัติจากแอดมินแล้วเท่านั้น (ห้ามดึง pending_payment / pending_verification)
+      const isUnapproved =
+        !statusLower ||
+        UNAPPROVED_STATUSES.includes(os) ||
+        UNAPPROVED_STATUSES.includes(st) ||
+        ['pending_payment', 'pending_verification', 'waiting_verify', 'waiting_approval', 'pending_deposit', 'rejected', 'payment_rejected', 'unpaid'].includes(ps);
+      if (isUnapproved) return false;
 
-      return isPreorder && notFinished;
+      // เงื่อนไข 3: ยังดำเนินการไม่เสร็จสิ้น
+      const isFinished =
+        os === 'completed' ||
+        os === 'cancelled' ||
+        st === 'completed' ||
+        st === 'cancelled' ||
+        Number(order.queue_step || 0) === 5;
+
+      return !isFinished;
     });
 
     const list = activeQueueOrders.map((ord, idx) => {
@@ -2116,7 +1987,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
 
     const carrier = order.shipping_carrier || order.carrier_name || 'รถโรงงานพรพงศ์พลาสติก (สายส่งด่วน)';
     const driver = order.driver_phone || '089-456-7890';
-    const tracking = order.tracking_number || order.shipmentNo || order.shipment_no || `TH-EX-${String(orderId).replace(/[^0-9]/g, '').slice(-6) || '291823'}`;
+    const tracking = order.tracking_number || order.shipmentNo || order.shipment_no || '';
     const estDate = order.estimated_delivery_date || new Date(Date.now() + 2 * 86400000).toISOString().split('T')[0];
 
     // 1. Optimistically update local adminOrders state
@@ -2210,10 +2081,10 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
         : row
     ));
 
-    // อัปเดตลง Supabase
+    // อัปเดตลง Supabase (รองรับ fallback กรณีไม่มีคอลัมน์ status ใน schema)
     if (isSupabaseConfigured && supabase) {
       try {
-        await supabase
+        const { error: updErr } = await supabase
           .from('orders')
           .update({
             order_status: targetStatus,
@@ -2222,6 +2093,16 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
             updated_at: new Date().toISOString()
           })
           .eq('id', item.id);
+        if (updErr) {
+          await supabase
+            .from('orders')
+            .update({
+              order_status: targetStatus,
+              queue_step: targetStep,
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', item.id);
+        }
       } catch (err) {
         console.error("Error updating order status in Supabase:", err);
       }
@@ -2243,7 +2124,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
       setQueueShippingModalOrder(order);
       setQueueCarrier(order.shipping_carrier || order.carrier_name || 'รถโรงงานพรพงศ์พลาสติก (สายส่งด่วน)');
       setQueueDriverPhone(order.driver_phone || '089-456-7890');
-      const tracking = order.tracking_number || order.shipmentNo || order.shipment_no || `TH-EX-${String(order.id).replace(/[^0-9]/g, '').slice(-6) || '291823'}`;
+      const tracking = order.tracking_number || order.shipmentNo || order.shipment_no || '';
       setQueueTrackingNo(tracking);
       setQueueEstDate(order.estimated_delivery_date || new Date(Date.now() + 2 * 86400000).toISOString().split('T')[0]);
       return;
@@ -2319,7 +2200,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
     const qId = queueShippingModalOrder.queue_number || queueShippingModalOrder.queue_id;
     const carrier = queueCarrier.trim() || 'รถโรงงานพรพงศ์พลาสติก (สายส่งด่วน)';
     const driver = queueDriverPhone.trim() || '089-456-7890';
-    const tracking = queueTrackingNo.trim() || `TH-EX-${String(orderId).replace(/[^0-9]/g, '').slice(-6) || '291823'}`;
+    const tracking = queueTrackingNo.trim() || '';
     const estDate = queueEstDate.trim() || '';
 
     setAdminOrders(prev => prev.map(o => o.id === orderId ? {
@@ -2876,41 +2757,22 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
 
   const approvedAdminOrders = activeOrdersList;
 
-  // Tab 2: ประวัติคำสั่งซื้อสำเร็จ (Completed History)
-  // Single Source of Truth: แสดงเฉพาะ (!isPreorder) && (order.status === 'completed' || order.status === 'delivered')
+  // Tab 2: ประวัติคำสั่งซื้อสำเร็จ (Completed Orders)
+  // Single Source of Truth: ดึงตรงจากตาราง orders โดยกรองเฉพาะที่ order.order_status === 'completed' เท่านั้น (รวมทั้งพร้อมส่งที่อนุมัติแล้วและพรีออเดอร์ที่ส่งสำเร็จ)
   const completedOrdersList = React.useMemo(() => {
-    return adminOrders
+    return (adminOrders || [])
       .filter(order => {
         if (!order) return false;
         if (order.is_deleted === true || order.is_deleted === 'true') return false;
 
-        // แสดงเฉพาะสินค้าพร้อมส่ง
-        const isPreorder = isPreorderOrder(order) || Boolean(
-          order.is_preorder || 
-          order.order_type === 'preorder' || 
-          order.type === 'preorder' || 
-          order.status === 'in_queue' || 
-          order.status === 'in_production' ||
-          order.order_status === 'in_queue' ||
-          order.order_status === 'in_production'
-        );
-        if (isPreorder) return false;
-
-        const s = String(order.status || '').toLowerCase().trim();
         const os = String(order.order_status || '').toLowerCase().trim();
+        const s = String(order.status || '').toLowerCase().trim();
         const ps = String(order.payment_status || '').toLowerCase().trim();
-        const ds = String(order.delivery_status || '').toLowerCase().trim();
-        const step = Number(order.delivery_step || 0);
 
-        if (s === 'cancelled' || os === 'cancelled' || ps === 'cancelled' || s === 'rejected') return false;
+        if (os === 'cancelled' || s === 'cancelled' || ps === 'cancelled' || s === 'rejected') return false;
 
-        // แสดงเฉพาะ: (!isPreorder) && (order.status === 'completed' || order.status === 'delivered' || step === 4)
-        return (
-          s === 'completed' || s === 'delivered' ||
-          os === 'completed' || os === 'delivered' ||
-          ds === 'completed' || ds === 'delivered' ||
-          step === 4
-        );
+        // แสดงเฉพาะออเดอร์ที่ order_status === 'completed' (หรือ legacy status === 'completed')
+        return os === 'completed' || (!os && s === 'completed');
       })
       .sort((a: any, b: any) => {
         const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
@@ -3076,7 +2938,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                   onClick={() => {
                     setActiveMenu(menu.id);
                     if (menu.id === 'orders') {
-                      setOrdersTabFilter('active');
+                      setOrdersTabFilter('completed');
                       fetchOrders();
                     } else if (menu.id === 'payment-verify') {
                       reloadWaitingVerifyOrders();
@@ -3110,11 +2972,11 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                           {sortedQueueOrders.length}
                         </span>
                       )}
-                      {menu.id === 'orders' && activeOrdersList.length > 0 && (
+                      {menu.id === 'orders' && completedOrdersList.length > 0 && (
                         <span className={`ml-2 px-1.5 py-0.5 rounded-full text-[9px] font-black inline-flex items-center justify-center ${
-                          activeMenu === menu.id ? 'bg-white text-sky-600' : 'bg-sky-600 text-white'
+                          activeMenu === menu.id ? 'bg-white text-sky-600' : 'bg-emerald-600 text-white'
                         }`}>
-                          {activeOrdersList.length}
+                          {completedOrdersList.length}
                         </span>
                       )}
                     </span>
@@ -4881,15 +4743,6 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                                   try {
                                     // 1. Instant card removal & badge decrement
                                     setWaitingVerifyOrders(prev => prev.filter(o => String(o.id) !== targetOrderId));
-
-                                    // Persist in rejected IDs set
-                                    try {
-                                      const rejectedList = JSON.parse(localStorage.getItem('pornpong_rejected_order_ids') || '[]');
-                                      if (!rejectedList.map(String).includes(targetOrderId)) {
-                                        rejectedList.push(targetOrderId);
-                                        localStorage.setItem('pornpong_rejected_order_ids', JSON.stringify(rejectedList));
-                                      }
-                                    } catch {}
 
                                     const success = await supabaseOrders.reject(targetOrderId);
                                     if (success) {
@@ -6733,8 +6586,6 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                       if (confirm('คุณต้องการคืนค่าโรงงานข้อมูลแอดมินทั้งหมดและล้างแคชจำลองหรือไม่? ข้อมูลพรีออเดอร์/การตั้งค่าจะรีเซ็ต')) {
                         localStorage.removeItem('pornpong_admin_products');
                         localStorage.removeItem('pornpong_supabase_fallback_products');
-                        localStorage.removeItem('pornpong_admin_orders');
-                        localStorage.removeItem('pornpong_admin_pre_orders');
                         localStorage.removeItem('pornpong_admin_coupons');
                         localStorage.removeItem('pornpong_reviews_list');
                         triggerToast('ทำความสะอากล้างระเบียนจำลองและคืนค่าเรียบร้อย กรุณารีเฟรชเบราว์เซอร์!');
@@ -7465,7 +7316,7 @@ export function AdminDashboard({ onClose, triggerToast, notifications, setNotifi
                     type="text"
                     value={inTransitTrackingNo}
                     onChange={(e) => setInTransitTrackingNo(e.target.value)}
-                    placeholder="เช่น TH-EX-291823"
+                    placeholder="เช่น TH-EX-XXXXXX"
                     className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs text-slate-800 font-mono outline-none focus:bg-white focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/20"
                   />
                 </div>

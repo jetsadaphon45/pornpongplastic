@@ -21,6 +21,7 @@ import {
   ListOrdered
 } from 'lucide-react';
 import { supabaseOrders, supabasePreOrders, formatQueueId, supabase, isSupabaseConfigured, isOrderPreOrder } from '../lib/supabase';
+import { normalizeOrder } from '../utils/orderHelper.js';
 
 interface CustomerOrderHistoryModalProps {
   isOpen: boolean;
@@ -60,8 +61,8 @@ export function CustomerOrderHistoryModal({
         supabasePreOrders.listByUserId(customer.id, customer.phone, customer.name)
       ]);
 
-      setOrders(userOrders || []);
-      setPreOrders(userPreOrders || []);
+      setOrders((userOrders || []).map(normalizeOrder));
+      setPreOrders((userPreOrders || []).map(normalizeOrder));
     } catch (err: any) {
       console.error('Failed to load customer order history from Supabase:', err);
       triggerToast('ไม่สามารถโหลดประวัติการสั่งซื้อได้ กรุณาลองใหม่อีกครั้ง');

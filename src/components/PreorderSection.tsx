@@ -46,6 +46,7 @@ import {
   supabase,
   isSupabaseConfigured
 } from '../lib/supabase';
+import { normalizeOrder } from '../utils/orderHelper.js';
 
 interface PreorderSectionProps {
   products: Product[];
@@ -528,9 +529,12 @@ export default function PreorderSection({
         sticker_option: stickerOptionValue,
         custom_text: hasCustomText ? customText.trim() : '',
         total_price: totalPrice,
-        status: 'pending_verification' as const,
+        status: 'pending_payment' as const,
         payment_status: 'pending_verification',
-        order_status: 'pending_verification',
+        order_status: 'pending_payment',
+        is_preorder: true,
+        order_type: 'preorder',
+        queue_id: null,
         deposit_amount: depositAmount,
         quantity: quantity,
         address: customerAddress.trim(),
@@ -538,37 +542,18 @@ export default function PreorderSection({
       };
 
       const result = await supabaseOrders.createCustomPreOrder(payload);
+      if (!result) {
+        throw new Error('ไม่สามารถบันทึกคำสั่งจองลงฐานข้อมูล Supabase ได้');
+      }
 
-      setConfirmedOrder({
+      setConfirmedOrder(normalizeOrder({
         ...payload,
-        id: result?.id || ('ORD-PRE-' + Date.now().toString().slice(-6)),
-        created_at: result?.created_at || new Date().toISOString()
-      });
+        ...result
+      }));
       setShowOrderModal(true);
     } catch (err: any) {
       console.error('Error submitting pre-order:', err);
-      // Even if network blips, show confirmation modal with reliable fallback ID
-      const fallbackOrder = {
-        id: 'ORD-PRE-' + new Date().getFullYear() + '-' + Math.floor(1000 + Math.random() * 9000),
-        customer_name: customerName.trim(),
-        customer_phone: customerPhone.trim(),
-        customer_email: customerEmail.trim(),
-        boat_size: activeSizeConfig.name,
-        boat_model_name: activeSizeConfig.shortName,
-        selected_color: activeColorConfig.name,
-        sticker_option: activeStickerSetting.id === 'none' ? 'ไม่ติดสติกเกอร์ (+0 บาท)' : `${activeStickerSetting.name} (+${activeStickerSetting.price} บาท)`,
-        custom_text: hasCustomText ? customText.trim() : '',
-        total_price: totalPrice,
-        status: 'pending_verification',
-        payment_status: 'pending_verification',
-        order_status: 'pending_verification',
-        deposit_amount: depositAmount,
-        quantity: quantity,
-        address: customerAddress.trim(),
-        created_at: new Date().toISOString()
-      };
-      setConfirmedOrder(fallbackOrder);
-      setShowOrderModal(true);
+      alert('เกิดข้อผิดพลาดในการบันทึกคำสั่งจองลงฐานข้อมูล กรุณาลองใหม่อีกครั้ง: ' + (err?.message || ''));
     } finally {
       setIsSubmitting(false);
     }
@@ -661,20 +646,24 @@ export default function PreorderSection({
       if (isSupabaseConfigured && supabase) {
         try {
           const { error: updErr } = await supabase.from('orders').update({
-            status: 'pending_verification',
+            status: 'pending_payment',
             payment_status: 'pending_verification',
             slip_url: finalSlipUrl,
             payment_slip_url: finalSlipUrl,
-            order_status: 'pending_verification',
+            order_status: 'pending_payment',
+            is_preorder: true,
+            order_type: 'preorder',
+            queue_id: null,
             updated_at: new Date().toISOString()
           }).eq('id', confirmedOrder.id);
 
           if (updErr) {
             console.warn('Orders update with extended columns failed, falling back to core columns:', updErr.message);
             await supabase.from('orders').update({
-              status: 'pending_verification',
+              order_status: 'pending_payment',
               payment_status: 'pending_verification',
-              slip_url: finalSlipUrl
+              payment_slip_url: finalSlipUrl,
+              queue_id: null
             }).eq('id', confirmedOrder.id);
           }
         } catch (errDb: any) {
@@ -682,65 +671,21 @@ export default function PreorderSection({
         }
       }
 
-      // Sync local storage for immediate Admin reflection
-      try {
-        const localOrders = JSON.parse(localStorage.getItem('admin_orders') || '[]');
-        const updatedOrders = localOrders.map((o: any) => 
-          o.id === confirmedOrder.id 
-            ? { 
-                ...o, 
-                payment_slip_url: finalSlipUrl, 
-                slip_url: finalSlipUrl, 
-                status: 'pending_verification', 
-                payment_status: 'pending_verification', 
-                order_status: 'pending_verification' 
-              } 
-            : o
-        );
-        localStorage.setItem('admin_orders', JSON.stringify(updatedOrders));
-
-        const localPre = JSON.parse(localStorage.getItem('admin_preorders') || '[]');
-        const updatedPre = localPre.map((p: any) =>
-          p.id === confirmedOrder.id
-            ? { 
-                ...p, 
-                payment_slip_url: finalSlipUrl, 
-                slip_url: finalSlipUrl, 
-                status: 'pending_verification', 
-                payment_status: 'pending_verification', 
-                order_status: 'pending_verification' 
-              }
-            : p
-        );
-        localStorage.setItem('admin_preorders', JSON.stringify(updatedPre));
-
-        window.dispatchEvent(new CustomEvent('orders-updated'));
-        window.dispatchEvent(new CustomEvent('pornpong-queue-updated'));
-      } catch {}
-
-      // Add a notification for customer
-      try {
-        const currentNotis = JSON.parse(localStorage.getItem('pornpong_notifications') || '[]');
-        const newNoti = {
-          id: 'noti-' + Date.now(),
-          title: 'ได้รับหลักฐานการโอนเงินเรียบร้อยแล้ว',
-          message: `คำสั่งจองเรือ #${confirmedOrder.id} ได้รับสลิปมัดจำแล้ว ระบบกำลังอยู่ระหว่างการตรวจสอบเพื่อยืนยันคิวหลอม`,
-          type: 'preorder',
-          date: 'เมื่อครู่',
-          isRead: false
-        };
-        localStorage.setItem('pornpong_notifications', JSON.stringify([newNoti, ...currentNotis]));
-      } catch {}
+      window.dispatchEvent(new CustomEvent('orders-updated'));
+      window.dispatchEvent(new CustomEvent('pornpong-queue-updated'));
 
       // Requirement 2: Switch UI to "Pending Verification State" immediately (keep modal open)
-      const updatedOrder = {
+      const updatedOrder = normalizeOrder({
         ...confirmedOrder,
-        status: 'pending_verification',
+        status: 'pending_payment',
         payment_status: 'pending_verification',
-        order_status: 'pending_verification',
+        order_status: 'pending_payment',
+        is_preorder: true,
+        order_type: 'preorder',
+        queue_id: null,
         slip_url: finalSlipUrl,
         payment_slip_url: finalSlipUrl
-      };
+      });
       setConfirmedOrder(updatedOrder);
       setSlipUploaded(true);
       setShowOrderModal(true);
@@ -749,9 +694,10 @@ export default function PreorderSection({
       // Fallback switch to pending verification UI
       setConfirmedOrder((prev: any) => ({
         ...prev,
-        status: 'pending_verification',
+        status: 'pending_payment',
         payment_status: 'pending_verification',
-        order_status: 'pending_verification',
+        order_status: 'pending_payment',
+        queue_id: null,
         slip_url: slipPreview || '',
         payment_slip_url: slipPreview || ''
       }));
@@ -798,16 +744,6 @@ export default function PreorderSection({
     const targetOrder = confirmedOrder;
     handleCloseModalAndClearForm();
 
-    if (targetOrder?.id) {
-      try {
-        const myIds = JSON.parse(localStorage.getItem('pornpong_my_order_ids') || '[]');
-        if (!myIds.includes(targetOrder.id)) {
-          myIds.push(targetOrder.id);
-          localStorage.setItem('pornpong_my_order_ids', JSON.stringify(myIds));
-        }
-      } catch {}
-    }
-
     if (onOpenTracking) {
       onOpenTracking(targetOrder);
     } else {
@@ -834,13 +770,20 @@ export default function PreorderSection({
         ['paid', 'verified', 'approved', 'deposit_paid'].includes(ps) ||
         ['in_queue', 'in_production', 'production_queue', 'producing', 'ready_to_ship', 'shipped', 'delivering', 'completed'].includes(os);
 
-      if (isNowApproved && s !== 'pending_verification' && ps !== 'pending_verification') {
+      if (
+        isNowApproved &&
+        s !== 'pending_payment' &&
+        os !== 'pending_payment' &&
+        s !== 'pending_verification' &&
+        ps !== 'pending_verification'
+      ) {
         setConfirmedOrder((prev: any) => ({
           ...(prev || {}),
           ...updated,
           status: updated.status || 'in_queue',
+          order_status: updated.order_status || 'in_queue',
           payment_status: updated.payment_status || 'paid',
-          queue_number: updated.queue_number || updated.queue_id || prev?.queue_number || 'Q-2610-001'
+          queue_number: updated.queue_number || updated.queue_id || prev?.queue_number || ''
         }));
       }
     };
@@ -882,34 +825,28 @@ export default function PreorderSection({
             .maybeSingle();
 
           if (!error && data) {
-            handleUpdatedOrderData(data);
+            handleUpdatedOrderData(normalizeOrder(data));
           }
         }
-
-        // Check local storage for same-browser admin approvals
-        const adminOrders = JSON.parse(localStorage.getItem('admin_orders') || '[]');
-        const foundAdmin = adminOrders.find((o: any) => String(o.id) === String(targetId));
-        if (foundAdmin) handleUpdatedOrderData(foundAdmin);
-
-        const adminPre = JSON.parse(localStorage.getItem('admin_preorders') || '[]');
-        const foundPre = adminPre.find((p: any) => String(p.id) === String(targetId));
-        if (foundPre) handleUpdatedOrderData(foundPre);
       } catch {}
     }, 1500);
 
     // 3. Custom events
     const handleApprovalEvent = (e: any) => {
       const ord = e?.detail;
-      if (ord && String(ord.id) === String(targetId)) {
-        handleUpdatedOrderData(ord);
+      if (ord && String(ord.id || ord.orderId) === String(targetId)) {
+        handleUpdatedOrderData(normalizeOrder(ord));
       }
     };
 
     window.addEventListener('pornpong-order-approved', handleApprovalEvent);
-    const handleQueueUpdated = () => {
-      const adminPre = JSON.parse(localStorage.getItem('admin_preorders') || '[]');
-      const foundPre = adminPre.find((p: any) => String(p.id) === String(targetId));
-      if (foundPre) handleUpdatedOrderData(foundPre);
+    const handleQueueUpdated = async () => {
+      try {
+        if (isSupabaseConfigured && supabase) {
+          const { data } = await supabase.from('orders').select('*').eq('id', targetId).maybeSingle();
+          if (data) handleUpdatedOrderData(normalizeOrder(data));
+        }
+      } catch {}
     };
     window.addEventListener('pornpong-queue-updated', handleQueueUpdated);
 
@@ -935,6 +872,8 @@ export default function PreorderSection({
       ['paid', 'verified', 'approved', 'deposit_paid'].includes(String(confirmedOrder.payment_status || '').toLowerCase().trim()) ||
       ['in_queue', 'in_production', 'production_queue', 'producing', 'ready_to_ship', 'shipped', 'delivering', 'completed'].includes(String(confirmedOrder.order_status || '').toLowerCase().trim())
     ) && (
+      String(confirmedOrder.order_status || '').toLowerCase().trim() !== 'pending_payment' &&
+      String(confirmedOrder.status || '').toLowerCase().trim() !== 'pending_payment' &&
       String(confirmedOrder.status || '').toLowerCase().trim() !== 'pending_verification' &&
       String(confirmedOrder.status || '').toLowerCase().trim() !== 'pending' &&
       String(confirmedOrder.payment_status || '').toLowerCase().trim() !== 'pending_verification'
@@ -942,11 +881,13 @@ export default function PreorderSection({
   );
 
   // State Guard: Only display Step 3 ("ได้รับหลักฐานการโอนเงินเรียบร้อยแล้ว") when slip has actually been uploaded
-  // Never auto-skip Step 2 (QR code + slip upload) when a new order is initialized with pending_verification
+  // Never auto-skip Step 2 (QR code + slip upload) when a new order is initialized with pending_payment / pending_verification
   const isPendingVerification = Boolean(
     !isApproved && confirmedOrder && (
       slipUploaded ||
       (Boolean(confirmedOrder.slip_url || confirmedOrder.payment_slip_url) && (
+        confirmedOrder.status === 'pending_payment' ||
+        confirmedOrder.order_status === 'pending_payment' ||
         confirmedOrder.status === 'pending_verification' ||
         confirmedOrder.payment_status === 'pending_verification' ||
         confirmedOrder.order_status === 'pending_verification'
@@ -2323,7 +2264,7 @@ export default function PreorderSection({
                         <span>ลำดับคิวผลิตโรงงาน:</span>
                       </span>
                       <span className="font-mono text-xs font-black text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-lg border border-emerald-200">
-                        {confirmedOrder.queue_number || confirmedOrder.queue_id || 'Q-2610-001'}
+                        {confirmedOrder.queue_number || confirmedOrder.queue_id || 'กำลังรอจัดสรรคิว'}
                       </span>
                     </div>
                     <div className="flex justify-between items-center text-xs">

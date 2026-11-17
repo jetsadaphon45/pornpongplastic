@@ -27,6 +27,7 @@ import {
   supabaseProfiles, 
   getLocalStoredProducts 
 } from './lib/supabase';
+import { normalizeOrder } from './utils/orderHelper.js';
 
 import Header from './components/Header';
 import Footer from './components/Footer';
@@ -184,49 +185,8 @@ export default function App() {
   const [profileInitialTab, setProfileInitialTab] = React.useState<'history' | 'addresses' | 'deliveries'>('history');
   const [trackingTargetOrderId, setTrackingTargetOrderId] = React.useState<string | null>(null);
 
-  // Notifications State (with dynamic default data to avoid database dependency)
-  const [notifications, setNotifications] = React.useState<AppNotification[]>(() => {
-    try {
-      const saved = localStorage.getItem('pornpong_notifications');
-      if (saved) return JSON.parse(saved);
-      return [
-        {
-          id: 'noti-1',
-          title: 'คำสั่งซื้อจัดส่งสำเร็จแล้ว',
-          message: 'ยินดีด้วย! คำสั่งซื้อของคุณหมายเลข ORD-2026-9874 "เรือพายพลาสติก ตราพรพงศ์ รุ่น 2.5 เมตร - ท้องเรือแบนสัญจรง่าย" ได้รับการขนส่งสำเร็จแล้ว ตรวจสอบสถานะการขนส่ง: TH-EX-291823',
-          type: 'order',
-          date: '12 มี.ค.',
-          isRead: false
-        },
-        {
-          id: 'noti-2',
-          title: 'สถานะมัดจำพรีออเดอร์ได้รับการอนุมัติ',
-          message: 'พรีออเดอร์ PRE-2026-0005 ได้รับการตรวจสอบและยืนยันเงินมัดจำล่วงหน้าแล้ว! ทางโรงงานกำลังจัดแผนสั่งเตรียมคิวขึ้นรูปเรือคายัคคู่ใจทัวร์ริ่งของคุณอย่างพิถีพิถัน',
-          type: 'preorder',
-          date: '18 พ.ค.',
-          isRead: false
-        },
-        {
-          id: 'noti-3',
-          title: 'โปรโมชั่นของแถมสุดเอ็กซ์คลูซีฟ',
-          message: 'ต้อนรับครอบครัวพรพงศ์คนใหม่! วันนี้เมื่อจองเรือพายพลาสติกหนาพิเศษสองชั้นสีสันใดก็ได้ รับฟรีใบคู่พายเนื้อพรีเมียม มูลค่า 350 บาททันทีไม่มีขั้นต่ำ',
-          type: 'promotion',
-          date: 'วันนี้',
-          isRead: false
-        },
-        {
-          id: 'noti-4',
-          title: 'เปิดตัวเรือหลอมซีรีส์ใหม่ล่าสุด!',
-          message: 'เปิดสเปกเรือคายัคประเภทท่องเที่ยวสันทนาการ เกรดเสริมสารกันแดด UV-8 ยืดอายุเรือสีไม่ซีดจางนานกระแทกลิฟท์สิบปียกกำลังสอง',
-          type: 'new_product',
-          date: 'เมื่อวาน',
-          isRead: false
-        }
-      ];
-    } catch {
-      return [];
-    }
-  });
+  // Notifications State (in-memory, synced from real-time events)
+  const [notifications, setNotifications] = React.useState<AppNotification[]>([]);
   
   // Cart management (backed by LocalStorage for premium usability!)
   const [cart, setCart] = React.useState<CartItem[]>(() => {
@@ -267,97 +227,6 @@ export default function App() {
 
   // Listen for admin order approval & 4-stage delivery status updates and show Pop-up alert
   React.useEffect(() => {
-    const checkUnshownApprovals = () => {
-      try {
-        const raw = localStorage.getItem('pornpong_unshown_approvals');
-        if (raw) {
-          const list = JSON.parse(raw);
-          if (Array.isArray(list) && list.length > 0) {
-            const latest = list[list.length - 1];
-            const msg = latest.message || `การชำระเงินเสร็จสิ้น! รายการสั่งซื้อหมายเลข #${latest.orderId} ได้รับการยืนยันแล้ว ทางโรงงานกำลังดำเนินการจัดเตรียมสินค้า`;
-            setApprovedPaymentAlert({ orderId: latest.orderId, message: msg });
-            // Add notification to user list if not already present
-            setNotifications(prev => {
-              if (prev.some(n => n.id === `noti-appr-${latest.orderId}`)) return prev;
-              const noti: AppNotification = {
-                id: `noti-appr-${latest.orderId}`,
-                title: 'การชำระเงินเสร็จสิ้น!',
-                message: msg,
-                type: 'order',
-                date: 'เมื่อครู่',
-                isRead: false
-              };
-              return [noti, ...prev];
-            });
-            localStorage.removeItem('pornpong_unshown_approvals');
-          }
-        }
-      } catch (err) {
-        console.error('Error checking unshown approvals:', err);
-      }
-    };
-
-    const checkUnshownDeliveries = () => {
-      try {
-        const raw = localStorage.getItem('pornpong_unshown_deliveries');
-        if (raw) {
-          const list = JSON.parse(raw);
-          if (Array.isArray(list) && list.length > 0) {
-            const latest = list[list.length - 1];
-            const msg = latest.message || `รายการสั่งซื้อหมายเลข #${latest.orderId} จัดส่งสำเร็จเรียบร้อยแล้ว! ขอบคุณที่ไว้วางใจใช้บริการพรพงศ์พลาสติก`;
-            setOrderStatusAlert({
-              orderId: latest.orderId,
-              stage: 'delivered',
-              statusLabel: 'จัดส่งสำเร็จ',
-              message: msg,
-              meta: { shipment_no: `TH-EX-${String(latest.orderId).replace(/[^0-9]/g, '').slice(-6) || '291823'}` }
-            });
-            setNotifications(prev => {
-              if (prev.some(n => n.id === `noti-deliv-${latest.orderId}`)) return prev;
-              const noti: AppNotification = {
-                id: `noti-deliv-${latest.orderId}`,
-                title: 'จัดส่งสำเร็จเรียบร้อยแล้ว!',
-                message: msg,
-                type: 'order',
-                date: 'เมื่อครู่',
-                isRead: false
-              };
-              return [noti, ...prev];
-            });
-            localStorage.removeItem('pornpong_unshown_deliveries');
-          }
-        }
-      } catch (err) {
-        console.error('Error checking unshown deliveries:', err);
-      }
-    };
-
-    const checkUnshownStatusUpdates = () => {
-      try {
-        const raw = localStorage.getItem('pornpong_unshown_status_updates');
-        if (raw) {
-          const list = JSON.parse(raw);
-          if (Array.isArray(list) && list.length > 0) {
-            const latest = list[list.length - 1];
-            setOrderStatusAlert({
-              orderId: latest.orderId,
-              stage: latest.stage || 'manufacturing',
-              statusLabel: latest.statusLabel || 'อัปเดตสถานะการจัดส่ง',
-              message: latest.message,
-              meta: latest.meta
-            });
-            localStorage.removeItem('pornpong_unshown_status_updates');
-          }
-        }
-      } catch (err) {
-        console.error('Error checking unshown status updates:', err);
-      }
-    };
-
-    checkUnshownApprovals();
-    checkUnshownDeliveries();
-    checkUnshownStatusUpdates();
-
     const handleOrderApproved = (e: any) => {
       const detail = e.detail;
       if (detail?.orderId) {
@@ -400,7 +269,7 @@ export default function App() {
           stage: 'delivered',
           statusLabel: 'จัดส่งสำเร็จ',
           message: msg,
-          meta: detail.meta || { shipment_no: `TH-EX-${String(detail.orderId).replace(/[^0-9]/g, '').slice(-6) || '291823'}` }
+          meta: detail.meta || {}
         });
         if (detail.notification) {
           setNotifications(prev => {
@@ -408,18 +277,6 @@ export default function App() {
             return [detail.notification, ...prev];
           });
         }
-      }
-    };
-
-    const handleStorageChange = (e: StorageEvent) => {
-      if (e.key === 'pornpong_unshown_approvals' && e.newValue) {
-        checkUnshownApprovals();
-      }
-      if (e.key === 'pornpong_unshown_deliveries' && e.newValue) {
-        checkUnshownDeliveries();
-      }
-      if (e.key === 'pornpong_unshown_status_updates' && e.newValue) {
-        checkUnshownStatusUpdates();
       }
     };
 
@@ -437,14 +294,12 @@ export default function App() {
     window.addEventListener('pornpong-order-delivered', handleOrderDelivered);
     window.addEventListener('pornpong-order-status-updated', handleOrderStatusUpdated);
     window.addEventListener('pornpong-open-tracking', handleOpenTrackingFromEvent);
-    window.addEventListener('storage', handleStorageChange);
 
     return () => {
       window.removeEventListener('pornpong-order-approved', handleOrderApproved);
       window.removeEventListener('pornpong-order-delivered', handleOrderDelivered);
       window.removeEventListener('pornpong-order-status-updated', handleOrderStatusUpdated);
       window.removeEventListener('pornpong-open-tracking', handleOpenTrackingFromEvent);
-      window.removeEventListener('storage', handleStorageChange);
     };
   }, []);
 
@@ -460,15 +315,6 @@ export default function App() {
       setToastMessage(null);
     }, 2800);
   };
-
-  // Sync notifications with Cache
-  React.useEffect(() => {
-    try {
-      localStorage.setItem('pornpong_notifications', JSON.stringify(notifications));
-    } catch (err) {
-      console.error("Storage error for notifications", err);
-    }
-  }, [notifications]);
 
   // Notifications handler actions
   const handleMarkAsRead = (id: string) => {
@@ -549,6 +395,12 @@ export default function App() {
       const customerEmail = currentUser?.email || 'guest@example.com';
       const productNameSummary = cart.map(item => `${item.product.name} x${item.quantity}`).join(', ');
       const colorsSummary = cart.map(item => item.selectedColor).join(', ');
+      const structuredItems = cart.map(item => ({
+        product_id: item.product.id,
+        product_name: item.product.name,
+        quantity: item.quantity,
+        color: item.selectedColor
+      }));
 
       const isPreOrder = cart.some(item => 
         item.product.status === 'preorder' || 
@@ -564,38 +416,28 @@ export default function App() {
         customer_email: customerEmail,
         customer_phone: orderDetails.phone,
         total_amount: totalSum,
-        status: 'pending_verification',
+        status: 'pending_payment',
         payment_status: 'pending_verification',
-        order_status: 'pending_verification',
+        order_status: 'pending_payment',
         productName: productNameSummary,
+        product_name: productNameSummary,
         color: colorsSummary,
-        order_type: isPreOrder ? 'preorder' : 'instock',
+        order_type: isPreOrder ? 'preorder' : 'stock',
         is_preorder: isPreOrder,
+        queue_id: null,
+        address: orderDetails.address,
+        items: structuredItems,
         notes: `${orderDetails.notes || ''} [${isPreOrder ? 'Pre-Order / สั่งผลิต' : 'In-Stock / สินค้าพร้อมส่ง'}]`
       };
 
       console.log('ORDER PAYLOAD', payload);
 
       const createdOrder = await supabaseOrders.create(payload);
+      if (!createdOrder) {
+        throw new Error('ไม่สามารถบันทึกคำสั่งซื้อลงฐานข้อมูลได้ กรุณาลองใหม่อีกครั้ง');
+      }
 
-      const fallbackOrder = {
-        id: (isPreOrder ? 'ORD-PRE-' : 'ORD-2026-') + Math.floor(1000 + Math.random() * 9000),
-        customer_id: customerId,
-        customer_name: orderDetails.fullName,
-        customer_email: customerEmail,
-        customer_phone: orderDetails.phone,
-        total_amount: totalSum,
-        status: 'pending_verification',
-        payment_status: 'pending_verification',
-        order_status: 'pending_verification',
-        productName: productNameSummary,
-        color: colorsSummary,
-        order_type: isPreOrder ? 'preorder' : 'instock',
-        is_preorder: isPreOrder,
-        notes: `${orderDetails.notes || ''} [${isPreOrder ? 'Pre-Order / สั่งผลิต' : 'In-Stock / สินค้าพร้อมส่ง'}]`
-      };
-
-      const finalOrder = createdOrder || fallbackOrder;
+      const finalOrder = normalizeOrder(createdOrder);
       setCurrentOrder(finalOrder);
 
       // Save/Upsert delivery address and profile details to Supabase profiles table

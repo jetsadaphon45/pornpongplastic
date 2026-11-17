@@ -3,6 +3,7 @@ import { Anchor, ShoppingCart, Menu, X, Search, PhoneCall, User, LogOut, Bell, L
 import { CartItem, User as AppUser } from '../types';
 import NotificationDropdown, { AppNotification } from './NotificationDropdown';
 import { supabase, isSupabaseConfigured, supabaseOrders, supabasePreOrders, supabaseDeliveries, isOrderPreOrder } from '../lib/supabase';
+import { normalizeOrder } from '../utils/orderHelper.js';
 
 interface HeaderProps {
   activeTab: string;
@@ -78,13 +79,6 @@ export default function Header({
     const cleanPhone = (currentUser.phone || '').trim();
     const cleanDigitsPhone = cleanPhone.replace(/\D/g, '');
 
-    // Deleted orders key from ProfileModal
-    const deletedOrdersKey = `pornpong_deleted_orders_${cleanUserId || cleanEmail || 'guest'}`;
-    let deletedIds: string[] = [];
-    try {
-      deletedIds = JSON.parse(localStorage.getItem(deletedOrdersKey) || '[]');
-    } catch {}
-
     // 1. ตรวจสอบและกรองออเดอร์ให้ตรงตัวบุคคล (User Specific Filter)
     const conditions: string[] = [];
     if (cleanUserId && cleanUserId !== 'guest') {
@@ -130,7 +124,7 @@ export default function Header({
         ]);
 
         if (!ordersRes.error && ordersRes.data) {
-          userOrders = ordersRes.data;
+          userOrders = ordersRes.data.map(normalizeOrder);
         }
         deliveriesMap = dMap || {};
       } catch (err) {
@@ -141,7 +135,7 @@ export default function Header({
     // 1. ตรวจสอบออเดอร์ที่ยังดำเนินการอยู่ (Active Orders) เฉพาะของสมาชิกที่เข้าสู่ระบบ
     const activeOrdersList = userOrders.filter(order => {
       const orderIdStr = String(order.id).trim();
-      if (deletedIds.includes(orderIdStr)) return false;
+      if (order.is_deleted === true || order.is_deleted === 'true') return false;
 
       // ต้องเป็นออเดอร์ของสมาชิกคนนี้
       const oPhone = String(order.customer_phone || order.phone || '').trim();

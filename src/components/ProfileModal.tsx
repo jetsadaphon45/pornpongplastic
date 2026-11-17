@@ -39,6 +39,7 @@ import {
   QUEUE_STAGES,
   isOrderPreOrder
 } from '../lib/supabase';
+import { normalizeOrder } from '../utils/orderHelper.js';
 import AddressManagementView from './AddressManagementView';
 
 interface UserData {
@@ -106,11 +107,6 @@ interface ItemToDelete {
   productName: string;
 }
 
-// Mock orders cleared - Customer view displays authentic data from Supabase orders table only
-const MOCK_ORDERS: OrderItem[] = [];
-const MOCK_PREORDERS: PreOrderItem[] = [];
-
-
 interface TrackingCardProps {
   order: any;
   activeFactoryQueue?: string;
@@ -123,7 +119,7 @@ interface TrackingCardProps {
  */
 export const PreorderQueueCard: React.FC<TrackingCardProps> = ({
   order,
-  activeFactoryQueue = 'Q-2611-001',
+  activeFactoryQueue = '',
   onCopyTracking,
   copiedTrackingId
 }) => {
@@ -135,8 +131,7 @@ export const PreorderQueueCard: React.FC<TrackingCardProps> = ({
     order?.order_status === 'completed' ? 5 : 1
   );
 
-  // เลขคิว: แสดง {activePreorder?.queue_id || 'Q-2611-004'}
-  const queueId = order?.queue_id || order?.queueId || order?.queue_number || formatQueueId(order) || 'Q-2611-004';
+  const queueId = order?.queue_id || order?.queueId || order?.queue_number || formatQueueId(order) || 'รอจัดสรรคิว';
 
   const isCompleted = currentStep >= 5;
   const stageNum = currentStep;
@@ -148,8 +143,8 @@ export const PreorderQueueCard: React.FC<TrackingCardProps> = ({
   );
 
   const carrier = order?.carrierName || order?.shipping_carrier || order?.carrier_name || 'รถโรงงานพรพงศ์พลาสติก (สายส่งด่วน)';
-  const driver = order?.driverPhone || order?.driver_phone || '089-456-7890';
-  const trackingNo = order?.shipmentNo || order?.tracking_number || order?.shipment_no || (order?.id ? `TH-EX-${String(order.id).replace(/[^0-9]/g, '').slice(-6) || '261104'}` : 'TH-EX-261104');
+  const driver = order?.driverPhone || order?.driver_phone || '';
+  const trackingNo = order?.shipmentNo || order?.tracking_number || order?.shipment_no || '';
 
   return (
     <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-slate-900 via-slate-850 to-sky-950 p-5 sm:p-6 text-white shadow-xl border border-sky-500/30 space-y-4">
@@ -234,15 +229,15 @@ export const PreorderQueueCard: React.FC<TrackingCardProps> = ({
               <span>โรงงานกำลังผลิตคิว:</span>
             </span>
             <span className="font-mono font-black text-amber-400 text-xs">
-              {activeFactoryQueue}
+              {activeFactoryQueue || 'รอเรียกคิว'}
             </span>
           </div>
 
           <div className="text-xs font-bold text-white pt-0.5">
             {(() => {
               const myQ = parseQueueNumber(queueId);
-              const activeQ = parseQueueNumber(activeFactoryQueue);
-              const remaining = myQ - activeQ;
+              const activeQ = activeFactoryQueue ? parseQueueNumber(activeFactoryQueue) : 0;
+              const remaining = activeQ > 0 ? myQ - activeQ : 0;
 
               if (isCompleted) {
                 return (
@@ -268,7 +263,7 @@ export const PreorderQueueCard: React.FC<TrackingCardProps> = ({
                   </p>
                 );
               }
-              if (stageNum === 2 || remaining === 0) {
+              if (stageNum === 2 || (activeQ > 0 && remaining === 0)) {
                 return (
                   <p className="text-amber-300 flex items-center gap-1.5 font-extrabold">
                     <Flame size={14} className="text-orange-400 animate-bounce" />
@@ -276,7 +271,7 @@ export const PreorderQueueCard: React.FC<TrackingCardProps> = ({
                   </p>
                 );
               }
-              if (remaining > 0) {
+              if (activeFactoryQueue && remaining > 0) {
                 return (
                   <p className="text-amber-300">
                     ขณะนี้โรงงานกำลังผลิตคิว <span className="font-mono underline">{activeFactoryQueue}</span> (อีก <strong className="text-white text-sm bg-amber-500/30 px-1.5 py-0.2 rounded-md">{remaining}</strong> คิวจะถึงเรือของคุณ)
@@ -396,7 +391,7 @@ export const PreorderQueueCard: React.FC<TrackingCardProps> = ({
               <PhoneCall size={14} className="text-sky-400 shrink-0" />
               <div className="truncate">
                 <span className="text-[10px] text-slate-400 block">คนขับรถ</span>
-                <span className="font-bold text-white font-mono">{driver}</span>
+                <span className="font-bold text-white font-mono">{driver || '-'}</span>
               </div>
             </div>
             {driver && (
@@ -411,9 +406,9 @@ export const PreorderQueueCard: React.FC<TrackingCardProps> = ({
           <div className="bg-white/5 rounded-xl p-2.5 border border-white/10 flex items-center justify-between gap-2">
             <div className="truncate">
               <span className="text-[10px] text-slate-400 block">Tracking No.</span>
-              <span className="font-bold text-amber-400 font-mono text-xs truncate block">{trackingNo}</span>
+              <span className="font-bold text-amber-400 font-mono text-xs truncate block">{trackingNo || 'รอออกเลขพัสดุ'}</span>
             </div>
-            {onCopyTracking && (
+            {onCopyTracking && trackingNo && (
               <button
                 type="button"
                 onClick={() => onCopyTracking(trackingNo)}
@@ -448,8 +443,8 @@ export const InStockDeliveryCard: React.FC<TrackingCardProps> = ({
   const stageLabel = isDelivered ? 'จัดส่งสำเร็จเรียบร้อยแล้ว' : isShipping ? 'อยู่ระหว่างจัดส่ง' : 'เตรียมพัสดุ / รอจัดส่ง';
 
   const carrier = order.carrierName || order.shipping_carrier || 'รถโรงงานพรพงศ์พลาสติก (สายส่งด่วน)';
-  const driver = order.driverPhone || order.driver_phone || '089-456-7890';
-  const trackingNo = order.shipmentNo || order.tracking_number || `TH-EX-${String(order.id).replace(/[^0-9]/g, '').slice(-6) || '291823'}`;
+  const driver = order.driverPhone || order.driver_phone || '';
+  const trackingNo = order.shipmentNo || order.tracking_number || order.shipment_no || '';
 
   return (
     <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-slate-900 via-slate-850 to-sky-950 p-5 sm:p-6 text-white shadow-xl border border-emerald-500/30 space-y-4">
@@ -610,7 +605,7 @@ export const InStockDeliveryCard: React.FC<TrackingCardProps> = ({
               <PhoneCall size={14} className="text-sky-400 shrink-0" />
               <div className="truncate">
                 <span className="text-[10px] text-slate-400 block">คนขับรถ</span>
-                <span className="font-bold text-white font-mono">{driver}</span>
+                <span className="font-bold text-white font-mono">{driver || '-'}</span>
               </div>
             </div>
             {driver && (
@@ -625,9 +620,9 @@ export const InStockDeliveryCard: React.FC<TrackingCardProps> = ({
           <div className="bg-white/5 rounded-xl p-2.5 border border-white/10 flex items-center justify-between gap-2">
             <div className="truncate">
               <span className="text-[10px] text-slate-400 block">Tracking No.</span>
-              <span className="font-bold text-emerald-400 font-mono text-xs truncate block">{trackingNo}</span>
+              <span className="font-bold text-emerald-400 font-mono text-xs truncate block">{trackingNo || 'รอออกเลขพัสดุ'}</span>
             </div>
-            {onCopyTracking && (
+            {onCopyTracking && trackingNo && (
               <button
                 type="button"
                 onClick={() => onCopyTracking(trackingNo)}
@@ -788,20 +783,16 @@ export function ProfileModal({
   const [itemToDelete, setItemToDelete] = React.useState<ItemToDelete | null>(null);
   const [isDeleting, setIsDeleting] = React.useState(false);
 
-  // Load history from Supabase & Local Cache
+  // Load history strictly from Supabase
   const loadHistory = React.useCallback(async () => {
     setIsLoadingHistory(true);
     try {
-      const deletedOrdersKey = 'pornpong_deleted_orders';
-      const deletedIds: string[] = JSON.parse(localStorage.getItem(deletedOrdersKey) || '[]');
-
       // 1. Fetch Supabase Orders & Deliveries table (JOIN via order_id)
       let fetchedOrders: any[] = [];
       let deliveriesMap: Record<string, any> = {};
 
       if (isSupabaseConfigured && supabase) {
         try {
-          // Fetch all customer orders and deliveries from Supabase
           const [ordersRes, delivs] = await Promise.all([
             supabase
               .from('orders')
@@ -822,33 +813,10 @@ export function ProfileModal({
           deliveriesMap = delivs || {};
         }
       } else {
-        const [fallbackList, delivs] = await Promise.all([
-          supabaseOrders.list(),
-          supabaseDeliveries.getAll()
-        ]);
-        fetchedOrders = fallbackList || [];
-        deliveriesMap = delivs || {};
+        setOrders([]);
+        setPreOrders([]);
+        return;
       }
-
-      // Clean up stale mock orders from local storage and prevent ghost mock data
-      try {
-        const rawLocal = localStorage.getItem('admin_orders');
-        if (rawLocal) {
-          const parsed = JSON.parse(rawLocal);
-          if (Array.isArray(parsed)) {
-            const sanitized = parsed.filter((o: any) => 
-              !String(o.id || '').includes('906896') && 
-              o.id !== 'ORD-2026-9874' && 
-              o.id !== 'ORD-2026-4512' && 
-              o.id !== 'ORD-2026-3391' && 
-              o.id !== 'ORD-2026-1185'
-            );
-            if (sanitized.length !== parsed.length) {
-              localStorage.setItem('admin_orders', JSON.stringify(sanitized));
-            }
-          }
-        }
-      } catch {}
 
       // Ensure targetOrderId is fetched directly if not already present
       if (targetOrderId && !fetchedOrders.some((f: any) => String(f.id) === String(targetOrderId))) {
@@ -862,18 +830,14 @@ export function ProfileModal({
         }
       }
 
-      // Filter orders for current user or tracked target order
-      const userOrders = fetchedOrders.filter((o: any) => {
-        const oId = String(o.id || '').trim();
-        // If matches targetOrderId, ALWAYS include
-        if (targetOrderId && oId === String(targetOrderId).trim()) return true;
+      const normalizedFetched = fetchedOrders
+        .map(normalizeOrder)
+        .filter((o: any) => !(o.is_deleted === true || o.is_deleted === 'true'));
 
-        // Also check if stored in recent customer guest orders
-        let guestOrderIds: string[] = [];
-        try {
-          guestOrderIds = JSON.parse(localStorage.getItem('pornpong_my_order_ids') || '[]');
-        } catch {}
-        if (guestOrderIds.includes(oId)) return true;
+      // Filter orders for current user or tracked target order
+      const userOrders = normalizedFetched.filter((o: any) => {
+        const oId = String(o.id || '').trim();
+        if (targetOrderId && oId === String(targetOrderId).trim()) return true;
 
         if (!currentUser) return false;
         const uId = String(currentUser.id || '').trim();
@@ -914,8 +878,8 @@ export function ProfileModal({
           ? (delivery?.queue_number || o.queue_number || o.queue_id || formatQueueId(o, idx))
           : (delivery?.queue_number || o.queue_number || o.queue_id || '');
         const carrier = delivery?.shipping_carrier || o.shipping_carrier || o.carrier_name || 'รถโรงงานพรพงศ์พลาสติก (สายส่งด่วน)';
-        const driver = delivery?.driver_phone || o.driver_phone || '089-456-7890';
-        const trackingNo = delivery?.tracking_number || o.tracking_number || o.shipmentNo || o.shipment_no || `TH-EX-${String(o.id).replace(/[^0-9]/g, '').slice(-6) || '291823'}`;
+        const driver = delivery?.driver_phone || o.driver_phone || '';
+        const trackingNo = delivery?.tracking_number || o.tracking_number || o.shipmentNo || o.shipment_no || '';
         const estDate = delivery?.estimated_delivery_date || o.estimated_delivery_date || o.est_delivery || '';
         const delivStatus = (delivery?.delivery_status || '').toLowerCase();
         const ordStatus = (o.order_status || o.status || '').toLowerCase();
@@ -928,7 +892,7 @@ export function ProfileModal({
 
         const isDelivered = delivStatus === 'delivered' || delivStatus === 'completed' || ordStatus === 'delivered' || ordStatus === 'completed' || qStep === 5;
         const isShipping = delivStatus === 'in_transit' || delivStatus === 'shipping' || ordStatus === 'in_transit' || ordStatus === 'delivering' || ordStatus === 'shipped' || ordStatus === 'shipping' || o.queue_stage === 4 || qStep === 4;
-        const isPendingVerif = ordStatus === 'pending_verification' || (o.payment_status || '').toLowerCase() === 'pending_verification' || (ordStatus === 'pending' && (o.payment_status || '').toLowerCase() !== 'verified');
+        const isPendingVerif = ordStatus === 'pending_payment' || ordStatus === 'pending_verification' || (o.status || '').toLowerCase() === 'pending_payment' || (o.payment_status || '').toLowerCase() === 'pending_verification' || (ordStatus === 'pending' && (o.payment_status || '').toLowerCase() !== 'verified');
         const isWaitingPayment = ordStatus === 'waiting_payment' || ((o.payment_status || '').toLowerCase() === 'pending' && !ordStatus);
 
         if (isDelivered) {
@@ -1009,10 +973,7 @@ export function ProfileModal({
       });
 
       // Single Source of Truth: Only show real authentic orders from Supabase (Never inject mock data)
-      const combinedOrders: OrderItem[] = mappedRemoteOrders;
-      // Filter out deleted items
-      const activeOrders = combinedOrders.filter(o => !deletedIds.includes(o.id));
-      setOrders(activeOrders);
+      setOrders(mappedRemoteOrders);
 
       // 2. Fetch Supabase Pre-Orders
       let fetchedPreOrders: any[] = [];
@@ -1023,6 +984,7 @@ export function ProfileModal({
       }
 
       const userPreOrders = fetchedPreOrders.filter((p: any) => {
+        if (p.is_deleted === true || p.is_deleted === 'true') return false;
         if (!currentUser) return false;
         if (currentUser.phone && p.phone === currentUser.phone) return true;
         if (currentUser.name && p.customerName && p.customerName.toLowerCase() === currentUser.name.toLowerCase()) return true;
@@ -1041,8 +1003,7 @@ export function ProfileModal({
         rawOrder: p
       }));
 
-      const activePreOrders = mappedRemotePreOrders.filter(p => !deletedIds.includes(p.id));
-      setPreOrders(activePreOrders);
+      setPreOrders(mappedRemotePreOrders);
 
     } catch (err) {
       console.error('Failed to load user history:', err);
@@ -1075,21 +1036,19 @@ export function ProfileModal({
           } else {
             query = query.order('created_at', { ascending: false });
           }
+        } else if (targetOrderId) {
+          query = query.eq('id', targetOrderId);
         } else {
-          // Guest without login: try to fetch orders by stored guest order IDs
-          let guestOrderIds: string[] = [];
-          try {
-            guestOrderIds = JSON.parse(localStorage.getItem('pornpong_my_order_ids') || '[]');
-          } catch {}
-          if (guestOrderIds.length > 0) {
-            query = query.in('id', guestOrderIds).order('created_at', { ascending: false });
-          } else {
-            query = query.order('created_at', { ascending: false }).limit(10);
-          }
+          setActivePreorder(null);
+          setCustomerOrders([]);
+          await loadHistory();
+          return;
         }
 
         const { data, error } = await query;
-        const rawList = data || [];
+        const rawList = (data || [])
+          .map(normalizeOrder)
+          .filter((o: any) => !(o.is_deleted === true || o.is_deleted === 'true'));
         setCustomerOrders(rawList);
 
         if (rawList.length > 0) {
@@ -1118,7 +1077,7 @@ export function ProfileModal({
     } finally {
       setIsLoadingHistory(false);
     }
-  }, [currentUser, loadHistory]);
+  }, [currentUser, targetOrderId, loadHistory]);
 
   const fetchCustomerOrders = fetchCustomerLiveOrder;
 
@@ -1262,15 +1221,7 @@ export function ProfileModal({
         await supabasePreOrders.delete(id);
       }
 
-      // 2. Persist deleted id in localStorage so deleted mock/cached items do not re-appear
-      const deletedOrdersKey = 'pornpong_deleted_orders';
-      const existingDeleted: string[] = JSON.parse(localStorage.getItem(deletedOrdersKey) || '[]');
-      if (!existingDeleted.includes(id)) {
-        existingDeleted.push(id);
-        localStorage.setItem(deletedOrdersKey, JSON.stringify(existingDeleted));
-      }
-
-      // 3. Refresh list on screen immediately
+      // 2. Refresh list on screen immediately
       if (type === 'order') {
         setOrders(prev => prev.filter(item => item.id !== id));
       } else {
